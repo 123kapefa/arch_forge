@@ -2,15 +2,15 @@ using ArchForge.Analysis.Core.Systems;
 
 namespace ArchForge.Analysis.Infrastructure.Manifests;
 
-// Реализация ISystemSource через docker-compose (спайк P1.5-0):
-// discovery базовых compose → сервисы/инфра → рёбра rw-db (строки подключения + depends_on) → детектор.
+// Реализация ISystemSource через docker-compose (P1.5-0/B):
+// корень → папочный discovery сервисов (по .slnx) → compose каждого сервиса → узлы/инфра → рёбра rw-db → детектор.
 //
-// Известные ограничения спайка (закрываются в P1.5-B/P1.5-D):
-//  • discovery по ИМЕНИ файла: подхватывает и инфра/мониторинг-compose (prometheus/nginx) как «сервисы»,
-//    и пропускает нестандартные имена (docker-compose-dev.yaml) → нужен папочный discovery по .slnx (P1.5-B);
+// Известные ограничения (закрываются в P1.5-D):
 //  • ребро к брокеру (Topic) сейчас тоже помечается "rw-db" — честное publishes/subscribes будет в P1.5-D.
-public sealed class ComposeSystemSource : ISystemSource
+public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = null) : ISystemSource
 {
+    private readonly IServiceDiscoverySource _discovery = discovery ?? new FolderDiscoverySource();
+
     // Инфра по БАЗЕ образа (последний сегмент пути без тега) — точным совпадением, а не подстрокой,
     // иначе «postgres-exporter»/«redis_exporter» ошибочно попали бы в Datastore.
     private static readonly Dictionary<string, SystemNodeKind> InfraByBaseImage = new(StringComparer.OrdinalIgnoreCase)
@@ -28,18 +28,15 @@ public sealed class ComposeSystemSource : ISystemSource
         var nodes = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
         var edges = new List<SystemEdge>();
 
-        foreach (var composePath in DiscoverComposeFiles(root))
+        foreach (var (system, composePath) in ComposesToParse(root))
         {
             ct.ThrowIfCancellationRequested();
             ComposeFile compose;
             try { compose = ComposeParser.Parse(File.ReadAllText(composePath)); }
             catch { continue; } // битый/нечитаемый compose — пропускаем (робастность)
 
-            // Пространство имён узла = имя compose-проекта (или каталог файла): одинаковые имена сервисов
-            // в РАЗНЫХ compose (api/db) не должны сливаться в один узел — иначе тихо теряем систему (честность).
-            var system = SystemName(compose, composePath);
-
-            // Локальные узлы файла: svcName → node с namespaced Id. Рёбра резолвим ВНУТРИ файла.
+            // Пространство имён узла = система (сервис из discovery / каталог): одинаковые имена сервисов
+            // в РАЗНЫХ compose (api/db) не сливаются в один узел — иначе тихо теряем систему (честность).
             var local = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
             foreach (var svc in compose.Services)
             {
@@ -53,7 +50,6 @@ public sealed class ComposeSystemSource : ISystemSource
                 if (Classify(svc.Image) != SystemNodeKind.Service) continue; // рёбра рисуют приложения
                 var sourceId = local[svc.Name].Id;
 
-                // а) строки подключения → host
                 foreach (var (key, value) in svc.Environment)
                 {
                     if (!key.StartsWith("ConnectionStrings__", StringComparison.Ordinal)) continue;
@@ -61,7 +57,6 @@ public sealed class ComposeSystemSource : ISystemSource
 
                     if (Interpolation.IsDeferred(host))
                     {
-                        // отложенный host (${KEY}) — честный внешний узел, а не пустота (adr/0008)
                         nodes.TryAdd(host, new SystemNode(host, host, SystemNodeKind.External));
                         edges.Add(new SystemEdge(sourceId, host, "rw-db", EdgeVia.Config, 0.5, Deferred: true));
                     }
@@ -72,7 +67,6 @@ public sealed class ComposeSystemSource : ISystemSource
                     }
                 }
 
-                // б) пол: depends_on на datastore → rw-db (если ещё нет из строки подключения)
                 foreach (var dep in svc.DependsOn)
                 {
                     if (!local.TryGetValue(dep, out var target) || target.Kind != SystemNodeKind.Datastore) continue;
@@ -86,26 +80,40 @@ public sealed class ComposeSystemSource : ISystemSource
         return graph with { Problems = SharedDbDetector.Detect(graph) };
     }
 
-    private static string SystemName(ComposeFile compose, string composePath) =>
-        !string.IsNullOrWhiteSpace(compose.Name)
-            ? compose.Name!
-            : Path.GetFileName(Path.GetDirectoryName(composePath)) is { Length: > 0 } dir ? dir : "system";
+    // Что и под каким пространством имён парсить:
+    //  • root — файл           → сам файл (namespace = его каталог);
+    //  • root — папка + сервисы → compose каждого папочного сервиса (namespace = имя сервиса);
+    //  • root — папка без .slnx → fallback: базовые compose под корнем (namespace = их каталог).
+    private IEnumerable<(string System, string ComposePath)> ComposesToParse(string root)
+    {
+        if (File.Exists(root)) { yield return (DirNameOf(root), root); yield break; }
+        if (!Directory.Exists(root)) yield break;
 
-    // База образа: последний сегмент пути без тега. «quay.io/community/postgres-exporter:v1» → «postgres-exporter».
+        var discovered = _discovery.Discover(root);
+        if (discovered.Count > 0)
+        {
+            foreach (var svc in discovered)
+                if (svc.ComposePath is { } cp) yield return (svc.Name, cp);
+            yield break;
+        }
+
+        foreach (var f in FallbackComposeFiles(root))
+            yield return (DirNameOf(f), f);
+    }
+
+    private static string DirNameOf(string filePath) =>
+        Path.GetFileName(Path.GetDirectoryName(filePath)) is { Length: > 0 } d ? d : "system";
+
     private static SystemNodeKind Classify(string? image)
     {
         if (string.IsNullOrEmpty(image)) return SystemNodeKind.Service;
-        var baseName = image.Split('/')[^1].Split(':')[0];
+        var baseName = image.Split('/')[^1].Split(':')[0]; // «quay.io/community/postgres-exporter:v1» → «postgres-exporter»
         return InfraByBaseImage.TryGetValue(baseName, out var kind) ? kind : SystemNodeKind.Service;
     }
 
-    // Базовые compose-файлы (без override .dev/.prod/.build/.shared), с фильтром шума. Недоступные
-    // каталоги игнорируем (IgnoreInaccessible) — не роняем весь разбор из-за одной папки без прав.
-    private static IReadOnlyList<string> DiscoverComposeFiles(string root)
+    // Fallback: базовые compose под корнем (для каталога без .slnx). Недоступные папки игнорируем.
+    private static IReadOnlyList<string> FallbackComposeFiles(string root)
     {
-        if (File.Exists(root)) return [root];              // передали сам файл
-        if (!Directory.Exists(root)) return [];
-
         var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
         var found = new List<string>();
         foreach (var f in Directory.EnumerateFiles(root, "*compose*", opts))
@@ -117,7 +125,7 @@ public sealed class ComposeSystemSource : ISystemSource
             if (name is "docker-compose.yml" or "docker-compose.yaml" or "compose.yml" or "compose.yaml")
                 found.Add(f);
         }
-        found.Sort(StringComparer.Ordinal); // детерминированный порядок между запусками/машинами
+        found.Sort(StringComparer.Ordinal);
         return found;
     }
 
@@ -128,7 +136,6 @@ public sealed class ComposeSystemSource : ISystemSource
         return false;
     }
 
-    // Дедуп «конфиг > объявление»: одна пара (source,target,kind) → ребро с максимальной уверенностью.
     private static IReadOnlyList<SystemEdge> Dedup(List<SystemEdge> edges) =>
         edges.GroupBy(e => (e.Source, e.Target, e.Kind))
              .Select(g => g.OrderByDescending(e => e.Confidence).First())

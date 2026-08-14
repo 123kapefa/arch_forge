@@ -54,4 +54,38 @@ public class SharedDbDetectorTests
 
         Assert.Empty(SharedDbDetector.Detect(g));
     }
+
+    [Fact]
+    public void Ignores_monitoring_exporter_writer()
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("app", "app", SystemNodeKind.Service, "ghcr.io/ns/catalog-api:1"),
+                new SystemNode("exp", "exp", SystemNodeKind.Service, "quay.io/community/postgres-exporter:v1"),
+                new SystemNode("db", "db", SystemNodeKind.Datastore, "postgres:16"),
+            ],
+            [
+                new SystemEdge("app", "db", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("exp", "db", "rw-db", EdgeVia.Config, 0.9),
+            ], []);
+
+        Assert.Empty(SharedDbDetector.Detect(g)); // exporter — не приложение → один писатель
+    }
+
+    [Fact]
+    public void Ignores_shared_redis_cache()
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("a", "a", SystemNodeKind.Service, "app-a:1"),
+                new SystemNode("b", "b", SystemNodeKind.Service, "app-b:1"),
+                new SystemNode("cache", "cache", SystemNodeKind.Datastore, "redis:7"),
+            ],
+            [
+                new SystemEdge("a", "cache", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("b", "cache", "rw-db", EdgeVia.Config, 0.9),
+            ], []);
+
+        Assert.Empty(SharedDbDetector.Detect(g)); // redis — кэш, не реляционная БД → не флагаем
+    }
 }
