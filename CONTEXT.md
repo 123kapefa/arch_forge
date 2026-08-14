@@ -6,7 +6,7 @@
 
 ## О продукте в одной фразе
 
-arch_forge (продолжает прототип `archlens`) статически разбирает чужие микросервисные проекты (полиглот, в первую очередь C#/.NET) и строит живую многоуровневую карту архитектуры — «плашки» и связи в стиле Unreal Blueprints. Локально; целевой код не покидает машину.
+arch_forge (опирается на идеи прототипа `archlens`, но код — свой) статически разбирает чужие микросервисные проекты (полиглот, в первую очередь C#/.NET) и строит живую многоуровневую карту архитектуры — «плашки» и связи в стиле Unreal Blueprints. Локально; целевой код не покидает машину.
 
 ## Термины
 
@@ -50,4 +50,4 @@ arch_forge (продолжает прототип `archlens`) статическ
 
 ## Ключевые области кода
 
-Бэк — .NET solution по своду: сервисы `Analysis` (Roslyn: путь→IR) и `Map` (пак/линт/проекции/API), каждый — Domain/Contracts/Core/Infrastructure/Web; общий шов — `ArchForge.Contracts`/IR (`adr/0009`). Фронт — React + React Flow (reuse из archlens). archlens (Node/TS) — референс.
+Бэк — .NET solution по своду: сервисы `Analysis` (Roslyn: путь→IR) и `Map` (проекции/гейтвей/API), каждый — Domain/Contracts/Core/Infrastructure/Web; общий шов — `ArchForge.Contracts`/IR (`adr/0009`). Фронт — свой клиент React + React Flow (`adr/0010`). archlens (Node/TS) — только референс идей.

@@ -7,8 +7,8 @@
 
 arch_forge — инструмент, который статически разбирает чужие C#/.NET-проекты на микросервисах (чистая архитектура) и строит визуальную карту архитектуры («плашки» и связи в стиле Unreal Blueprints). Замысел и дорога — в `docs/VISION.md` и `docs/ROADMAP.md`.
 
-Стек: бэк — **.NET/C#** по своду (Clean Architecture; сервисы `Analysis` + `Map`), движок анализа — **Roslyn** (`docs/roslyn.md`); фронт — **React + React Flow** (переиспользуем клиент archlens). Декомпозиция и решение — `docs/adr/0009-dotnet-roslyn-microservices.md`. archlens (Node/TS) — референс идей.
-Трекер задач: —.
+Стек: бэк — **.NET/C#** по своду (Clean Architecture; сервисы `Analysis` + `Map`), движок анализа — **Roslyn** (`docs/roslyn.md`); фронт — **свой клиент** на React + React Flow (`@xyflow/react`; `docs/adr/0010`). Декомпозиция — `docs/adr/0009-dotnet-roslyn-microservices.md`. archlens (Node/TS) — только референс идей.
+Трекер задач: отдельного нет — вехи в `docs/ROADMAP.md`; ветки/PR — `docs/agents/issue-tracker.md`.
 
 ## Структура
 
