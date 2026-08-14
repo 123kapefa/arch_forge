@@ -1,0 +1,29 @@
+<Solution>
+  <Folder Name="/services/" />
+  <Folder Name="/services/Analysis/" />
+  <Folder Name="/services/Analysis/src/">
+    <Project Path="services/Analysis/src/ArchForge.Analysis.Contracts/ArchForge.Analysis.Contracts.csproj" />
+    <Project Path="services/Analysis/src/ArchForge.Analysis.Core/ArchForge.Analysis.Core.csproj" />
+    <Project Path="services/Analysis/src/ArchForge.Analysis.Domain/ArchForge.Analysis.Domain.csproj" />
+    <Project Path="services/Analysis/src/ArchForge.Analysis.Infrastructure.Roslyn/ArchForge.Analysis.Infrastructure.Roslyn.csproj" />
+    <Project Path="services/Analysis/src/ArchForge.Analysis.Web/ArchForge.Analysis.Web.csproj" />
+  </Folder>
+  <Folder Name="/services/Analysis/tests/">
+    <Project Path="services/Analysis/tests/ArchForge.Analysis.Tests/ArchForge.Analysis.Tests.csproj" />
+  </Folder>
+  <Folder Name="/services/Map/" />
+  <Folder Name="/services/Map/src/">
+    <Project Path="services/Map/src/ArchForge.Map.Contracts/ArchForge.Map.Contracts.csproj" />
+    <Project Path="services/Map/src/ArchForge.Map.Core/ArchForge.Map.Core.csproj" />
+    <Project Path="services/Map/src/ArchForge.Map.Domain/ArchForge.Map.Domain.csproj" />
+    <Project Path="services/Map/src/ArchForge.Map.Infrastructure/ArchForge.Map.Infrastructure.csproj" />
+    <Project Path="services/Map/src/ArchForge.Map.Web/ArchForge.Map.Web.csproj" />
+  </Folder>
+  <Folder Name="/services/Map/tests/">
+    <Project Path="services/Map/tests/ArchForge.Map.Tests/ArchForge.Map.Tests.csproj" />
+  </Folder>
+  <Folder Name="/shared/">
+    <Project Path="shared/ArchForge.Contracts/ArchForge.Contracts.csproj" />
+    <Project Path="shared/ArchForge.SharedKernel/ArchForge.SharedKernel.csproj" />
+  </Folder>
+</Solution>

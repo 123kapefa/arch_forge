@@ -1,0 +1,21 @@
+# Codex runtime. Канон — .ai/; этот файл связывает Codex с общими артефактами.
+# Claude Code читает свои настройки из .claude/ (генерируется через setup.sh).
+
+[project]
+source_of_truth = ".ai"
+
+[skills]
+dir = ".ai/skills"
+
+[rules]
+dir = ".ai/rules"
+
+[agents]
+dir = ".ai/agents"
+
+[hooks]
+# Python-гарды, кросс-тул. Настройки — .ai/hooks.config.json (генерится из project.yml).
+config = ".ai/hooks.json"
+
+[references]
+dir = ".ai/references"

@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ArchForge.Map.Contracts/ArchForge.Map.Contracts.csproj" />
+    <Project Path="src/ArchForge.Map.Core/ArchForge.Map.Core.csproj" />
+    <Project Path="src/ArchForge.Map.Domain/ArchForge.Map.Domain.csproj" />
+    <Project Path="src/ArchForge.Map.Infrastructure/ArchForge.Map.Infrastructure.csproj" />
+    <Project Path="src/ArchForge.Map.Web/ArchForge.Map.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ArchForge.Map.Tests/ArchForge.Map.Tests.csproj" />
+  </Folder>
+  <Project Path="../../shared/ArchForge.Contracts/ArchForge.Contracts.csproj" />
+  <Project Path="../../shared/ArchForge.SharedKernel/ArchForge.SharedKernel.csproj" />
+</Solution>

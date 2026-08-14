@@ -1,0 +1,33 @@
+# Конфигурация AI-системы проекта. Единый человекочитаемый источник.
+# Блок hooks: используется генератором .ai/hooks.config.json (его читают Python-хуки).
+# После правок выполните: ai-starter update  (пересоберёт hooks.config.json и проверит синхрон).
+
+project:
+  name: "arch_forge"
+  stack: ".NET + React"
+  tracker: ""
+  profile: "standard"
+
+checks:
+  test: "dotnet test"
+  lint: "dotnet build"
+
+mcp:
+  enabled: ["serena", "postgres", "redis", "grafana"]   # по умолчанию пусто; боевой доступ включается отдельно
+
+hooks:
+  protected_branches: ["main", "master"]
+  subtree_roots: []
+  migrations:
+    immutable: true
+    dir_markers: ["Migrations"]
+    extensions: [".cs"]
+  secrets:
+    extra_globs: ["appsettings.*.json", "secrets.json"]
+  format:
+    frontend_dir: "frontend"
+    eslint: true
+    prettier: true
+  index:
+    tool: "serena"
+    extensions: [".cs", ".ts", ".tsx", ".js", ".jsx"]

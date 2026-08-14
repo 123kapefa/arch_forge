@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArchForge.Analysis.Core\ArchForge.Analysis.Core.csproj" />
+    <ProjectReference Include="..\ArchForge.Analysis.Infrastructure.Roslyn\ArchForge.Analysis.Infrastructure.Roslyn.csproj" />
+    <ProjectReference Include="..\..\..\..\shared\ArchForge.SharedKernel\ArchForge.SharedKernel.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

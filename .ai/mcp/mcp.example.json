@@ -1,0 +1,34 @@
+{
+  "_comment": "Пример подключения MCP. Скопируйте нужные записи в .mcp.json (Claude Code) и включите осознанно. По умолчанию НИЧЕГО не включено. Секреты — только через переменные окружения, не в Git. Боевой доступ — отдельно и read-only.",
+  "mcpServers": {
+    "serena": {
+      "_note": "навигация по коду; локально",
+      "command": "serena",
+      "args": ["mcp"]
+    },
+    "postgres": {
+      "_note": "read-only, local/dev; строка подключения из окружения",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": { "DATABASE_URL": "${LOCAL_DATABASE_URL}" }
+    },
+    "redis": {
+      "_note": "диагностика кэша; local",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-redis"],
+      "env": { "REDIS_URL": "${LOCAL_REDIS_URL}" }
+    },
+    "grafana": {
+      "_note": "логи/метрики; production — только read-only и отдельно",
+      "command": "npx",
+      "args": ["-y", "mcp-grafana"],
+      "env": { "GRAFANA_URL": "${GRAFANA_URL}", "GRAFANA_API_KEY": "${GRAFANA_API_KEY}" }
+    },
+    "admin": {
+      "_note": "доменные операции через admin API приложения, не прямая запись в БД",
+      "command": "npx",
+      "args": ["-y", "your-admin-mcp"],
+      "env": { "ADMIN_API_URL": "${ADMIN_API_URL}", "ADMIN_API_TOKEN": "${ADMIN_API_TOKEN}" }
+    }
+  }
+}

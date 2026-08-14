@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArchForge.Analysis.Domain\ArchForge.Analysis.Domain.csproj" />
+    <ProjectReference Include="..\ArchForge.Analysis.Contracts\ArchForge.Analysis.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\..\shared\ArchForge.SharedKernel\ArchForge.SharedKernel.csproj" />
+    <ProjectReference Include="..\..\..\..\shared\ArchForge.Contracts\ArchForge.Contracts.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

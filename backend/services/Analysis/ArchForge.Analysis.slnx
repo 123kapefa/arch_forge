@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ArchForge.Analysis.Contracts/ArchForge.Analysis.Contracts.csproj" />
+    <Project Path="src/ArchForge.Analysis.Core/ArchForge.Analysis.Core.csproj" />
+    <Project Path="src/ArchForge.Analysis.Domain/ArchForge.Analysis.Domain.csproj" />
+    <Project Path="src/ArchForge.Analysis.Infrastructure.Roslyn/ArchForge.Analysis.Infrastructure.Roslyn.csproj" />
+    <Project Path="src/ArchForge.Analysis.Web/ArchForge.Analysis.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ArchForge.Analysis.Tests/ArchForge.Analysis.Tests.csproj" />
+  </Folder>
+  <Project Path="../../shared/ArchForge.Contracts/ArchForge.Contracts.csproj" />
+  <Project Path="../../shared/ArchForge.SharedKernel/ArchForge.SharedKernel.csproj" />
+</Solution>

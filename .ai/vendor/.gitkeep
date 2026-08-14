@@ -1,0 +1,3 @@
+# .ai/vendor/ — внешний исходный материал (чужие skills/workflows) как reference.
+# Не активные workflow: сначала изучить, затем адаптировать в .ai/skills/.
+# Короткая выжимка внешнего — в .ai/references/.
