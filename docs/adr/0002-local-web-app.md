@@ -1,7 +1,7 @@
 # 0002 — Локальное веб-приложение (.NET + React/React Flow)
 
 ## Статус
-Заменён на [0006](0006-continue-archlens-stack.md) (2026-08-14): arch_forge продолжает archlens (Node/TS + tree-sitter + React Flow), а не greenfield .NET. Ниже — исходное решение (для истории).
+Заменён [0006](0006-continue-archlens-stack.md), затем **восстановлен и уточнён** [0009](0009-dotnet-roslyn-microservices.md) (2026-08-14): разворот 0006 в Node/TS был ошибкой; 0009 вернул .NET + React/React Flow (фронт — свой клиент, [0010](0010-frontend-own-client.md)). Исходное решение снова актуально. Ниже — исходный текст.
 
 Исходно: Принято.
 
