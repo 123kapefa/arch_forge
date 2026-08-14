@@ -42,7 +42,6 @@
 .cov__seg--marker { background: #57c78a; }
 .cov__seg--heuristic { background: #d9a441; }
 .cov__seg--unknown { background: #6e7681; }
-.cov__drift { color: #ffb454; }
 
 /* Плашка (узел) */
 .plashka {
@@ -138,3 +137,32 @@
 .crumbs__home:hover { text-decoration: underline; }
 .crumbs__sep { color: #6e7681; }
 .crumbs__cur { color: #e6edf3; font-weight: 600; }
+
+/* Линт: кнопка, панель, нарушающее ребро (P1-F) */
+.lintbtn {
+  padding: 6px 10px; background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+  border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+.lintbtn:hover { background: #30363d; }
+.lintbtn.has-issues { color: #ffb454; border-color: #5e4d2e; }
+.lintbtn.is-on { background: #30363d; border-color: #58a6ff; }
+
+.lint {
+  position: absolute; top: 10px; left: 10px; bottom: 10px; width: 340px; z-index: 5;
+  display: flex; flex-direction: column; gap: 12px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+  padding: 12px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.45); color: #e6edf3;
+}
+.lint__head { display: flex; align-items: center; justify-content: space-between; }
+.lint__title { font-size: 15px; font-weight: 700; }
+.lint__block { display: flex; flex-direction: column; gap: 6px; }
+.lint__k { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: .03em; }
+.lint__none { color: #57c78a; font-size: 12px; }
+.lint__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.lint__drift { color: #ffb454; padding: 5px 8px; background: #241c0f; border: 1px solid #3d2f14; border-radius: 6px; overflow-wrap: anywhere; }
+.lint__viol { color: #ff9b9b; padding: 5px 8px; background: #2a1416; border: 1px solid #4a1f22; border-radius: 6px; cursor: pointer; overflow-wrap: anywhere; }
+.lint__viol:hover { background: #3a1a1e; }
+.lint__viol b { color: #e6edf3; }
+.lint__vl { font-size: 10px; color: #8b949e; }
+
+.edge-viol .react-flow__edge-path { stroke: #f85149; }

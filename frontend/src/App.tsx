@@ -5,17 +5,19 @@ import './App.css';
 
 import { fetchMap, type GraphDto, type CoverageDto } from './api';
 import { filterGraph, toFlow, toLayerFlow } from './graph';
+import { layerViolations, isLayerDirectionViolation } from './lint';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
 import { LayerNode, type LayerNodeData } from './nodes/LayerNode';
 import { Inspector } from './Inspector';
+import { LintPanel } from './LintPanel';
 import { layerColor } from './theme';
 
 const nodeTypes = { type: TypeNode, layer: LayerNode };
 const DEFAULT_PATH = ''; // без хардкода машины разработчика — путь вводит пользователь
 type Mode = 'layers' | 'types';
 
-function Coverage({ nodeCount, edgeCount, coverage, drift }: {
-  nodeCount: number; edgeCount: number; coverage: CoverageDto; drift: string[];
+function Coverage({ nodeCount, edgeCount, coverage }: {
+  nodeCount: number; edgeCount: number; coverage: CoverageDto;
 }) {
   const t = Math.max(coverage.total, 1);
   const pct = (n: number) => `${((n / t) * 100).toFixed(0)}%`;
@@ -27,7 +29,6 @@ function Coverage({ nodeCount, edgeCount, coverage, drift }: {
         <span className="cov__seg cov__seg--heuristic" style={{ width: pct(coverage.heuristic) }} title={`эвристика ${coverage.heuristic}`} />
         <span className="cov__seg cov__seg--unknown" style={{ width: pct(coverage.unknown) }} title={`unknown ${coverage.unknown}`} />
       </span>
-      {drift.length > 0 && <span className="cov__drift" title={drift.join('\n')}>⚠ {drift.length} дрейф</span>}
     </div>
   );
 }
@@ -35,11 +36,13 @@ function Coverage({ nodeCount, edgeCount, coverage, drift }: {
 export default function App() {
   const [pathInput, setPathInput] = useState(DEFAULT_PATH);
   const [loadedPath, setLoadedPath] = useState('');
-  const [graph, setGraph] = useState<GraphDto | null>(null);
+  const [graph, setGraph] = useState<GraphDto | null>(null);       // текущий вид (может быть проекцией слоя/фокуса)
+  const [fullGraph, setFullGraph] = useState<GraphDto | null>(null); // весь проект — для обзора/линта/списка слоёв
   const [mode, setMode] = useState<Mode>('layers'); // уровень: обзор слоёв / типы (меняется при приходе графа)
   const [layer, setLayer] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [lintOpen, setLintOpen] = useState(false);
   const [hideTests, setHideTests] = useState(false);
   const [hideIsolated, setHideIsolated] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,8 +50,8 @@ export default function App() {
   const reqSeq = useRef(0);
 
   // path/layer/focus передаются явно на вызове — нет стейл-замыканий. reqSeq отбрасывает устаревшие
-  // ответы (гонка). mode переключаем ТОЛЬКО когда пришёл соответствующий граф — иначе на миг
-  // отрисовался бы чужой уровень. При ошибке граф НЕ обнуляем — держим последний рабочий.
+  // ответы (гонка). mode переключаем ТОЛЬКО когда пришёл соответствующий граф. При ошибке граф держим.
+  // Полный граф (без layer/focus) сохраняем отдельно — линт/обзор считаем по всему проекту.
   const load = useCallback(async (p: string, nextLayer: string | null, nextFocus: string | null, resultMode: Mode) => {
     const id = ++reqSeq.current;
     setLoading(true);
@@ -57,6 +60,7 @@ export default function App() {
       const g = await fetchMap({ path: p, layer: nextLayer || undefined, focus: nextFocus || undefined });
       if (id !== reqSeq.current) return;
       setGraph(g);
+      if (!nextLayer && !nextFocus) setFullGraph(g);
       setMode(resultMode);
     } catch (e) {
       if (id !== reqSeq.current) return;
@@ -66,7 +70,6 @@ export default function App() {
     }
   }, []);
 
-  // «Разобрать»: грузим весь проект и встаём на обзор слоёв.
   const analyze = () => {
     const p = pathInput.trim();
     if (!p) return;
@@ -77,7 +80,6 @@ export default function App() {
     load(p, null, null, 'layers');
   };
 
-  // Провал в слой (обзор → типы) и подъём назад к обзору.
   const drillLayer = (l: string) => {
     setLayer(l);
     setFocus(null);
@@ -92,45 +94,70 @@ export default function App() {
     load(loadedPath, null, null, 'layers');
   }, [mode, layer, loading, loadedPath, load]);
 
-  // Esc: закрыть инспектор, иначе подняться к обзору слоёв. Без побочки внутри апдейтера setState.
+  // Переход из панели линта к узлу — фокус на нём (видно нарушающее ребро) + инспектор.
+  const goToNode = (id: string) => {
+    setLayer(null);
+    setFocus(id);
+    setSelectedId(id);
+    setLintOpen(false);
+    load(loadedPath, null, id, 'types');
+  };
+
+  // Esc: закрыть инспектор/линт, иначе подняться к обзору слоёв. Без побочки внутри апдейтера setState.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (selectedId) setSelectedId(null);
+      else if (lintOpen) setLintOpen(false);
       else if (mode === 'types') backToLayers();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, selectedId, backToLayers]);
+  }, [mode, selectedId, lintOpen, backToLayers]);
 
   const view = useMemo(
     () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
     [graph, hideTests, hideIsolated],
   );
-  // Обзор — из полного graph (карта слоёв не зависит от тумблеров); типы — из отфильтрованного view.
+  // Обзор — из полного graph (карта слоёв не зависит от уровня/фильтров); типы — из отфильтрованного view.
   const { nodes, edges } = useMemo(
-    () => (mode === 'layers' ? toLayerFlow(graph) : toFlow(view)),
-    [mode, graph, view],
+    () => (mode === 'layers' ? toLayerFlow(fullGraph) : toFlow(view)),
+    [mode, fullGraph, view],
   );
   const layers = useMemo(
-    () => (graph ? [...new Set(graph.nodes.map((n) => n.layer))].sort() : []),
-    [graph],
+    () => (fullGraph ? [...new Set(fullGraph.nodes.map((n) => n.layer))].sort() : []),
+    [fullGraph],
   );
-  // Свечение выбранного узла ведём от нашего selectedId, а не от внутреннего selection React Flow.
+  // Нарушения направления слоёв — всегда по ПОЛНОМУ проекту (иначе занижаются при drill).
+  const violations = useMemo(() => (fullGraph ? layerViolations(fullGraph) : []), [fullGraph]);
+  const violationIds = useMemo(() => new Set(violations.map((v) => v.id)), [violations]);
+
   const displayNodes = useMemo(
     () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
     [nodes, selectedId],
   );
-  // Инспектор — только на уровне типов; узел резолвим из вида по id (уйдёт из вида → панель закроется).
+  // Подсветка нарушающих рёбер красным. Тип-уровень — по id ребра; обзор — по слоям концов
+  // ребра (id узлов `layer:<Слой>`), общим правилом isLayerDirectionViolation (с tests-игнором).
+  const displayEdges = useMemo(
+    () => edges.map((e) => {
+      const bad = mode === 'types'
+        ? violationIds.has(e.id)
+        : isLayerDirectionViolation(e.source.replace(/^layer:/, ''), e.target.replace(/^layer:/, ''));
+      return bad
+        ? { ...e, style: { strokeWidth: 2 }, labelStyle: { fill: '#f85149', fontWeight: 700 }, className: 'edge-viol' }
+        : e;
+    }),
+    [edges, mode, violationIds],
+  );
   const selected = useMemo(
     () => (mode === 'types' && view && selectedId ? view.nodes.find((n) => n.id === selectedId) ?? null : null),
     [mode, view, selectedId],
   );
 
-  // Меняется при любой смене видимого набора → ремоунт ReactFlow → повторный fitView.
   const fitKey = [mode, layer ?? 'all', focus ?? '', hideTests, hideIsolated, nodes.length, edges.length].join('|');
   const emptyView = graph !== null && nodes.length === 0;
   const focusName = focus ? (graph?.nodes.find((n) => n.id === focus)?.name ?? focus) : null;
+  const lintCount = (fullGraph?.drift.length ?? 0) + violations.length;
 
   return (
     <div className="app">
@@ -192,14 +219,15 @@ export default function App() {
               </button>
             )}
 
-            {view && (
-              <Coverage
-                nodeCount={view.nodes.length}
-                edgeCount={view.edges.length}
-                coverage={graph.coverage}
-                drift={graph.drift}
-              />
-            )}
+            <button
+              className={`lintbtn${lintOpen ? ' is-on' : ''}${lintCount > 0 ? ' has-issues' : ''}`}
+              onClick={() => setLintOpen((o) => !o)}
+              title="дрейф от свода + нарушения слоёв (по всему проекту)"
+            >
+              ⚠ Линт · {lintCount}
+            </button>
+
+            {view && <Coverage nodeCount={view.nodes.length} edgeCount={view.edges.length} coverage={graph.coverage} />}
           </>
         )}
       </header>
@@ -216,7 +244,7 @@ export default function App() {
         <ReactFlow
           key={fitKey}
           nodes={displayNodes}
-          edges={edges}
+          edges={displayEdges}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.15 }}
@@ -238,6 +266,15 @@ export default function App() {
             maskColor="rgba(13,17,23,0.7)"
           />
         </ReactFlow>
+
+        {lintOpen && fullGraph && (
+          <LintPanel
+            drift={fullGraph.drift}
+            violations={violations}
+            onClose={() => setLintOpen(false)}
+            onGoTo={goToNode}
+          />
+        )}
 
         {selected && view && (
           <Inspector
