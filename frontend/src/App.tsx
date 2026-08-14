@@ -4,13 +4,15 @@ import '@xyflow/react/dist/style.css';
 import './App.css';
 
 import { fetchMap, type GraphDto, type CoverageDto } from './api';
-import { filterGraph, toFlow } from './graph';
+import { filterGraph, toFlow, toLayerFlow } from './graph';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
+import { LayerNode, type LayerNodeData } from './nodes/LayerNode';
 import { Inspector } from './Inspector';
 import { layerColor } from './theme';
 
-const nodeTypes = { type: TypeNode };
+const nodeTypes = { type: TypeNode, layer: LayerNode };
 const DEFAULT_PATH = ''; // без хардкода машины разработчика — путь вводит пользователь
+type Mode = 'layers' | 'types';
 
 function Coverage({ nodeCount, edgeCount, coverage, drift }: {
   nodeCount: number; edgeCount: number; coverage: CoverageDto; drift: string[];
@@ -34,6 +36,7 @@ export default function App() {
   const [pathInput, setPathInput] = useState(DEFAULT_PATH);
   const [loadedPath, setLoadedPath] = useState('');
   const [graph, setGraph] = useState<GraphDto | null>(null);
+  const [mode, setMode] = useState<Mode>('layers'); // уровень: обзор слоёв / типы (меняется при приходе графа)
   const [layer, setLayer] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -43,9 +46,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const reqSeq = useRef(0);
 
-  // path/layer/focus передаются явно на вызове — нет стейл-замыканий.
-  // reqSeq отбрасывает устаревшие ответы (гонка). При ошибке граф НЕ обнуляем — держим последний рабочий.
-  const load = useCallback(async (p: string, nextLayer: string | null, nextFocus: string | null) => {
+  // path/layer/focus передаются явно на вызове — нет стейл-замыканий. reqSeq отбрасывает устаревшие
+  // ответы (гонка). mode переключаем ТОЛЬКО когда пришёл соответствующий граф — иначе на миг
+  // отрисовался бы чужой уровень. При ошибке граф НЕ обнуляем — держим последний рабочий.
+  const load = useCallback(async (p: string, nextLayer: string | null, nextFocus: string | null, resultMode: Mode) => {
     const id = ++reqSeq.current;
     setLoading(true);
     setError(null);
@@ -53,6 +57,7 @@ export default function App() {
       const g = await fetchMap({ path: p, layer: nextLayer || undefined, focus: nextFocus || undefined });
       if (id !== reqSeq.current) return;
       setGraph(g);
+      setMode(resultMode);
     } catch (e) {
       if (id !== reqSeq.current) return;
       setError(String(e));
@@ -61,7 +66,7 @@ export default function App() {
     }
   }, []);
 
-  // «Разобрать»: фиксируем загруженный путь и сбрасываем срез + выбор.
+  // «Разобрать»: грузим весь проект и встаём на обзор слоёв.
   const analyze = () => {
     const p = pathInput.trim();
     if (!p) return;
@@ -69,21 +74,44 @@ export default function App() {
     setLayer(null);
     setFocus(null);
     setSelectedId(null);
-    load(p, null, null);
+    load(p, null, null, 'layers');
   };
 
-  // Esc закрывает инспектор.
+  // Провал в слой (обзор → типы) и подъём назад к обзору.
+  const drillLayer = (l: string) => {
+    setLayer(l);
+    setFocus(null);
+    setSelectedId(null);
+    load(loadedPath, l, null, 'types');
+  };
+  const backToLayers = useCallback(() => {
+    if (mode === 'layers' && layer === null && !loading) return; // уже на обзоре — не дёргаем сеть
+    setLayer(null);
+    setFocus(null);
+    setSelectedId(null);
+    load(loadedPath, null, null, 'layers');
+  }, [mode, layer, loading, loadedPath, load]);
+
+  // Esc: закрыть инспектор, иначе подняться к обзору слоёв. Без побочки внутри апдейтера setState.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedId(null); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (selectedId) setSelectedId(null);
+      else if (mode === 'types') backToLayers();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [mode, selectedId, backToLayers]);
 
   const view = useMemo(
     () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
     [graph, hideTests, hideIsolated],
   );
-  const { nodes, edges } = useMemo(() => toFlow(view), [view]);
+  // Обзор — из полного graph (карта слоёв не зависит от тумблеров); типы — из отфильтрованного view.
+  const { nodes, edges } = useMemo(
+    () => (mode === 'layers' ? toLayerFlow(graph) : toFlow(view)),
+    [mode, graph, view],
+  );
   const layers = useMemo(
     () => (graph ? [...new Set(graph.nodes.map((n) => n.layer))].sort() : []),
     [graph],
@@ -93,15 +121,16 @@ export default function App() {
     () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
     [nodes, selectedId],
   );
-  // Инспектируемый узел резолвим из ВИДА (учитывает фильтры) по id — уйдёт из вида → панель закроется.
+  // Инспектор — только на уровне типов; узел резолвим из вида по id (уйдёт из вида → панель закроется).
   const selected = useMemo(
-    () => (view && selectedId ? view.nodes.find((n) => n.id === selectedId) ?? null : null),
-    [view, selectedId],
+    () => (mode === 'types' && view && selectedId ? view.nodes.find((n) => n.id === selectedId) ?? null : null),
+    [mode, view, selectedId],
   );
 
   // Меняется при любой смене видимого набора → ремоунт ReactFlow → повторный fitView.
-  const fitKey = [layer ?? 'all', focus ?? '', hideTests, hideIsolated, nodes.length, edges.length].join('|');
+  const fitKey = [mode, layer ?? 'all', focus ?? '', hideTests, hideIsolated, nodes.length, edges.length].join('|');
   const emptyView = graph !== null && nodes.length === 0;
+  const focusName = focus ? (graph?.nodes.find((n) => n.id === focus)?.name ?? focus) : null;
 
   return (
     <div className="app">
@@ -120,15 +149,27 @@ export default function App() {
 
         {graph && (
           <>
+            <nav className="crumbs">
+              <button className="crumbs__home" onClick={backToLayers} title="к обзору слоёв">
+                {graph.project}
+              </button>
+              {mode === 'types' && (
+                <>
+                  <span className="crumbs__sep">›</span>
+                  <span className="crumbs__cur">{layer ?? 'все типы'}</span>
+                  {focusName && <><span className="crumbs__sep">›</span><span className="crumbs__cur">{focusName}</span></>}
+                </>
+              )}
+            </nav>
+
             <select
-              value={layer ?? ''}
+              value={mode === 'types' ? (layer ?? '') : ''}
               onChange={(e) => {
                 const v = e.target.value || null;
-                setLayer(v); setFocus(null);
-                load(loadedPath, v, null);
+                if (v) drillLayer(v); else backToLayers();
               }}
             >
-              <option value="">все слои</option>
+              <option value="">обзор слоёв</option>
               {layers.map((l) => <option key={l} value={l}>{l}</option>)}
             </select>
 
@@ -144,10 +185,10 @@ export default function App() {
             {focus && (
               <button
                 className="bar__focus"
-                onClick={() => { setFocus(null); load(loadedPath, layer, null); }}
+                onClick={() => { setFocus(null); load(loadedPath, layer, null, 'types'); }}
                 title="сбросить фокус"
               >
-                ✕ focus: {graph.nodes.find((n) => n.id === focus)?.name ?? focus}
+                ✕ focus: {focusName}
               </button>
             )}
 
@@ -167,7 +208,7 @@ export default function App() {
 
       <div className="canvas">
         {!graph && !error && (
-          <div className="hint">Укажи путь к .NET-проекту и нажми «Разобрать». Клик по плашке — инспектор (роль, дрейф, связи, «открыть в коде»).</div>
+          <div className="hint">Укажи путь к .NET-проекту и нажми «Разобрать». Сверху — обзор слоёв; клик по слою — провал в его типы.</div>
         )}
         {emptyView && (
           <div className="hint">Под текущие фильтры ничего не попало — ослабь «без tests»/«без одиночек» или смени слой.</div>
@@ -181,7 +222,10 @@ export default function App() {
           fitViewOptions={{ padding: 0.15 }}
           minZoom={0.1}
           onlyRenderVisibleElements
-          onNodeClick={(_, n) => setSelectedId(n.id)}
+          onNodeClick={(_, n) => {
+            if (mode === 'layers') drillLayer((n.data as LayerNodeData).layer);
+            else setSelectedId(n.id);
+          }}
           onPaneClick={() => setSelectedId(null)}
           proOptions={{ hideAttribution: true }}
         >
@@ -190,7 +234,7 @@ export default function App() {
           <MiniMap
             pannable
             zoomable
-            nodeColor={(n) => layerColor((n.data as TypeNodeData).layer)}
+            nodeColor={(n) => layerColor((n.data as TypeNodeData | LayerNodeData).layer)}
             maskColor="rgba(13,17,23,0.7)"
           />
         </ReactFlow>
@@ -200,7 +244,7 @@ export default function App() {
             node={selected}
             graph={view}
             onClose={() => setSelectedId(null)}
-            onFocus={(id) => { setFocus(id); load(loadedPath, layer, id); }}
+            onFocus={(id) => { setFocus(id); load(loadedPath, layer, id, 'types'); }}
           />
         )}
       </div>

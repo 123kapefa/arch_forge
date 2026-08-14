@@ -1,0 +1,68 @@
+import { describe, it, expect } from 'vitest';
+import type { GraphDto } from './api';
+import { aggregateLayers, toLayerFlow } from './graph';
+
+const g: GraphDto = {
+  project: 'demo',
+  coverage: { marker: 0, heuristic: 0, unknown: 0, total: 0 },
+  drift: [],
+  nodes: [
+    { id: 'D:A', name: 'A', kind: 'class', layer: 'Domain', role: '', via: 'marker', file: '', drift: [] },
+    { id: 'D:B', name: 'B', kind: 'class', layer: 'Domain', role: '', via: 'marker', file: '', drift: [] },
+    { id: 'I:C', name: 'C', kind: 'class', layer: 'Infrastructure', role: '', via: 'marker', file: '', drift: [] },
+    { id: 'T:t', name: 't', kind: 'class', layer: 'tests', role: '', via: 'unknown', file: '', drift: [] },
+  ],
+  edges: [
+    { id: 'e1', source: 'D:A', target: 'D:B', kind: 'holds' }, // внутри Domain — не считается
+    { id: 'e2', source: 'D:B', target: 'I:C', kind: 'uses' },  // Domain → Infrastructure
+    { id: 'e3', source: 'D:A', target: 'I:C', kind: 'uses' },  // Domain → Infrastructure (вес 2)
+    { id: 'e4', source: 'D:A', target: 'T:t', kind: 'uses' },  // Domain → tests
+  ],
+};
+
+describe('aggregateLayers', () => {
+  it('считает типы по слоям (сортировка по имени)', () => {
+    const { layers } = aggregateLayers(g);
+    expect(layers).toEqual([
+      { layer: 'Domain', count: 2 },
+      { layer: 'Infrastructure', count: 1 },
+      { layer: 'tests', count: 1 },
+    ]);
+  });
+
+  it('межслойные связи с весом; внутрислойные отброшены', () => {
+    const { links } = aggregateLayers(g);
+    expect(links).toContainEqual({ source: 'Domain', target: 'Infrastructure', weight: 2 });
+    expect(links).toContainEqual({ source: 'Domain', target: 'tests', weight: 1 });
+    expect(links).toHaveLength(2); // Domain→Domain (e1) не в счёт
+  });
+
+  it('имена слоёв с пробелом не ломают агрегат (нет хрупкого разделителя ключа)', () => {
+    const gs: GraphDto = {
+      ...g,
+      nodes: [
+        { ...g.nodes[0], id: 'x1', layer: 'My Layer' },
+        { ...g.nodes[1], id: 'x2', layer: 'Other Layer' },
+      ],
+      edges: [{ id: 'e', source: 'x1', target: 'x2', kind: 'uses' }],
+    };
+    const { layers, links } = aggregateLayers(gs);
+    expect(layers.map((l) => l.layer)).toEqual(['My Layer', 'Other Layer']);
+    expect(links).toEqual([{ source: 'My Layer', target: 'Other Layer', weight: 1 }]);
+  });
+});
+
+describe('toLayerFlow', () => {
+  it('null → пусто', () => {
+    expect(toLayerFlow(null)).toEqual({ nodes: [], edges: [] });
+  });
+
+  it('слои → узлы layer:* (type=layer), межслойные рёбра с меткой-весом, координаты конечны', () => {
+    const { nodes, edges } = toLayerFlow(g);
+    expect(nodes.map((n) => n.id).sort()).toEqual(['layer:Domain', 'layer:Infrastructure', 'layer:tests']);
+    expect(nodes.every((n) => n.type === 'layer')).toBe(true);
+    const e = edges.find((x) => x.source === 'layer:Domain' && x.target === 'layer:Infrastructure');
+    expect(e?.label).toBe('2');
+    expect(nodes.every((n) => Number.isFinite(n.position.x))).toBe(true);
+  });
+});
