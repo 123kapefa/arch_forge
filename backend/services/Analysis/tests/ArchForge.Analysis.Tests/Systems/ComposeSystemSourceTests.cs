@@ -9,6 +9,8 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
     private const string Workspace = "/Users/123kapefa/Documents/projects/product-site-workspace";
     private const string RealAuthCompose = Workspace + "/auth-service/docker-compose.yml";
 
+    // ---- helpers ----
+
     private static string WriteCompose(string yaml)
     {
         var dir = Path.Combine(Path.GetTempPath(), "archforge_compose_" + Guid.NewGuid().ToString("N"));
@@ -17,6 +19,17 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         File.WriteAllText(f, yaml);
         return f;
     }
+
+    // Ребро по ИМЕНАМ узлов (id теперь namespaced — <system>/<svc>).
+    private static bool HasEdge(SystemGraph g, string srcName, string dstName, string kind)
+    {
+        var byId = g.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
+        return g.Edges.Any(e => e.Kind == kind
+            && byId.TryGetValue(e.Source, out var s) && s.Name == srcName
+            && byId.TryGetValue(e.Target, out var d) && d.Name == dstName);
+    }
+
+    // ---- unit-фикстуры ----
 
     [Fact]
     public void Builds_services_datastores_and_rwdb_edges()
@@ -39,7 +52,7 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
             var g = new ComposeSystemSource().Read(f);
             Assert.Contains(g.Nodes, n => n.Name == "api" && n.Kind == SystemNodeKind.Service);
             Assert.Contains(g.Nodes, n => n.Name == "app-db" && n.Kind == SystemNodeKind.Datastore);
-            Assert.Contains(g.Edges, e => e is { Source: "api", Target: "app-db", Kind: "rw-db" });
+            Assert.True(HasEdge(g, "api", "app-db", "rw-db"));
             Assert.Empty(g.Problems); // один писатель
         }
         finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
@@ -62,7 +75,8 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         try
         {
             var g = new ComposeSystemSource().Read(f);
-            Assert.Contains(g.Problems, p => p.Kind == "shared-db" && p.Location == "shared-db");
+            Assert.Contains(g.Problems, p =>
+                p.Kind == "shared-db" && g.Nodes.Any(n => n.Id == p.Location && n.Name == "shared-db"));
         }
         finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
     }
@@ -81,12 +95,77 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         {
             var g = new ComposeSystemSource().Read(f);
             Assert.Contains(g.Nodes, n => n.Kind == SystemNodeKind.External && n.Name == "${CATALOG_DB_CONNECTION}");
-            Assert.Contains(g.Edges, e => e is { Deferred: true, Target: "${CATALOG_DB_CONNECTION}", Kind: "rw-db" });
+            Assert.True(HasEdge(g, "api", "${CATALOG_DB_CONNECTION}", "rw-db"));
+            Assert.Contains(g.Edges, e => e is { Deferred: true, Target: "${CATALOG_DB_CONNECTION}" });
         }
         finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
     }
 
-    // Реальный таргет: честный системный граф из настоящего compose auth-service (де-риск P1.5-0).
+    // Находка ревью #1: одинаковые имена сервисов в РАЗНЫХ compose не должны сливаться в один узел.
+    [Fact]
+    public void Same_service_names_in_different_composes_do_not_merge()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_multi_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "sysA"));
+        Directory.CreateDirectory(Path.Combine(root, "sysB"));
+        File.WriteAllText(Path.Combine(root, "sysA", "docker-compose.yml"), """
+            services:
+              api: { image: ghcr.io/ns/app-a:1, environment: { ConnectionStrings__Db: "Host=db" } }
+              db:  { image: postgres:16 }
+            """);
+        File.WriteAllText(Path.Combine(root, "sysB", "docker-compose.yml"), """
+            services:
+              api: { image: ghcr.io/ns/app-b:1, environment: { ConnectionStrings__Db: "Host=db" } }
+              db:  { image: postgres:16 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.Equal(2, g.Nodes.Count(n => n.Name == "api")); // две разные системы — два узла
+            Assert.Equal(2, g.Nodes.Count(n => n.Name == "db"));
+            Assert.Empty(g.Problems); // каждый api пишет в СВОЮ db → не общая
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // Находка ревью #4: exporter-образ (postgres-exporter) — это сервис мониторинга, а не Datastore.
+    [Fact]
+    public void Exporter_image_is_not_classified_as_datastore()
+    {
+        var f = WriteCompose("""
+            services:
+              pg-exporter: { image: quay.io/community/postgres-exporter:v0.17.1 }
+              db:          { image: postgres:16 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Name == "pg-exporter" && n.Kind == SystemNodeKind.Service);
+            Assert.Contains(g.Nodes, n => n.Name == "db" && n.Kind == SystemNodeKind.Datastore);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Находка ревью #3: два build-only сервиса (без образа) в одну БД → НЕ выдумываем общую БД.
+    [Fact]
+    public void Build_only_writers_do_not_fabricate_shared_db()
+    {
+        var f = WriteCompose("""
+            services:
+              api:     { build: ., environment: { ConnectionStrings__Db: "Host=db" } }
+              migrate: { build: ., environment: { ConnectionStrings__Db: "Host=db" } }
+              db:      { image: postgres:16 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Empty(g.Problems); // образов нет → идентичность неизвестна → не выдумываем
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // ---- реальный таргет (де-риск, локально; на CI скипается) ----
+
     [SkippableFact]
     public void Real_target_auth_service_honest_graph()
     {
@@ -97,13 +176,12 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         Assert.Contains(g.Nodes, n => n.Name == "auth-api" && n.Kind == SystemNodeKind.Service);
         Assert.Contains(g.Nodes, n => n.Name == "postgres-auth" && n.Kind == SystemNodeKind.Datastore);
         Assert.Contains(g.Nodes, n => n.Name == "redis-auth" && n.Kind == SystemNodeKind.Datastore);
-        Assert.Contains(g.Edges, e => e is { Source: "auth-api", Target: "postgres-auth", Kind: "rw-db" });
-        Assert.Contains(g.Edges, e => e is { Source: "auth-api", Target: "redis-auth", Kind: "rw-db" });
+        Assert.True(HasEdge(g, "auth-api", "postgres-auth", "rw-db"));
+        Assert.True(HasEdge(g, "auth-api", "redis-auth", "rw-db"));
         // auth-api + auth-migrate — один образ → это НЕ общая БД (детектор не выдумывает)
         Assert.DoesNotContain(g.Problems, p => p.Kind == "shared-db");
     }
 
-    // Масштаб/робастность: разбор ВСЕГО messy-воркспейса (несколько compose) без падения.
     [SkippableFact]
     public void Real_workspace_multi_service_discovery()
     {
@@ -115,8 +193,8 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         output.WriteLine($"сервисов={services} хранилищ={stores} рёбер={g.Edges.Count} проблем={g.Problems.Count}");
         foreach (var p in g.Problems) output.WriteLine($"  ⚠ {p.Severity} {p.Kind}: {p.Title}");
 
-        // мульти-сервисный discovery работает и не падает на реальном воркспейсе
-        Assert.True(services >= 2 && stores >= 2);
+        Assert.True(services >= 2 && stores >= 2); // мульти-сервисный discovery без падения
+        Assert.Empty(g.Problems);                  // таргет чист — детектор не выдумывает
         // NB: product_site использует docker-compose-dev.yaml (не базовое имя) → пока не подхватывается;
         // папочный discovery (P1.5-B) это закроет.
     }

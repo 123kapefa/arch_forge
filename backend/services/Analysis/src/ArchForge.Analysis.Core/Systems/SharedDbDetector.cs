@@ -3,8 +3,10 @@ namespace ArchForge.Analysis.Core.Systems;
 // Детектор системного анти-паттерна «общая БД»: в одно хранилище пишут ≥2 РАЗНЫХ приложения.
 // Различаем пишущих по НОРМАЛИЗОВАННОМУ образу (без реестра/тега), а не по контейнеру —
 // иначе api + migrate одного сервиса (один образ, разные контейнеры) дали бы ложную «общую БД».
-// Чистая функция поверх собранного графа (как линт Фазы 1). Честность: отложенные (Deferred) рёбра
-// не считаем — target ещё не разрешён, выдумывать нарушение нельзя (adr/0008).
+// Писателя без образа (build:-сервис) НЕ считаем отдельной идентичностью — иначе api+migrate через build
+// снова дали бы ложную находку. Плата за честность: общую БД между двумя build-only сервисами можем
+// пропустить (false negative), но не выдумываем (false positive) — приоритет чистоты сигнала (adr/0008).
+// Отложенные (Deferred) рёбра не считаем — target ещё не разрешён.
 public static class SharedDbDetector
 {
     public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph)
@@ -16,7 +18,8 @@ public static class SharedDbDetector
         {
             var writers = graph.Edges
                 .Where(e => e.Kind == "rw-db" && e.Target == ds.Id && !e.Deferred)
-                .Select(e => WriterIdentity(e.Source, nodeById))
+                .Select(e => nodeById.TryGetValue(e.Source, out var src) ? NormalizeImage(src.Image) : null)
+                .Where(id => id is not null)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -30,16 +33,12 @@ public static class SharedDbDetector
         return problems;
     }
 
-    // Идентичность пишущего = нормализованный образ (api и migrate одного образа = одно приложение).
-    private static string WriterIdentity(string sourceId, IReadOnlyDictionary<string, SystemNode> nodeById) =>
-        nodeById.TryGetValue(sourceId, out var n) && NormalizeImage(n.Image) is { } img ? img : sourceId;
-
     // «ghcr.io/ns/kalmykov-auth-api:stage» → «kalmykov-auth-api» (без реестра и тега).
+    // NB: реестр с портом (host:5000/img) сломал бы split по ':' — в наших образах не встречается (P1.5-A).
     internal static string? NormalizeImage(string? image)
     {
         if (string.IsNullOrWhiteSpace(image)) return null;
-        var noTag = image.Split(':', 2)[0];      // до первого ':' (порт реестра в наших образах не встречается)
-        var last = noTag.Split('/')[^1];
+        var last = image.Split('/')[^1].Split(':', 2)[0];
         return string.IsNullOrWhiteSpace(last) ? null : last;
     }
 }
