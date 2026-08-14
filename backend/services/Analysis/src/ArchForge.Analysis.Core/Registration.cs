@@ -10,6 +10,7 @@ public static class Registration
         services.AddSingleton(ConventionPack.Default());
         services.AddSingleton<TypeClassifier>();
         services.AddTransient<Features.Analysis.AnalyzeSolutionHandler>();
+        services.AddTransient<Features.Imports.GetImportsHandler>();
         services.AddEndpoints(typeof(Registration).Assembly);
         return services;
     }

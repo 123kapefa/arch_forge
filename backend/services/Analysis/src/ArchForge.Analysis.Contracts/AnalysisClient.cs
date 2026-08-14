@@ -19,4 +19,14 @@ public sealed class AnalysisClient(HttpClient http)
             return null;
         return await response.Content.ReadFromJsonAsync<GraphDto>(ct);
     }
+
+    /// <summary>Прочитать импорты (библиотеки) проекта по пути. null — если Analysis не смог.</summary>
+    public async Task<ImportsDto?> GetImportsAsync(string path, CancellationToken ct = default)
+    {
+        string url = $"/api/imports?path={Uri.EscapeDataString(path)}";
+        using HttpResponseMessage response = await http.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+        return await response.Content.ReadFromJsonAsync<ImportsDto>(ct);
+    }
 }

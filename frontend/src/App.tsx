@@ -3,13 +3,14 @@ import { ReactFlow, Background, Controls, MiniMap } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './App.css';
 
-import { fetchMap, type GraphDto, type CoverageDto } from './api';
+import { fetchMap, fetchImports, type GraphDto, type CoverageDto, type ImportsDto } from './api';
 import { filterGraph, toFlow, toLayerFlow } from './graph';
 import { layerViolations, isLayerDirectionViolation } from './lint';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
 import { LayerNode, type LayerNodeData } from './nodes/LayerNode';
 import { Inspector } from './Inspector';
 import { LintPanel } from './LintPanel';
+import { ImportsPanel } from './ImportsPanel';
 import { layerColor } from './theme';
 
 const nodeTypes = { type: TypeNode, layer: LayerNode };
@@ -43,6 +44,9 @@ export default function App() {
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lintOpen, setLintOpen] = useState(false);
+  const [importsOpen, setImportsOpen] = useState(false);
+  const [imports, setImports] = useState<ImportsDto | null>(null);
+  const [importsLoading, setImportsLoading] = useState(false);
   const [hideTests, setHideTests] = useState(false);
   const [hideIsolated, setHideIsolated] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +81,9 @@ export default function App() {
     setLayer(null);
     setFocus(null);
     setSelectedId(null);
+    setImports(null);       // новый проект — сбросить кеш импортов
+    setImportsOpen(false);
+    setLintOpen(false);
     load(p, null, null, 'layers');
   };
 
@@ -103,23 +110,38 @@ export default function App() {
     load(loadedPath, null, id, 'types');
   };
 
-  // Esc: закрыть инспектор/линт, иначе подняться к обзору слоёв. Без побочки внутри апдейтера setState.
+  // Импорты грузим лениво при первом открытии панели. Панели слева взаимоисключаемы.
+  const toggleImports = () => {
+    setLintOpen(false);
+    const next = !importsOpen;
+    setImportsOpen(next);
+    if (next && !imports && loadedPath) {
+      setImportsLoading(true);
+      fetchImports(loadedPath)
+        .then(setImports)
+        .catch((e) => setError(String(e)))
+        .finally(() => setImportsLoading(false));
+    }
+  };
+  const toggleLint = () => { setImportsOpen(false); setLintOpen((o) => !o); };
+
+  // Esc: закрыть инспектор/панели, иначе подняться к обзору слоёв. Без побочки внутри апдейтера setState.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (selectedId) setSelectedId(null);
+      else if (importsOpen) setImportsOpen(false);
       else if (lintOpen) setLintOpen(false);
       else if (mode === 'types') backToLayers();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, selectedId, lintOpen, backToLayers]);
+  }, [mode, selectedId, lintOpen, importsOpen, backToLayers]);
 
   const view = useMemo(
     () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
     [graph, hideTests, hideIsolated],
   );
-  // Обзор — из полного graph (карта слоёв не зависит от уровня/фильтров); типы — из отфильтрованного view.
   const { nodes, edges } = useMemo(
     () => (mode === 'layers' ? toLayerFlow(fullGraph) : toFlow(view)),
     [mode, fullGraph, view],
@@ -128,7 +150,6 @@ export default function App() {
     () => (fullGraph ? [...new Set(fullGraph.nodes.map((n) => n.layer))].sort() : []),
     [fullGraph],
   );
-  // Нарушения направления слоёв — всегда по ПОЛНОМУ проекту (иначе занижаются при drill).
   const violations = useMemo(() => (fullGraph ? layerViolations(fullGraph) : []), [fullGraph]);
   const violationIds = useMemo(() => new Set(violations.map((v) => v.id)), [violations]);
 
@@ -136,8 +157,6 @@ export default function App() {
     () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
     [nodes, selectedId],
   );
-  // Подсветка нарушающих рёбер красным. Тип-уровень — по id ребра; обзор — по слоям концов
-  // ребра (id узлов `layer:<Слой>`), общим правилом isLayerDirectionViolation (с tests-игнором).
   const displayEdges = useMemo(
     () => edges.map((e) => {
       const bad = mode === 'types'
@@ -220,8 +239,15 @@ export default function App() {
             )}
 
             <button
+              className={`lintbtn${importsOpen ? ' is-on' : ''}`}
+              onClick={toggleImports}
+              title="сторонние библиотеки: версии, кто использует, конфликты"
+            >
+              📦 Импорты
+            </button>
+            <button
               className={`lintbtn${lintOpen ? ' is-on' : ''}${lintCount > 0 ? ' has-issues' : ''}`}
-              onClick={() => setLintOpen((o) => !o)}
+              onClick={toggleLint}
               title="дрейф от свода + нарушения слоёв (по всему проекту)"
             >
               ⚠ Линт · {lintCount}
@@ -266,6 +292,8 @@ export default function App() {
             maskColor="rgba(13,17,23,0.7)"
           />
         </ReactFlow>
+
+        {importsOpen && <ImportsPanel imports={imports} loading={importsLoading} onClose={() => setImportsOpen(false)} />}
 
         {lintOpen && fullGraph && (
           <LintPanel
