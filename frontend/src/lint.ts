@@ -14,6 +14,16 @@ export function layerRank(layer: string): number {
   return RANK[layer.toLowerCase()] ?? 1;
 }
 
+/**
+ * Нарушение направления слоёв: source (зависящий) — внутреннее target (от кого зависит).
+ * tests игнорируется (тесты вправе тянуть любой слой). Единый источник правила — используется
+ * и для списка нарушений, и для подсветки на обоих уровнях.
+ */
+export function isLayerDirectionViolation(sourceLayer: string, targetLayer: string): boolean {
+  if (sourceLayer.toLowerCase() === 'tests' || targetLayer.toLowerCase() === 'tests') return false;
+  return layerRank(sourceLayer) < layerRank(targetLayer);
+}
+
 export interface Violation {
   id: string; // id ребра — для подсветки
   source: string;
@@ -24,7 +34,7 @@ export interface Violation {
   toLayer: string;
 }
 
-/** Рёбра, нарушающие направление слоёв: источник (зависящий) — внутреннее цели (от кого зависит). tests игнорируем. */
+/** Рёбра тип-графа, нарушающие направление слоёв. */
 export function layerViolations(g: GraphDto): Violation[] {
   const info = new Map(g.nodes.map((n) => [n.id, n]));
   const out: Violation[] = [];
@@ -32,8 +42,7 @@ export function layerViolations(g: GraphDto): Violation[] {
     const s = info.get(e.source);
     const t = info.get(e.target);
     if (!s || !t) continue;
-    if (s.layer.toLowerCase() === 'tests' || t.layer.toLowerCase() === 'tests') continue;
-    if (layerRank(s.layer) < layerRank(t.layer)) {
+    if (isLayerDirectionViolation(s.layer, t.layer)) {
       out.push({
         id: e.id,
         source: e.source,

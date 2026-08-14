@@ -42,7 +42,6 @@
 .cov__seg--marker { background: #57c78a; }
 .cov__seg--heuristic { background: #d9a441; }
 .cov__seg--unknown { background: #6e7681; }
-.cov__drift { color: #ffb454; }
 
 /* Плашка (узел) */
 .plashka {
@@ -166,4 +165,4 @@
 .lint__viol b { color: #e6edf3; }
 .lint__vl { font-size: 10px; color: #8b949e; }
 
-.edge-viol .react-flow__edge-path { stroke: #f85149 !important; }
+.edge-viol .react-flow__edge-path { stroke: #f85149; }

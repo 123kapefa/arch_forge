@@ -5,7 +5,7 @@ import './App.css';
 
 import { fetchMap, type GraphDto, type CoverageDto } from './api';
 import { filterGraph, toFlow, toLayerFlow } from './graph';
-import { layerViolations, layerRank } from './lint';
+import { layerViolations, isLayerDirectionViolation } from './lint';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
 import { LayerNode, type LayerNodeData } from './nodes/LayerNode';
 import { Inspector } from './Inspector';
@@ -36,7 +36,8 @@ function Coverage({ nodeCount, edgeCount, coverage }: {
 export default function App() {
   const [pathInput, setPathInput] = useState(DEFAULT_PATH);
   const [loadedPath, setLoadedPath] = useState('');
-  const [graph, setGraph] = useState<GraphDto | null>(null);
+  const [graph, setGraph] = useState<GraphDto | null>(null);       // текущий вид (может быть проекцией слоя/фокуса)
+  const [fullGraph, setFullGraph] = useState<GraphDto | null>(null); // весь проект — для обзора/линта/списка слоёв
   const [mode, setMode] = useState<Mode>('layers'); // уровень: обзор слоёв / типы (меняется при приходе графа)
   const [layer, setLayer] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
@@ -50,6 +51,7 @@ export default function App() {
 
   // path/layer/focus передаются явно на вызове — нет стейл-замыканий. reqSeq отбрасывает устаревшие
   // ответы (гонка). mode переключаем ТОЛЬКО когда пришёл соответствующий граф. При ошибке граф держим.
+  // Полный граф (без layer/focus) сохраняем отдельно — линт/обзор считаем по всему проекту.
   const load = useCallback(async (p: string, nextLayer: string | null, nextFocus: string | null, resultMode: Mode) => {
     const id = ++reqSeq.current;
     setLoading(true);
@@ -58,6 +60,7 @@ export default function App() {
       const g = await fetchMap({ path: p, layer: nextLayer || undefined, focus: nextFocus || undefined });
       if (id !== reqSeq.current) return;
       setGraph(g);
+      if (!nextLayer && !nextFocus) setFullGraph(g);
       setMode(resultMode);
     } catch (e) {
       if (id !== reqSeq.current) return;
@@ -91,7 +94,7 @@ export default function App() {
     load(loadedPath, null, null, 'layers');
   }, [mode, layer, loading, loadedPath, load]);
 
-  // Переход из панели линта к конкретному узлу — фокус на нём (видно нарушающее ребро) + инспектор.
+  // Переход из панели линта к узлу — фокус на нём (видно нарушающее ребро) + инспектор.
   const goToNode = (id: string) => {
     setLayer(null);
     setFocus(id);
@@ -116,30 +119,32 @@ export default function App() {
     () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
     [graph, hideTests, hideIsolated],
   );
+  // Обзор — из полного graph (карта слоёв не зависит от уровня/фильтров); типы — из отфильтрованного view.
   const { nodes, edges } = useMemo(
-    () => (mode === 'layers' ? toLayerFlow(graph) : toFlow(view)),
-    [mode, graph, view],
+    () => (mode === 'layers' ? toLayerFlow(fullGraph) : toFlow(view)),
+    [mode, fullGraph, view],
   );
   const layers = useMemo(
-    () => (graph ? [...new Set(graph.nodes.map((n) => n.layer))].sort() : []),
-    [graph],
+    () => (fullGraph ? [...new Set(fullGraph.nodes.map((n) => n.layer))].sort() : []),
+    [fullGraph],
   );
-  // Нарушения направления слоёв — из полного графа (не зависят от уровня/фильтров).
-  const violations = useMemo(() => (graph ? layerViolations(graph) : []), [graph]);
+  // Нарушения направления слоёв — всегда по ПОЛНОМУ проекту (иначе занижаются при drill).
+  const violations = useMemo(() => (fullGraph ? layerViolations(fullGraph) : []), [fullGraph]);
   const violationIds = useMemo(() => new Set(violations.map((v) => v.id)), [violations]);
 
   const displayNodes = useMemo(
     () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
     [nodes, selectedId],
   );
-  // Подсветка нарушающих рёбер красным: тип-уровень — по id ребра; обзор — по рангам слоёв в id `A->B`.
+  // Подсветка нарушающих рёбер красным. Тип-уровень — по id ребра; обзор — по слоям концов
+  // ребра (id узлов `layer:<Слой>`), общим правилом isLayerDirectionViolation (с tests-игнором).
   const displayEdges = useMemo(
     () => edges.map((e) => {
-      let bad = false;
-      if (mode === 'types') bad = violationIds.has(e.id);
-      else { const [a, b] = e.id.split('->'); bad = !!a && !!b && layerRank(a) < layerRank(b); }
+      const bad = mode === 'types'
+        ? violationIds.has(e.id)
+        : isLayerDirectionViolation(e.source.replace(/^layer:/, ''), e.target.replace(/^layer:/, ''));
       return bad
-        ? { ...e, style: { stroke: '#f85149', strokeWidth: 2 }, labelStyle: { fill: '#f85149', fontWeight: 700 }, className: 'edge-viol' }
+        ? { ...e, style: { strokeWidth: 2 }, labelStyle: { fill: '#f85149', fontWeight: 700 }, className: 'edge-viol' }
         : e;
     }),
     [edges, mode, violationIds],
@@ -152,7 +157,7 @@ export default function App() {
   const fitKey = [mode, layer ?? 'all', focus ?? '', hideTests, hideIsolated, nodes.length, edges.length].join('|');
   const emptyView = graph !== null && nodes.length === 0;
   const focusName = focus ? (graph?.nodes.find((n) => n.id === focus)?.name ?? focus) : null;
-  const lintCount = (graph?.drift.length ?? 0) + violations.length;
+  const lintCount = (fullGraph?.drift.length ?? 0) + violations.length;
 
   return (
     <div className="app">
@@ -217,7 +222,7 @@ export default function App() {
             <button
               className={`lintbtn${lintOpen ? ' is-on' : ''}${lintCount > 0 ? ' has-issues' : ''}`}
               onClick={() => setLintOpen((o) => !o)}
-              title="дрейф от свода + нарушения слоёв"
+              title="дрейф от свода + нарушения слоёв (по всему проекту)"
             >
               ⚠ Линт · {lintCount}
             </button>
@@ -262,9 +267,9 @@ export default function App() {
           />
         </ReactFlow>
 
-        {lintOpen && graph && (
+        {lintOpen && fullGraph && (
           <LintPanel
-            drift={graph.drift}
+            drift={fullGraph.drift}
             violations={violations}
             onClose={() => setLintOpen(false)}
             onGoTo={goToNode}

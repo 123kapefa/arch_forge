@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { GraphDto, NodeDto } from './api';
-import { layerRank, layerViolations } from './lint';
+import { layerRank, isLayerDirectionViolation, layerViolations } from './lint';
 
 describe('layerRank', () => {
   it('Domain ближе к ядру, чем Application/Infrastructure/Api', () => {
@@ -11,6 +11,20 @@ describe('layerRank', () => {
   it('неизвестный слой — средний ранг; регистронезависимо', () => {
     expect(layerRank('WAT')).toBe(1);
     expect(layerRank('domain')).toBe(0);
+  });
+});
+
+describe('isLayerDirectionViolation', () => {
+  it('зависимость внутрь — не нарушение; наружу — нарушение', () => {
+    expect(isLayerDirectionViolation('Infrastructure', 'Domain')).toBe(false);
+    expect(isLayerDirectionViolation('Api', 'Domain')).toBe(false);
+    expect(isLayerDirectionViolation('Domain', 'Infrastructure')).toBe(true);
+    expect(isLayerDirectionViolation('Application', 'Api')).toBe(true);
+  });
+  it('tests игнорируется в обе стороны (частая причина ложных нарушений)', () => {
+    expect(isLayerDirectionViolation('tests', 'Infrastructure')).toBe(false);
+    expect(isLayerDirectionViolation('tests', 'Api')).toBe(false);
+    expect(isLayerDirectionViolation('Domain', 'tests')).toBe(false);
   });
 });
 

@@ -28,7 +28,15 @@ export function LintPanel({ drift, violations, onClose, onGoTo }: {
           : (
             <ul className="lint__list">
               {violations.map((v) => (
-                <li key={v.id} className="lint__viol" onClick={() => onGoTo(v.source)} title="показать узел">
+                <li
+                  key={v.id}
+                  className="lint__viol"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onGoTo(v.source)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onGoTo(v.source); } }}
+                  title="показать узел"
+                >
                   <b>{v.fromName}</b> <span className="lint__vl">{v.fromLayer}</span>
                   {' → '}
                   <b>{v.toName}</b> <span className="lint__vl">{v.toLayer}</span>
