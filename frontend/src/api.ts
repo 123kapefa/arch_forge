@@ -47,7 +47,15 @@ export async function fetchMap(q: MapQuery): Promise<GraphDto> {
 
   const res = await fetch(`/api/map?${params.toString()}`);
   if (!res.ok) {
-    throw new Error(`Map ${res.status}: ${await res.text()}`);
+    const body = await res.text();
+    let message = body;
+    try {
+      const parsed = JSON.parse(body) as { error?: string };
+      if (parsed?.error) message = parsed.error;
+    } catch {
+      /* тело не JSON — оставляем как есть */
+    }
+    throw new Error(message || `Ошибка Map (${res.status})`);
   }
   return res.json() as Promise<GraphDto>;
 }

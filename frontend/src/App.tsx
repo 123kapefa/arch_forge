@@ -160,6 +160,7 @@ export default function App() {
           fitView
           fitViewOptions={{ padding: 0.15 }}
           minZoom={0.1}
+          onlyRenderVisibleElements
           onNodeClick={(_, n) => { setFocus(n.id); load(loadedPath, layer, n.id); }}
           proOptions={{ hideAttribution: true }}
         >
