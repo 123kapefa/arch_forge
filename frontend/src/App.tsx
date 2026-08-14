@@ -12,6 +12,7 @@ import { layerColor } from './theme';
 
 const nodeTypes = { type: TypeNode, layer: LayerNode };
 const DEFAULT_PATH = ''; // без хардкода машины разработчика — путь вводит пользователь
+type Mode = 'layers' | 'types';
 
 function Coverage({ nodeCount, edgeCount, coverage, drift }: {
   nodeCount: number; edgeCount: number; coverage: CoverageDto; drift: string[];
@@ -35,7 +36,7 @@ export default function App() {
   const [pathInput, setPathInput] = useState(DEFAULT_PATH);
   const [loadedPath, setLoadedPath] = useState('');
   const [graph, setGraph] = useState<GraphDto | null>(null);
-  const [mode, setMode] = useState<'layers' | 'types'>('layers'); // уровень: обзор слоёв / типы
+  const [mode, setMode] = useState<Mode>('layers'); // уровень: обзор слоёв / типы (меняется при приходе графа)
   const [layer, setLayer] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -45,9 +46,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const reqSeq = useRef(0);
 
-  // path/layer/focus передаются явно на вызове — нет стейл-замыканий.
-  // reqSeq отбрасывает устаревшие ответы (гонка). При ошибке граф НЕ обнуляем — держим последний рабочий.
-  const load = useCallback(async (p: string, nextLayer: string | null, nextFocus: string | null) => {
+  // path/layer/focus передаются явно на вызове — нет стейл-замыканий. reqSeq отбрасывает устаревшие
+  // ответы (гонка). mode переключаем ТОЛЬКО когда пришёл соответствующий граф — иначе на миг
+  // отрисовался бы чужой уровень. При ошибке граф НЕ обнуляем — держим последний рабочий.
+  const load = useCallback(async (p: string, nextLayer: string | null, nextFocus: string | null, resultMode: Mode) => {
     const id = ++reqSeq.current;
     setLoading(true);
     setError(null);
@@ -55,6 +57,7 @@ export default function App() {
       const g = await fetchMap({ path: p, layer: nextLayer || undefined, focus: nextFocus || undefined });
       if (id !== reqSeq.current) return;
       setGraph(g);
+      setMode(resultMode);
     } catch (e) {
       if (id !== reqSeq.current) return;
       setError(String(e));
@@ -68,51 +71,46 @@ export default function App() {
     const p = pathInput.trim();
     if (!p) return;
     setLoadedPath(p);
-    setMode('layers');
     setLayer(null);
     setFocus(null);
     setSelectedId(null);
-    load(p, null, null);
+    load(p, null, null, 'layers');
   };
 
-  // Провал в слой (обзор → типы) и подъём назад (хлебные крошки / «обзор слоёв»).
+  // Провал в слой (обзор → типы) и подъём назад к обзору.
   const drillLayer = (l: string) => {
-    setMode('types');
     setLayer(l);
     setFocus(null);
     setSelectedId(null);
-    load(loadedPath, l, null);
+    load(loadedPath, l, null, 'types');
   };
-  const backToLayers = () => {
-    setMode('layers');
+  const backToLayers = useCallback(() => {
+    if (mode === 'layers' && layer === null && !loading) return; // уже на обзоре — не дёргаем сеть
     setLayer(null);
     setFocus(null);
     setSelectedId(null);
-    load(loadedPath, null, null);
-  };
+    load(loadedPath, null, null, 'layers');
+  }, [mode, layer, loading, loadedPath, load]);
 
-  // Esc: закрыть инспектор, иначе подняться к обзору слоёв.
+  // Esc: закрыть инспектор, иначе подняться к обзору слоёв. Без побочки внутри апдейтера setState.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      setSelectedId((cur) => {
-        if (cur) return null;
-        if (mode === 'types') backToLayers();
-        return null;
-      });
+      if (selectedId) setSelectedId(null);
+      else if (mode === 'types') backToLayers();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, selectedId, backToLayers]);
 
   const view = useMemo(
     () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
     [graph, hideTests, hideIsolated],
   );
+  // Обзор — из полного graph (карта слоёв не зависит от тумблеров); типы — из отфильтрованного view.
   const { nodes, edges } = useMemo(
-    () => (mode === 'layers' ? toLayerFlow(view) : toFlow(view)),
-    [mode, view],
+    () => (mode === 'layers' ? toLayerFlow(graph) : toFlow(view)),
+    [mode, graph, view],
   );
   const layers = useMemo(
     () => (graph ? [...new Set(graph.nodes.map((n) => n.layer))].sort() : []),
@@ -132,6 +130,7 @@ export default function App() {
   // Меняется при любой смене видимого набора → ремоунт ReactFlow → повторный fitView.
   const fitKey = [mode, layer ?? 'all', focus ?? '', hideTests, hideIsolated, nodes.length, edges.length].join('|');
   const emptyView = graph !== null && nodes.length === 0;
+  const focusName = focus ? (graph?.nodes.find((n) => n.id === focus)?.name ?? focus) : null;
 
   return (
     <div className="app">
@@ -158,7 +157,7 @@ export default function App() {
                 <>
                   <span className="crumbs__sep">›</span>
                   <span className="crumbs__cur">{layer ?? 'все типы'}</span>
-                  {focus && <><span className="crumbs__sep">›</span><span className="crumbs__cur">focus</span></>}
+                  {focusName && <><span className="crumbs__sep">›</span><span className="crumbs__cur">{focusName}</span></>}
                 </>
               )}
             </nav>
@@ -186,10 +185,10 @@ export default function App() {
             {focus && (
               <button
                 className="bar__focus"
-                onClick={() => { setFocus(null); load(loadedPath, layer, null); }}
+                onClick={() => { setFocus(null); load(loadedPath, layer, null, 'types'); }}
                 title="сбросить фокус"
               >
-                ✕ focus: {graph.nodes.find((n) => n.id === focus)?.name ?? focus}
+                ✕ focus: {focusName}
               </button>
             )}
 
@@ -235,7 +234,7 @@ export default function App() {
           <MiniMap
             pannable
             zoomable
-            nodeColor={(n) => layerColor(String((n.data as TypeNodeData | LayerNodeData).layer))}
+            nodeColor={(n) => layerColor((n.data as TypeNodeData | LayerNodeData).layer)}
             maskColor="rgba(13,17,23,0.7)"
           />
         </ReactFlow>
@@ -245,7 +244,7 @@ export default function App() {
             node={selected}
             graph={view}
             onClose={() => setSelectedId(null)}
-            onFocus={(id) => { setFocus(id); load(loadedPath, layer, id); }}
+            onFocus={(id) => { setFocus(id); load(loadedPath, layer, id, 'types'); }}
           />
         )}
       </div>
