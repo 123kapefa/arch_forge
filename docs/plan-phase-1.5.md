@@ -106,8 +106,8 @@ P1.5-H  робастность мульти-сервиса — сквозной,
 На реальном `product-site-workspace`: `FolderDiscoverySource` находит 3 сервиса, per-service compose (инфра) + строки подключения → системный `GraphDto` (узлы `service|datastore`, рёбра `rw-db` с `Via`/`Confidence`) → и **всплывает хотя бы одна реальная системная проблема** (напр. общая БД). Без фронта. **Трогает**: `Analysis.Core` + новый `…Infrastructure.Manifests` + тесты.
 **DoD**: узлы/рёбра **честные** (совпадают с реальностью таргета); каждое ребро несёт `Via`+`Confidence`; **обнаружена реальная проблема или честно показано, что её нет**; наведение на одиночный `auth_service` = прежний результат; `dotnet test` зелёный.
 
-### P1.5-A — Контракт системного IR (аддитивно)
-`Graph.cs`: kinds `service/datastore/topic/member/external`, edges `http-call/publishes/subscribes/rw-db/calls`, опц. `Service/Parent/Level/Members/Health`, `Via`+`Confidence`+`Source`+`Violation` на ребре, `MemberDto`, `ProblemDto` + `Problems`/`Health` на графе, зарезервированные env-поля; зеркало в `api.ts`. **DoD**: тест обратной совместимости (старый JSON Фазы 1 десериализуется; новые поля null); `dotnet build` + `npm run build` зелёные.
+### P1.5-A — Контракт системного IR (аддитивно) — ✅ бэкенд
+`Graph.cs`: kinds `service/datastore/topic/member/external`, edges `http-call/publishes/subscribes/rw-db/calls`, опц. `Service/Parent/Level/Members/Health`, `Via`+`Confidence`+`Violation`+`Problem` на ребре, `MemberDto`, `ProblemDto` + `Problems`/`Health` на графе, зарезервированный `EnvironmentDto`. **Зеркало `api.ts` перенесено в P1.5-G** (чтобы не пересекаться с фронт-работой; контракт аддитивен → фронт Фазы 1 работает без изменений). **DoD**: тест обратной совместимости (старый JSON Фазы 1 десериализуется; новые поля null; не пишутся при сериализации) ✔; `dotnet build` зелёный ✔ (`npm run build` — вместе с зеркалом в P1.5-G).
 
 ### P1.5-B — Обнаружение сервисов (discovery-порт)
 `IServiceDiscoverySource` + `FolderDiscoverySource` + `ComposeDiscoverySource`; приоритет подпапки→compose→single. Domain: `SystemModel`. **DoD**: на таргете 3 сервиса (без шума); на `auth_service` → 1 сервис; тесты на оба.

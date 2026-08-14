@@ -30,23 +30,26 @@ public class ContractBackCompatTests
     }
 
     [Fact]
-    public void Phase1_shaped_dto_serializes_without_new_field_names()
+    public void Phase1_shaped_dto_serializes_with_exactly_phase1_keys()
     {
         var g = new GraphDto("svc",
             [new NodeDto("1", "Foo", "class", "Domain", "Aggregate", "marker", "Foo.cs", [])],
             [new EdgeDto("e1", "1", "2", "holds")],
             new CoverageDto(1, 0, 0, 1), []);
 
-        var json = JsonSerializer.Serialize(g, Web);
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(g, Web));
+        var root = doc.RootElement;
 
-        // WhenWritingNull → системные поля не попадают в вывод (байт-совместимо с Фазой 1)
-        Assert.DoesNotContain("\"service\"", json);
-        Assert.DoesNotContain("\"health\"", json);
-        Assert.DoesNotContain("\"confidence\"", json);
-        Assert.DoesNotContain("\"problems\"", json);
-        Assert.DoesNotContain("\"members\"", json);
-        Assert.DoesNotContain("\"environments\"", json);
+        // Ровно поля Фазы 1 — ни одно системное поле не просочилось (исчерпывающая проверка байт-совместимости).
+        AssertKeys(root, "project", "nodes", "edges", "coverage", "drift");
+        AssertKeys(root.GetProperty("nodes")[0], "id", "name", "kind", "layer", "role", "via", "file", "drift");
+        AssertKeys(root.GetProperty("edges")[0], "id", "source", "target", "kind");
     }
+
+    private static void AssertKeys(JsonElement obj, params string[] expected) =>
+        Assert.Equal(
+            expected.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            obj.EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal).ToArray());
 
     [Fact]
     public void System_level_fields_round_trip()
@@ -75,5 +78,14 @@ public class ContractBackCompatTests
         Assert.Equal("auth", back.Service);
         Assert.Single(back.Members!);
         Assert.Equal("POST", back.Members![0].HttpMethod);
+    }
+
+    [Fact]
+    public void Environment_dto_round_trips()  // зарезервированная запись — smoke
+    {
+        var back = JsonSerializer.Deserialize<EnvironmentDto>(
+            JsonSerializer.Serialize(new EnvironmentDto("prod", "Production", "instance"), Web), Web)!;
+        Assert.Equal("Production", back.Name);
+        Assert.Equal("instance", back.Kind);
     }
 }
