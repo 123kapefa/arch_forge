@@ -122,3 +122,19 @@
   border-radius: 6px; cursor: pointer; font-size: 12px;
 }
 .insp__actions button:hover { background: #30363d; }
+
+/* Обзор слоёв + хлебные крошки (P1-D) */
+.layernode {
+  width: 190px; background: #1c2230; border: 2px solid #888; border-radius: 10px;
+  padding: 14px 16px; box-shadow: 0 2px 8px rgba(0,0,0,.4); cursor: pointer;
+}
+.layernode:hover { background: #232b3d; }
+.layernode.is-selected { box-shadow: 0 0 0 2px #58a6ff, 0 2px 8px rgba(0,0,0,.45); }
+.layernode__name { font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.layernode__count { font-size: 12px; color: #8b949e; margin-top: 6px; }
+
+.crumbs { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.crumbs__home { background: none; border: none; color: #58a6ff; cursor: pointer; padding: 2px 4px; font-size: 13px; }
+.crumbs__home:hover { text-decoration: underline; }
+.crumbs__sep { color: #6e7681; }
+.crumbs__cur { color: #e6edf3; font-weight: 600; }
