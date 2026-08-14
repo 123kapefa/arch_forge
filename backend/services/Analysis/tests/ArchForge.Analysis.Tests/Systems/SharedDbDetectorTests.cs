@@ -1,0 +1,57 @@
+using ArchForge.Analysis.Core.Systems;
+
+namespace ArchForge.Analysis.Tests.Systems;
+
+public class SharedDbDetectorTests
+{
+    [Fact]
+    public void Fires_when_two_different_apps_write_one_datastore()
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("a", "a", SystemNodeKind.Service, "ghcr.io/ns/app-a:1"),
+                new SystemNode("b", "b", SystemNodeKind.Service, "ghcr.io/ns/app-b:1"),
+                new SystemNode("db", "db", SystemNodeKind.Datastore, "postgres:17"),
+            ],
+            [
+                new SystemEdge("a", "db", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("b", "db", "rw-db", EdgeVia.Config, 0.9),
+            ], []);
+
+        Assert.Contains(SharedDbDetector.Detect(g), p => p.Kind == "shared-db" && p.Location == "db");
+    }
+
+    [Fact]
+    public void Ignores_api_and_migrate_of_same_image()
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("api", "api", SystemNodeKind.Service, "ghcr.io/ns/auth-api:stage"),
+                new SystemNode("migrate", "migrate", SystemNodeKind.Service, "ghcr.io/ns/auth-api:stage"),
+                new SystemNode("db", "db", SystemNodeKind.Datastore, "postgres:17"),
+            ],
+            [
+                new SystemEdge("api", "db", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("migrate", "db", "rw-db", EdgeVia.Compose, 0.7),
+            ], []);
+
+        Assert.Empty(SharedDbDetector.Detect(g));
+    }
+
+    [Fact]
+    public void Ignores_deferred_edges()
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("a", "a", SystemNodeKind.Service, "img-a"),
+                new SystemNode("b", "b", SystemNodeKind.Service, "img-b"),
+                new SystemNode("db", "db", SystemNodeKind.Datastore, "postgres"),
+            ],
+            [
+                new SystemEdge("a", "db", "rw-db", EdgeVia.Config, 0.5, Deferred: true),
+                new SystemEdge("b", "db", "rw-db", EdgeVia.Config, 0.5, Deferred: true),
+            ], []);
+
+        Assert.Empty(SharedDbDetector.Detect(g));
+    }
+}
