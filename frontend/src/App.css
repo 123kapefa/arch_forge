@@ -1,0 +1,78 @@
+.app { display: flex; flex-direction: column; height: 100%; }
+
+/* Верхняя панель */
+.bar {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d;
+}
+.bar__path {
+  flex: 1 1 320px; min-width: 220px; padding: 6px 10px;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  color: #e6edf3; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px;
+}
+.bar button, .bar select {
+  padding: 6px 10px; background: #21262d; color: #e6edf3;
+  border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+.bar button:hover, .bar select:hover { background: #30363d; }
+.bar button:disabled { opacity: .5; cursor: default; }
+.bar__focus { color: #58a6ff; border-color: #1f6feb !important; }
+.tog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #8b949e; cursor: pointer; user-select: none; }
+.tog input { accent-color: #58a6ff; cursor: pointer; }
+
+.err {
+  padding: 8px 12px; background: #3d1418; color: #ff9b9b;
+  border-bottom: 1px solid #5a1a1f; font-family: ui-monospace, monospace;
+  font-size: 12px; white-space: pre-wrap;
+}
+
+.canvas { position: relative; flex: 1; min-height: 0; }
+.hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #6e7681; font-size: 14px; pointer-events: none; z-index: 1;
+}
+
+/* Покрытие */
+.cov { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: #8b949e; }
+.cov__bar {
+  display: inline-flex; height: 8px; width: 150px; border-radius: 4px;
+  overflow: hidden; border: 1px solid #30363d; background: #0d1117;
+}
+.cov__seg { height: 100%; }
+.cov__seg--marker { background: #57c78a; }
+.cov__seg--heuristic { background: #d9a441; }
+.cov__seg--unknown { background: #6e7681; }
+.cov__drift { color: #ffb454; }
+
+/* Плашка (узел) */
+.plashka {
+  width: 190px; background: #1c2230; border: 1px solid #30363d;
+  border-top: 3px solid #888; border-radius: 8px; padding: 8px 10px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.35); font-size: 12px;
+}
+.plashka.is-selected { box-shadow: 0 0 0 2px #58a6ff, 0 2px 8px rgba(0,0,0,.45); }
+.plashka__head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+}
+.plashka__layer { font-weight: 700; }
+.plashka__kind { color: #8b949e; }
+.plashka__drift { margin-left: auto; color: #ffb454; font-weight: 700; text-transform: none; }
+.plashka__name {
+  font-size: 14px; font-weight: 600; color: #e6edf3; margin: 4px 0 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.plashka__foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.plashka__role { color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plashka__via {
+  font-size: 10px; padding: 1px 6px; border-radius: 10px;
+  border: 1px solid #30363d; color: #8b949e; flex: none;
+}
+.plashka.via-marker .plashka__via { color: #57c78a; border-color: #2e5e45; }
+.plashka.via-heuristic .plashka__via { color: #d9a441; border-color: #5e4d2e; }
+
+/* React Flow — мелкие аккуратные хэндлы, подписи рёбер */
+.react-flow__handle { width: 6px; height: 6px; background: #58a6ff; border: none; }
+.react-flow__edge-text { fill: #8b949e; font-size: 10px; }
+.react-flow__edge-textbg { fill: #0d1117; }
+.react-flow__edge-path { stroke: #4a5568; }
