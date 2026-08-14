@@ -41,11 +41,14 @@ public class RoslynClassifierTests
         Assert.Contains(result.Edges, e => e is { From: "RegisterHandler", To: "Account", Kind: "uses" });
     }
 
-    [Fact]
+    [SkippableFact]
     public void Reproduces_spike_coverage_on_auth_service()
     {
-        const string target = "/Users/123kapefa/Documents/projects/microservices/auth_service";
-        if (!Directory.Exists(target)) return; // локальный таргет — скип, если нет
+        string target = Environment.GetEnvironmentVariable("ARCHFORGE_AUTH_SERVICE")
+            ?? "/Users/123kapefa/Documents/projects/microservices/auth_service";
+        // Честный Skip (а не тихий проход), если локального таргета нет — напр. на CI.
+        Skip.IfNot(Directory.Exists(target),
+            $"нет локального таргета auth_service ({target}); задайте ARCHFORGE_AUTH_SERVICE");
 
         var raw = new RoslynTypeSource().Read(target);
         var result = new TypeClassifier(ConventionPack.Default()).Classify(raw);
