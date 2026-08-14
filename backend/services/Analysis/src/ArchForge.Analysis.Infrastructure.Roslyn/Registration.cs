@@ -8,9 +8,10 @@ public static class Registration
     public static IServiceCollection AddInfrastructure(this IServiceCollection services)
     {
         // Семантика поверх синтаксического пола (adr/0008): ITypeSource = семантика, floor — фолбэк.
+        // CreateInstance, а не new: контейнер сам подставит ILogger — иначе лог деградации был бы NullLogger.
         services.AddSingleton<RoslynTypeSource>();
         services.AddSingleton<ITypeSource>(sp =>
-            new RoslynSemanticTypeSource(sp.GetRequiredService<RoslynTypeSource>()));
+            ActivatorUtilities.CreateInstance<RoslynSemanticTypeSource>(sp, sp.GetRequiredService<RoslynTypeSource>()));
         services.AddSingleton<IImportSource, CsprojImportSource>();
         return services;
     }

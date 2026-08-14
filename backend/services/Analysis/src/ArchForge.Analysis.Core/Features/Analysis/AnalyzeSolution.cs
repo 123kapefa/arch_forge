@@ -14,9 +14,10 @@ public sealed record AnalyzeSolutionQuery(string Path);
 public sealed class AnalyzeSolutionEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapGet("/api/analysis", (string path, AnalyzeSolutionHandler handler) =>
+        app.MapGet("/api/analysis", (string path, AnalyzeSolutionHandler handler, CancellationToken ct) =>
         {
-            GraphDto? graph = handler.Handle(new AnalyzeSolutionQuery(path));
+            // ct = HttpContext.RequestAborted: разрыв соединения клиентом останавливает разбор (P1-H).
+            GraphDto? graph = handler.Handle(new AnalyzeSolutionQuery(path), ct);
             return graph is null
                 ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
                 : Results.Ok(graph);
@@ -25,11 +26,11 @@ public sealed class AnalyzeSolutionEndpoint : IEndpoint
 
 public sealed class AnalyzeSolutionHandler(ITypeSource source, TypeClassifier classifier)
 {
-    public GraphDto? Handle(AnalyzeSolutionQuery query)
+    public GraphDto? Handle(AnalyzeSolutionQuery query, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(query.Path) || !Directory.Exists(query.Path)) return null;
 
-        AnalysisResult result = classifier.Classify(source.Read(query.Path));
+        AnalysisResult result = classifier.Classify(source.Read(query.Path, ct));
         string project = new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
         return GraphMapper.ToDto(result, project);
     }
