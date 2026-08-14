@@ -1,52 +1,15 @@
-import { useCallback, useMemo, useState } from 'react';
-import {
-  ReactFlow, Background, Controls, MiniMap,
-  MarkerType, type Node, type Edge,
-} from '@xyflow/react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { ReactFlow, Background, Controls, MiniMap } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './App.css';
 
 import { fetchMap, type GraphDto, type CoverageDto } from './api';
-import { layout } from './layout';
+import { filterGraph, toFlow } from './graph';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
 import { layerColor } from './theme';
 
 const nodeTypes = { type: TypeNode };
-const DEFAULT_PATH = '/Users/123kapefa/Documents/projects/microservices/auth_service';
-
-type Filters = { hideTests: boolean; hideIsolated: boolean };
-
-/** Клиентская фильтрация вида — мгновенно, без запроса. Покрытие не трогаем: оно честное. */
-function filterGraph(g: GraphDto, f: Filters): GraphDto {
-  let nodes = g.nodes;
-  if (f.hideTests) nodes = nodes.filter((n) => n.layer.toLowerCase() !== 'tests');
-  const ids = new Set(nodes.map((n) => n.id));
-  let edges = g.edges.filter((e) => ids.has(e.source) && ids.has(e.target));
-  if (f.hideIsolated) {
-    const linked = new Set<string>();
-    edges.forEach((e) => { linked.add(e.source); linked.add(e.target); });
-    nodes = nodes.filter((n) => linked.has(n.id));
-  }
-  return { ...g, nodes, edges };
-}
-
-function toFlow(g: GraphDto | null): { nodes: Node[]; edges: Edge[] } {
-  if (!g) return { nodes: [], edges: [] };
-  const nodes: Node[] = g.nodes.map((n) => ({
-    id: n.id,
-    type: 'type',
-    position: { x: 0, y: 0 },
-    data: { name: n.name, kind: n.kind, role: n.role, layer: n.layer, via: n.via, drift: n.drift },
-  }));
-  const edges: Edge[] = g.edges.map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    label: e.kind,
-    markerEnd: { type: MarkerType.ArrowClosed },
-  }));
-  return { nodes: layout(nodes, edges), edges };
-}
+const DEFAULT_PATH = ''; // без хардкода машины разработчика — путь вводит пользователь
 
 function Coverage({ nodeCount, edgeCount, coverage, drift }: {
   nodeCount: number; edgeCount: number; coverage: CoverageDto; drift: string[];
@@ -67,7 +30,8 @@ function Coverage({ nodeCount, edgeCount, coverage, drift }: {
 }
 
 export default function App() {
-  const [path, setPath] = useState(DEFAULT_PATH);
+  const [pathInput, setPathInput] = useState(DEFAULT_PATH);
+  const [loadedPath, setLoadedPath] = useState('');
   const [graph, setGraph] = useState<GraphDto | null>(null);
   const [layer, setLayer] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
@@ -75,26 +39,35 @@ export default function App() {
   const [hideIsolated, setHideIsolated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const reqSeq = useRef(0);
 
-  // Явные параметры, чтобы не зависеть от асинхронного setState.
-  const load = useCallback(
-    async (over: { layer?: string | null; focus?: string | null } = {}) => {
-      const nextLayer = 'layer' in over ? over.layer : layer;
-      const nextFocus = 'focus' in over ? over.focus : focus;
-      setLoading(true);
-      setError(null);
-      try {
-        const g = await fetchMap({ path, layer: nextLayer || undefined, focus: nextFocus || undefined });
-        setGraph(g);
-      } catch (e) {
-        setError(String(e));
-        setGraph(null);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [path, layer, focus],
-  );
+  // path/layer/focus передаются явно на вызове — нет стейл-замыканий.
+  // reqSeq отбрасывает устаревшие ответы (гонка). При ошибке граф НЕ обнуляем — держим последний рабочий.
+  const load = useCallback(async (p: string, nextLayer: string | null, nextFocus: string | null) => {
+    const id = ++reqSeq.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const g = await fetchMap({ path: p, layer: nextLayer || undefined, focus: nextFocus || undefined });
+      if (id !== reqSeq.current) return;
+      setGraph(g);
+    } catch (e) {
+      if (id !== reqSeq.current) return;
+      setError(String(e));
+    } finally {
+      if (id === reqSeq.current) setLoading(false);
+    }
+  }, []);
+
+  // «Разобрать»: фиксируем загруженный путь и сбрасываем срез.
+  const analyze = () => {
+    const p = pathInput.trim();
+    if (!p) return;
+    setLoadedPath(p);
+    setLayer(null);
+    setFocus(null);
+    load(p, null, null);
+  };
 
   const view = useMemo(
     () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
@@ -108,21 +81,20 @@ export default function App() {
 
   // Меняется при любой смене видимого набора → ремоунт ReactFlow → повторный fitView.
   const fitKey = [layer ?? 'all', focus ?? '', hideTests, hideIsolated, nodes.length, edges.length].join('|');
+  const emptyView = graph !== null && nodes.length === 0;
 
   return (
     <div className="app">
       <header className="bar">
         <input
           className="bar__path"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="путь к .NET проекту"
+          value={pathInput}
+          onChange={(e) => setPathInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') analyze(); }}
+          placeholder="путь к .NET проекту (папка solution)"
           spellCheck={false}
         />
-        <button
-          onClick={() => { setLayer(null); setFocus(null); load({ layer: null, focus: null }); }}
-          disabled={loading}
-        >
+        <button onClick={analyze} disabled={loading || !pathInput.trim()}>
           {loading ? '…' : 'Разобрать'}
         </button>
 
@@ -133,7 +105,7 @@ export default function App() {
               onChange={(e) => {
                 const v = e.target.value || null;
                 setLayer(v); setFocus(null);
-                load({ layer: v, focus: null });
+                load(loadedPath, v, null);
               }}
             >
               <option value="">все слои</option>
@@ -152,7 +124,7 @@ export default function App() {
             {focus && (
               <button
                 className="bar__focus"
-                onClick={() => { setFocus(null); load({ focus: null }); }}
+                onClick={() => { setFocus(null); load(loadedPath, layer, null); }}
                 title="сбросить фокус"
               >
                 ✕ focus: {graph.nodes.find((n) => n.id === focus)?.name ?? focus}
@@ -175,7 +147,10 @@ export default function App() {
 
       <div className="canvas">
         {!graph && !error && (
-          <div className="hint">Укажи путь и нажми «Разобрать». Клик по плашке — фокус на её связях.</div>
+          <div className="hint">Укажи путь к .NET-проекту и нажми «Разобрать». Клик по плашке — фокус на её связях.</div>
+        )}
+        {emptyView && (
+          <div className="hint">Под текущие фильтры ничего не попало — ослабь «без tests»/«без одиночек» или смени слой.</div>
         )}
         <ReactFlow
           key={fitKey}
@@ -185,7 +160,7 @@ export default function App() {
           fitView
           fitViewOptions={{ padding: 0.15 }}
           minZoom={0.1}
-          onNodeClick={(_, n) => { setFocus(n.id); load({ focus: n.id }); }}
+          onNodeClick={(_, n) => { setFocus(n.id); load(loadedPath, layer, n.id); }}
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={20} color="#20262f" />
