@@ -59,3 +59,22 @@ export async function fetchMap(q: MapQuery): Promise<GraphDto> {
   }
   return res.json() as Promise<GraphDto>;
 }
+
+// Импорты (сторонние библиотеки) — «за кнопкой», не в графе.
+export interface ImportsDto {
+  project: string;
+  packages: PackageDto[];
+}
+export interface PackageDto {
+  name: string;
+  versions: string[];
+  usedBy: string[];
+  versionConflict: boolean;
+}
+
+/** GET /api/imports (через сервис Map). */
+export async function fetchImports(path: string): Promise<ImportsDto> {
+  const res = await fetch(`/api/imports?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error(`Импорты ${res.status}: ${await res.text()}`);
+  return res.json() as Promise<ImportsDto>;
+}

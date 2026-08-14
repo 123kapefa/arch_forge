@@ -11,6 +11,7 @@ public static class Registration
         services.AddSingleton<RoslynTypeSource>();
         services.AddSingleton<ITypeSource>(sp =>
             new RoslynSemanticTypeSource(sp.GetRequiredService<RoslynTypeSource>()));
+        services.AddSingleton<IImportSource, CsprojImportSource>();
         return services;
     }
 }

@@ -166,3 +166,22 @@
 .lint__vl { font-size: 10px; color: #8b949e; }
 
 .edge-viol .react-flow__edge-path { stroke: #f85149; }
+
+/* Панель импортов (P1-G) */
+.imports {
+  position: absolute; top: 10px; left: 10px; bottom: 10px; width: 340px; z-index: 5;
+  display: flex; flex-direction: column; gap: 10px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+  padding: 12px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.45); color: #e6edf3;
+}
+.imports__head { display: flex; align-items: center; justify-content: space-between; }
+.imports__title { font-size: 15px; font-weight: 700; }
+.imports__none { color: #8b949e; font-size: 12px; }
+.imports__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.imports__pkg { padding: 6px 8px; background: #1c2230; border: 1px solid #30363d; border-radius: 6px; }
+.imports__pkg.is-conflict { border-color: #5e4d2e; background: #241c0f; }
+.imports__name { font-size: 13px; font-weight: 600; color: #e6edf3; overflow-wrap: anywhere; }
+.imports__meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 11px; flex-wrap: wrap; }
+.imports__ver { color: #58a6ff; font-family: ui-monospace, SFMono-Regular, monospace; }
+.imports__used { color: #8b949e; }
+.imports__conflict { color: #ffb454; }
