@@ -2,17 +2,20 @@ using ArchForge.Analysis.Core.Systems;
 
 namespace ArchForge.Analysis.Infrastructure.Manifests;
 
-// Реализация ISystemSource через docker-compose (P1.5-0/B):
-// корень → папочный discovery сервисов (по .slnx) → compose каждого сервиса → узлы/инфра → рёбра rw-db → детектор.
+// Реализация ISystemSource через docker-compose (P1.5-0/B/D):
+// корень → папочный discovery → compose каждого сервиса → узлы/инфра → рёбра rw-db + http-call → детектор.
 //
-// Известные ограничения (закрываются в P1.5-D):
-//  • ребро к брокеру (Topic) сейчас тоже помечается "rw-db" — честное publishes/subscribes будет в P1.5-D.
+// P1.5-D — поведенческие рёбра:
+//  • http-call: значения-URL в compose-env (CatalogService__Url: http://catalog-api:8080) → целевой сервис
+//    резолвим глобально по имени; не разрешили → честный внешний узел.
+//  • publishes/subscribes: на реальном таргете шины нет (Loyalty.Communication = HTTP-клиент) — честно отсутствуют.
+// Известные ограничения (backlog): http-call из appsettings.json (напр. auth→sms) — следующий срез;
+//  publish/subscribe появится при наличии шины (MassTransit/rabbit/kafka).
 public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = null) : ISystemSource
 {
     private readonly IServiceDiscoverySource _discovery = discovery ?? new FolderDiscoverySource();
 
-    // Инфра по БАЗЕ образа (последний сегмент пути без тега) — точным совпадением, а не подстрокой,
-    // иначе «postgres-exporter»/«redis_exporter» ошибочно попали бы в Datastore.
+    // Инфра по БАЗЕ образа (последний сегмент пути без тега) — точным совпадением, а не подстрокой.
     private static readonly Dictionary<string, SystemNodeKind> InfraByBaseImage = new(StringComparer.OrdinalIgnoreCase)
     {
         ["postgres"] = SystemNodeKind.Datastore, ["postgresql"] = SystemNodeKind.Datastore,
@@ -27,6 +30,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     {
         var nodes = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
         var edges = new List<SystemEdge>();
+        var httpIntents = new List<(string SourceId, string TargetHost)>();
 
         foreach (var (system, composePath) in ComposesToParse(root))
         {
@@ -35,8 +39,6 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             try { compose = ComposeParser.Parse(File.ReadAllText(composePath)); }
             catch { continue; } // битый/нечитаемый compose — пропускаем (робастность)
 
-            // Пространство имён узла = система (сервис из discovery / каталог): одинаковые имена сервисов
-            // в РАЗНЫХ compose (api/db) не сливаются в один узел — иначе тихо теряем систему (честность).
             var local = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
             foreach (var svc in compose.Services)
             {
@@ -52,19 +54,26 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
                 foreach (var (key, value) in svc.Environment)
                 {
-                    if (!key.StartsWith("ConnectionStrings__", StringComparison.Ordinal)) continue;
-                    if (ConnectionString.ExtractHost(value) is not { } host) continue;
+                    // rw-db / publishes из строк подключения
+                    if (key.StartsWith("ConnectionStrings__", StringComparison.Ordinal) &&
+                        ConnectionString.ExtractHost(value) is { } host)
+                    {
+                        if (Interpolation.IsDeferred(host))
+                        {
+                            nodes.TryAdd(host, new SystemNode(host, host, SystemNodeKind.External));
+                            edges.Add(new SystemEdge(sourceId, host, "rw-db", EdgeVia.Config, 0.5, Deferred: true));
+                        }
+                        else if (local.TryGetValue(host, out var target) &&
+                                 target.Kind is SystemNodeKind.Datastore or SystemNodeKind.Topic)
+                        {
+                            var kind = target.Kind == SystemNodeKind.Topic ? "publishes" : "rw-db";
+                            edges.Add(new SystemEdge(sourceId, target.Id, kind, EdgeVia.Config, 0.9));
+                        }
+                    }
 
-                    if (Interpolation.IsDeferred(host))
-                    {
-                        nodes.TryAdd(host, new SystemNode(host, host, SystemNodeKind.External));
-                        edges.Add(new SystemEdge(sourceId, host, "rw-db", EdgeVia.Config, 0.5, Deferred: true));
-                    }
-                    else if (local.TryGetValue(host, out var target) &&
-                             target.Kind is SystemNodeKind.Datastore or SystemNodeKind.Topic)
-                    {
-                        edges.Add(new SystemEdge(sourceId, target.Id, "rw-db", EdgeVia.Config, 0.9));
-                    }
+                    // http-call: значение — URL на другой сервис (резолвим глобально после разбора всех)
+                    if (UrlHost(value) is { } targetHost)
+                        httpIntents.Add((sourceId, targetHost));
                 }
 
                 foreach (var dep in svc.DependsOn)
@@ -76,15 +85,65 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             }
         }
 
+        ResolveHttpCalls(nodes, edges, httpIntents);
+
         var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), []);
         return graph with { Problems = SharedDbDetector.Detect(graph) };
     }
 
-    // Что и под каким пространством имён парсить:
-    //  • root — файл           → сам файл (namespace = его каталог);
-    //  • root — папка + сервисы → compose каждого сервиса (namespace = ПАПКА сервиса относительно корня —
-    //    уникальна, в отличие от имени solution: два сервиса с одинаковым Server.sln не сольются, ревью #1);
-    //  • root — папка без .slnx → fallback: базовые compose под корнем (namespace = их каталог).
+    // Резолвим цель http-call по имени сервиса глобально: попал в один сервис → ребро; иначе внешний узел (честно).
+    private static void ResolveHttpCalls(
+        Dictionary<string, SystemNode> nodes, List<SystemEdge> edges,
+        List<(string SourceId, string TargetHost)> intents)
+    {
+        var appByName = nodes.Values
+            .Where(n => n.Kind == SystemNodeKind.Service)
+            .GroupBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Select(n => n.Id).ToList(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (sourceId, host) in intents.Distinct())
+        {
+            if (appByName.TryGetValue(host, out var ids) && ids.Count == 1 && ids[0] != sourceId)
+            {
+                edges.Add(new SystemEdge(sourceId, ids[0], "http-call", EdgeVia.Config, 0.8));
+            }
+            else if (!appByName.ContainsKey(host)) // неизвестный/внешний сервис — честный внешний узел
+            {
+                var extId = "http://" + host;
+                nodes.TryAdd(extId, new SystemNode(extId, host, SystemNodeKind.External));
+                edges.Add(new SystemEdge(sourceId, extId, "http-call", EdgeVia.Config, 0.4));
+            }
+            // неоднозначное имя (ids.Count > 1) — не выдумываем цель (adr/0008)
+        }
+    }
+
+    // Хост сервиса из URL-значения: «http://audit-api.product-site:8080» → «audit-api».
+    // null — если не http-URL, localhost/инфра или публичный интернет-адрес (не наш сервис).
+    private static string? UrlHost(string? value)
+    {
+        if (value is null) return null;
+        var v = value.Trim();
+        var sep = v.IndexOf("//", StringComparison.Ordinal);
+        if (sep < 0 || !(v.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                         v.StartsWith("https://", StringComparison.OrdinalIgnoreCase))) return null;
+
+        var authority = v[(sep + 2)..].Split('/', '?')[0]; // host[:port]
+        var fullHost = authority.Split(':')[0];
+        if (fullHost.Contains("${", StringComparison.Ordinal)) return null; // отложенное — не резолвим
+
+        var segs = fullHost.Split('.');
+        if (segs.Length > 1 &&
+            segs[^1].ToLowerInvariant() is "com" or "org" or "io" or "net" or "ru" or "dev" or "cloud" or "app")
+            return null; // публичный интернет-адрес (cloudflare/github) — не наш сервис
+
+        var host = segs[0];
+        // "+"/"*" — bind-паттерны ASPNETCORE_URLS (http://+:8080), не адрес вызова; localhost/инфра — тоже не сервис.
+        if (host.Length == 0 || host is "localhost" or "minio" or "+" or "*" ||
+            host.StartsWith("127.", StringComparison.Ordinal) || host.StartsWith("0.0", StringComparison.Ordinal))
+            return null;
+        return host;
+    }
+
     private IEnumerable<(string System, string ComposePath)> ComposesToParse(string root)
     {
         if (File.Exists(root)) { yield return (DirNameOf(root), root); yield break; }
@@ -111,11 +170,10 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     private static SystemNodeKind Classify(string? image)
     {
         if (string.IsNullOrEmpty(image)) return SystemNodeKind.Service;
-        var baseName = image.Split('/')[^1].Split(':')[0]; // «quay.io/community/postgres-exporter:v1» → «postgres-exporter»
+        var baseName = image.Split('/')[^1].Split(':')[0];
         return InfraByBaseImage.TryGetValue(baseName, out var kind) ? kind : SystemNodeKind.Service;
     }
 
-    // Fallback: базовые compose под корнем (для каталога без .slnx). Недоступные папки игнорируем.
     private static IReadOnlyList<string> FallbackComposeFiles(string root)
     {
         var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
