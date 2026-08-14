@@ -55,6 +55,30 @@ public class RoslynSemanticTests
     }
 
     [SkippableFact]
+    public void Semantic_pack_leaves_no_unknown_on_auth_service()
+    {
+        Skip.IfNot(Directory.Exists(Target), $"нет собранного таргета auth_service ({Target})");
+        var res = new TypeClassifier(ConventionPack.Default())
+            .Classify(new RoslynSemanticTypeSource(new RoslynTypeSource()).Read(Target));
+        Assert.Equal(0, res.Coverage.Unknown); // было 3 unknown: 2 теста → Test, RegisterAccountResult → Result
+    }
+
+    [Fact]
+    public void Semantic_deep_base_classifies_where_syntactic_immediate_does_not()
+    {
+        var pack = ConventionPack.Default();
+        // Кастомный наследник DbContext через промежуточный тип, которого НЕТ в паке.
+        var syntactic = new RawType("AppDb", "class", new[] { "MyBaseContext" }, "", "Infrastructure", "x.cs");
+        var semantic = new RawType("AppDb", "class", new[] { "MyBaseContext", "DbContext" }, "", "Infrastructure", "x.cs");
+
+        var syn = new TypeClassifier(pack).Classify(new[] { syntactic }).Types[0];
+        var sem = new TypeClassifier(pack).Classify(new[] { semantic }).Types[0];
+
+        Assert.Equal("unknown", syn.Via);    // синтаксис видит только непосредственную базу → промах
+        Assert.Equal("DbContext", sem.Role);  // семантика тянет цепочку до канонической базы → классификация
+    }
+
+    [SkippableFact]
     public void Semantic_edges_exceed_syntactic_and_add_holds()
     {
         Skip.IfNot(Directory.Exists(Target), $"нет собранного таргета auth_service ({Target})");

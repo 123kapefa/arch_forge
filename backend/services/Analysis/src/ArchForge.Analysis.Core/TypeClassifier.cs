@@ -50,6 +50,8 @@ public sealed class TypeClassifier(ConventionPack pack)
             if (via == "unknown" && r.Name.EndsWith("Extensions")) { role = "DI/Extensions"; via = "heuristic"; }
             if (via == "unknown" && r.Name.EndsWith("Endpoints")) { role = "Endpoints"; via = "heuristic"; }
             if (via == "unknown" && r.Name == "Program") { role = "Entrypoint"; via = "heuristic"; }
+            if (via == "unknown" && (r.Name.EndsWith("Result") || r.Name.EndsWith("Dto"))) { role = "Result"; via = "heuristic"; }
+            if (via == "unknown" && r.Layer == "tests") { role = "Test"; via = "heuristic"; }
 
             if (via == "marker") marker++;
             else if (via == "heuristic") heuristic++;
