@@ -40,7 +40,9 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor) : ITypeSour
         if (trees.Count == 0) return null;
 
         var references = GatherReferences(path);
-        if (references.Count == 0) return null; // без ссылок семантики нет — пусть будет пол
+        // Нет ссылок → семантики нет; слишком много → Compilation будет медленной. И там, и там —
+        // честный синтаксический пол (adr/0008: семантику берём оппортунистически).
+        if (references.Count is 0 or > 4000) return null;
 
         var compilation = CSharpCompilation.Create(
             "ArchForgeAnalysis",

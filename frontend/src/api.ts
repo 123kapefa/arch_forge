@@ -39,13 +39,31 @@ export interface MapQuery {
   focus?: string;
 }
 
+const TIMEOUT_MS = 60_000; // семантика на большом проекте небыстрая, но не бесконечная
+
+/** fetch с таймаутом — не зависаем на большом/недоступном сервисе (робастность P1-H). */
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error(`Превышено время ожидания (${TIMEOUT_MS / 1000}с) — большой проект или сервис недоступен`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** GET /api/map (через сервис Map). */
 export async function fetchMap(q: MapQuery): Promise<GraphDto> {
   const params = new URLSearchParams({ path: q.path });
   if (q.layer) params.set('layer', q.layer);
   if (q.focus) params.set('focus', q.focus);
 
-  const res = await fetch(`/api/map?${params.toString()}`);
+  const res = await fetchWithTimeout(`/api/map?${params.toString()}`);
   if (!res.ok) {
     const body = await res.text();
     let message = body;
@@ -74,7 +92,7 @@ export interface PackageDto {
 
 /** GET /api/imports (через сервис Map). */
 export async function fetchImports(path: string): Promise<ImportsDto> {
-  const res = await fetch(`/api/imports?path=${encodeURIComponent(path)}`);
+  const res = await fetchWithTimeout(`/api/imports?path=${encodeURIComponent(path)}`);
   if (!res.ok) throw new Error(`Импорты ${res.status}: ${await res.text()}`);
   return res.json() as Promise<ImportsDto>;
 }

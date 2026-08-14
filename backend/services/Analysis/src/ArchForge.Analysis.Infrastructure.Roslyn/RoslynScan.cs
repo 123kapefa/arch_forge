@@ -5,14 +5,19 @@ namespace ArchForge.Analysis.Infrastructure.Roslyn;
 // Общие хелперы разбора для синтаксического и семантического источников.
 internal static class RoslynScan
 {
-    // .cs таргета, кроме генерённого/сборочного мусора (adr/0008 — исключаем bin/obj/generated).
+    // Хэндвритен .cs редко >2 МБ; крупнее — почти всегда генерённое/данные (парсить дорого, толку нет).
+    private const long MaxFileBytes = 2_000_000;
+
+    // .cs таргета, кроме генерённого/сборочного мусора (adr/0008) и гигантских файлов (робастность).
     public static IEnumerable<string> EnumerateCs(string path) =>
         Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
             .Where(f =>
             {
                 var n = f.Replace('\\', '/');
-                return !n.Contains("/obj/") && !n.Contains("/bin/")
-                    && !n.EndsWith(".g.cs") && !n.EndsWith(".Designer.cs");
+                if (n.Contains("/obj/") || n.Contains("/bin/")
+                    || n.EndsWith(".g.cs") || n.EndsWith(".Designer.cs")) return false;
+                try { return new FileInfo(f).Length <= MaxFileBytes; }
+                catch { return false; } // недоступный файл — пропускаем (изоляция ошибок)
             });
 
     public static bool IsTypeName(string name) =>
