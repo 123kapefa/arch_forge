@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\src\ArchForge.Analysis.Core\ArchForge.Analysis.Core.csproj" />
     <ProjectReference Include="..\..\src\ArchForge.Analysis.Domain\ArchForge.Analysis.Domain.csproj" />
     <ProjectReference Include="..\..\src\ArchForge.Analysis.Infrastructure.Roslyn\ArchForge.Analysis.Infrastructure.Roslyn.csproj" />
+    <ProjectReference Include="..\..\src\ArchForge.Analysis.Infrastructure.Manifests\ArchForge.Analysis.Infrastructure.Manifests.csproj" />
   </ItemGroup>
 
 </Project>
