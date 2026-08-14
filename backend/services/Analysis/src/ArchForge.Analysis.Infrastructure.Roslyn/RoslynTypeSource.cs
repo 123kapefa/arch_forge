@@ -8,11 +8,12 @@ namespace ArchForge.Analysis.Infrastructure.Roslyn;
 // Семантику даёт RoslynSemanticTypeSource поверх; сюда падаем, когда семантика недоступна.
 public sealed class RoslynTypeSource : ITypeSource
 {
-    public IReadOnlyList<RawType> Read(string path)
+    public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default)
     {
         var result = new List<RawType>();
         foreach (var file in RoslynScan.EnumerateCs(path))
         {
+            ct.ThrowIfCancellationRequested(); // abort клиента → перестаём парсить, а не досчитываем впустую
             string text;
             try { text = File.ReadAllText(file); }
             catch { continue; }

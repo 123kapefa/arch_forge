@@ -2,6 +2,8 @@ using ArchForge.Analysis.Core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ArchForge.Analysis.Infrastructure.Roslyn;
 
@@ -14,35 +16,50 @@ namespace ArchForge.Analysis.Infrastructure.Roslyn;
 /// Ссылки из готового bin/ обходят строгий design-time build (валился на auth_service, adr/0008).
 /// Оппортунистичен: при любой проблеме или пустом результате — синтаксический пол.
 /// </summary>
-public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor) : ITypeSource
+public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<RoslynSemanticTypeSource>? logger = null) : ITypeSource
 {
-    public IReadOnlyList<RawType> Read(string path)
+    // Порог ссылок вынесен в тестируемую единицу: 0 → семантики нет; слишком много → Compilation
+    // была бы медленной. И там, и там — честный синтаксический пол (adr/0008).
+    internal const int MaxReferences = 4000;
+    internal static bool ReferencesUsable(int count) => count is > 0 and <= MaxReferences;
+
+    private readonly ILogger _log = logger ?? NullLogger<RoslynSemanticTypeSource>.Instance;
+
+    public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default)
     {
         try
         {
-            var semantic = ReadSemantic(path);
-            return semantic is { Count: > 0 } ? semantic : floor.Read(path);
+            var semantic = ReadSemantic(path, ct);
+            if (semantic is { Count: > 0 }) return semantic;
+            _log.LogDebug("Семантика пуста — синтаксический пол: {Path}", path);
+            return floor.Read(path, ct);
         }
-        catch
+        catch (OperationCanceledException) { throw; } // отмена — не «сбой семантики», пробрасываем
+        catch (Exception ex)
         {
-            return floor.Read(path); // семантика — best-effort; при сбое честно падаем на пол
+            // Деградация видима в логах, а не молча (adr/0008: семантика — best-effort).
+            _log.LogWarning(ex, "Семантика упала — синтаксический пол: {Path}", path);
+            return floor.Read(path, ct);
         }
     }
 
-    private static IReadOnlyList<RawType>? ReadSemantic(string path)
+    private IReadOnlyList<RawType>? ReadSemantic(string path, CancellationToken ct)
     {
         var trees = new List<SyntaxTree>();
         foreach (var file in RoslynScan.EnumerateCs(path))
         {
+            ct.ThrowIfCancellationRequested(); // abort клиента → перестаём парсить
             try { trees.Add(CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file)); }
             catch { /* нечитаемый файл — пропускаем */ }
         }
         if (trees.Count == 0) return null;
 
         var references = GatherReferences(path);
-        // Нет ссылок → семантики нет; слишком много → Compilation будет медленной. И там, и там —
-        // честный синтаксический пол (adr/0008: семантику берём оппортунистически).
-        if (references.Count is 0 or > 4000) return null;
+        if (!ReferencesUsable(references.Count))
+        {
+            _log.LogInformation("Ссылок {Count} (>{Max} или 0) — синтаксический пол: {Path}", references.Count, MaxReferences, path);
+            return null;
+        }
 
         var compilation = CSharpCompilation.Create(
             "ArchForgeAnalysis",
@@ -54,6 +71,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor) : ITypeSour
         var result = new List<RawType>();
         foreach (var tree in trees)
         {
+            ct.ThrowIfCancellationRequested(); // семантика по дереву дорогая — даём отмене шанс между файлами
             var model = compilation.GetSemanticModel(tree);
             var root = tree.GetRoot();
             var layer = RoslynScan.Layer(tree.FilePath);

@@ -5,18 +5,21 @@ namespace ArchForge.Analysis.Tests;
 
 public class RoslynRobustnessTests
 {
+    // Честно: Roslyn-парсер error-tolerant по построению — на мусорном тексте он не бросает
+    // исключений (мы на это опираемся, adr/0008). Тест фиксирует ДВЕ зависимости, а не «защиту от
+    // краха»: (1) битый файл не роняет весь разбор, (2) валидные соседи всё равно извлекаются
+    // (изоляция по файлам). Сломается, если кто-то заменит парсер на бросающий или уберёт per-file try/catch.
     [Fact]
-    public void Broken_cs_does_not_crash_and_valid_neighbours_still_parsed()
+    public void Garbage_file_does_not_break_parsing_of_valid_neighbours()
     {
         string tmp = MakeTemp();
         try
         {
             File.WriteAllText(Path.Combine(tmp, "Good.cs"), "namespace X; public class Good { }");
-            File.WriteAllText(Path.Combine(tmp, "Broken.cs"), "public class {{{ не валидный C# @#$% ");
+            File.WriteAllText(Path.Combine(tmp, "Garbage.cs"), "public class {{{ не валидный C# @#$% ");
 
             var types = new RoslynTypeSource().Read(tmp);
 
-            // Битый сосед не роняет разбор; валидный тип извлечён (изоляция ошибок по файлам, adr/0008).
             Assert.Contains(types, t => t.Name == "Good");
         }
         finally { Cleanup(tmp); }
@@ -36,6 +39,32 @@ public class RoslynRobustnessTests
 
             Assert.Contains(types, t => t.Name == "Small");
             Assert.DoesNotContain(types, t => t.Name == "Big");
+        }
+        finally { Cleanup(tmp); }
+    }
+
+    // Кап ссылок — единственная новая ветка логики семантики; проверяем границы напрямую (P1-H #3).
+    [Theory]
+    [InlineData(0, false)]     // нет ссылок → семантики нет
+    [InlineData(1, true)]
+    [InlineData(RoslynSemanticTypeSource.MaxReferences, true)]      // 4000 — ещё берём
+    [InlineData(RoslynSemanticTypeSource.MaxReferences + 1, false)] // 4001 — уже пол
+    public void Reference_cap_decides_when_semantic_is_usable(int count, bool usable)
+    {
+        Assert.Equal(usable, RoslynSemanticTypeSource.ReferencesUsable(count));
+    }
+
+    [Fact]
+    public void Read_stops_on_cancellation()
+    {
+        string tmp = MakeTemp();
+        try
+        {
+            File.WriteAllText(Path.Combine(tmp, "A.cs"), "public class A { }");
+            using var cts = new System.Threading.CancellationTokenSource();
+            cts.Cancel(); // уже отменён — разбор не должен молча досчитать граф
+
+            Assert.Throws<OperationCanceledException>(() => new RoslynTypeSource().Read(tmp, cts.Token));
         }
         finally { Cleanup(tmp); }
     }
