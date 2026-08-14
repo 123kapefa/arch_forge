@@ -194,8 +194,32 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         foreach (var p in g.Problems) output.WriteLine($"  ⚠ {p.Severity} {p.Kind}: {p.Title}");
 
         Assert.True(services >= 2 && stores >= 2); // мульти-сервисный discovery без падения
-        Assert.Empty(g.Problems);                  // таргет чист — детектор не выдумывает
-        // NB: product_site использует docker-compose-dev.yaml (не базовое имя) → пока не подхватывается;
-        // папочный discovery (P1.5-B) это закроет.
+        // Честно: общих РЕЛЯЦИОННЫХ БД нет (у каждого сервиса своя postgres, exporter'ы исключены) —
+        // ни одного Critical; но несколько сервисов делят один redis → shared-store (Warning), не прячем.
+        Assert.DoesNotContain(g.Problems, p => p.Severity == ProblemSeverity.Critical);
+        Assert.Contains(g.Problems, p => p.Kind == "shared-store"); // общий redis
+    }
+
+    // Находка ревью #1: два сервиса с ОДИНАКОВЫМ именем solution (Server.slnx) в разных папках не сливаются.
+    [Fact]
+    public void Same_solution_name_in_different_folders_do_not_merge()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_slncol_" + Guid.NewGuid().ToString("N"));
+        MakeSvc(root, "svc-a", "Server.slnx", "ghcr.io/ns/svc-a:1");
+        MakeSvc(root, "svc-b", "Server.slnx", "ghcr.io/ns/svc-b:1");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.Equal(2, g.Nodes.Count(n => n.Name == "api")); // namespace по папке → два разных узла
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static void MakeSvc(string root, string dir, string sln, string apiImage)
+    {
+        var p = Directory.CreateDirectory(Path.Combine(root, dir)).FullName;
+        File.WriteAllText(Path.Combine(p, sln), "<Solution/>");
+        File.WriteAllText(Path.Combine(p, "docker-compose.yml"),
+            $"services:\n  api: {{ image: {apiImage}, environment: {{ ConnectionStrings__Db: \"Host=db\" }} }}\n  db: {{ image: postgres:16 }}\n");
     }
 }
