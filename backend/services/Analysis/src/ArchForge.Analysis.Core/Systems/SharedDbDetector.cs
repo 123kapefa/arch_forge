@@ -1,14 +1,17 @@
 namespace ArchForge.Analysis.Core.Systems;
 
-// Детектор системного анти-паттерна «общая БД»: в одну РЕЛЯЦИОННУЮ БД пишут ≥2 РАЗНЫХ приложения.
+// Детектор общего хранилища: в одно хранилище пишут ≥2 РАЗНЫХ приложения.
+//  • реляционная БД / хранилище-«истина» (postgres/mysql/mongo/mssql…) → Critical «общая БД»
+//    (жёсткое связывание данных между сервисами);
+//  • прочее (redis/minio/кэш) → Warning «общее хранилище» — сигнал связанности НЕ прячем (ревью P1.5-B),
+//    но не Critical: общий кэш часто осознан.
 //
-// Честность (adr/0008) — что НЕ считаем нарушением:
-//  • различаем пишущих по нормализованному образу (api+migrate одного образа = одно приложение);
-//  • писателя без образа (build:) не считаем идентичностью — не выдумываем (плата: возможен false negative);
-//  • отложенные (Deferred) рёбра не считаем — target ещё не разрешён;
-//  • мониторинг-экспортёры (*-exporter) НЕ пишущие приложения — они лишь скрейпят метрики из БД;
-//  • только реляционные БД (postgres/mysql/mongo…): общий redis/кэш/объект-стор — обычно осознанный шаринг,
-//    не тот анти-паттерн (иначе — лавина ложных срабатываний на реальном таргете).
+// Честность (adr/0008) — что НЕ считаем пишущим:
+//  • различаем по нормализованному образу (api+migrate одного образа = одно приложение);
+//  • писателя без образа (build:) не считаем идентичностью — не выдумываем (возможен false negative);
+//  • отложенные (Deferred) рёбра не считаем — target не разрешён;
+//  • мониторинг-экспортёры (*-exporter) — не приложения (скрейпят метрики). Компромисс: бизнес-сервис,
+//    случайно названный *-exporter, будет пропущен (см. тест) — приоритет чистоте сигнала.
 public static class SharedDbDetector
 {
     public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph)
@@ -16,7 +19,7 @@ public static class SharedDbDetector
         var nodeById = graph.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
         var problems = new List<SystemProblem>();
 
-        foreach (var ds in graph.Nodes.Where(n => n.Kind == SystemNodeKind.Datastore && IsRelationalDb(n.Image)))
+        foreach (var ds in graph.Nodes.Where(n => n.Kind == SystemNodeKind.Datastore))
         {
             var writers = graph.Edges
                 .Where(e => e.Kind == "rw-db" && e.Target == ds.Id && !e.Deferred)
@@ -27,11 +30,15 @@ public static class SharedDbDetector
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            if (writers.Count >= 2)
-                problems.Add(new SystemProblem(
-                    ProblemSeverity.Critical, "shared-db",
-                    $"общая БД: в «{ds.Name}» пишут {writers.Count} разных приложения ({string.Join(", ", writers)})",
-                    ds.Id));
+            if (writers.Count < 2) continue;
+
+            var primary = IsPrimaryDb(ds.Image);
+            problems.Add(new SystemProblem(
+                primary ? ProblemSeverity.Critical : ProblemSeverity.Warning,
+                primary ? "shared-db" : "shared-store",
+                $"{(primary ? "общая БД" : "общее хранилище")}: в «{ds.Name}» пишут {writers.Count} " +
+                    $"разных приложения ({string.Join(", ", writers)})",
+                ds.Id));
         }
 
         return problems;
@@ -46,11 +53,12 @@ public static class SharedDbDetector
         return string.IsNullOrWhiteSpace(last) ? null : last;
     }
 
-    // Реляционная БД / хранилище данных-«истины» — только для них анти-паттерн общей БД.
-    private static bool IsRelationalDb(string? image) =>
-        NormalizeImage(image)?.ToLowerInvariant() is "postgres" or "postgresql" or "mysql" or "mariadb" or "mongo" or "mongodb";
+    // Реляционная БД / хранилище-«истина». NB: MSSQL как mcr.microsoft.com/mssql/server (база «server»)
+    // сейчас не классифицируется как Datastore — известный пробел (P1.5 backlog).
+    private static bool IsPrimaryDb(string? image) =>
+        NormalizeImage(image)?.ToLowerInvariant() is
+            "postgres" or "postgresql" or "mysql" or "mariadb" or "mongo" or "mongodb" or "mssql" or "sqlserver";
 
-    // Мониторинг-экспортёр (postgres-exporter / redis_exporter / node-exporter) — не пишущее приложение.
     private static bool IsMonitoring(string? image)
     {
         var b = NormalizeImage(image);

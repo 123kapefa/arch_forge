@@ -82,7 +82,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
     // Что и под каким пространством имён парсить:
     //  • root — файл           → сам файл (namespace = его каталог);
-    //  • root — папка + сервисы → compose каждого папочного сервиса (namespace = имя сервиса);
+    //  • root — папка + сервисы → compose каждого сервиса (namespace = ПАПКА сервиса относительно корня —
+    //    уникальна, в отличие от имени solution: два сервиса с одинаковым Server.sln не сольются, ревью #1);
     //  • root — папка без .slnx → fallback: базовые compose под корнем (namespace = их каталог).
     private IEnumerable<(string System, string ComposePath)> ComposesToParse(string root)
     {
@@ -93,13 +94,16 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         if (discovered.Count > 0)
         {
             foreach (var svc in discovered)
-                if (svc.ComposePath is { } cp) yield return (svc.Name, cp);
+                if (svc.ComposePath is { } cp) yield return (Rel(root, svc.Root), cp);
             yield break;
         }
 
         foreach (var f in FallbackComposeFiles(root))
             yield return (DirNameOf(f), f);
     }
+
+    private static string Rel(string root, string path) =>
+        Path.GetRelativePath(root, path).Replace('\\', '/');
 
     private static string DirNameOf(string filePath) =>
         Path.GetFileName(Path.GetDirectoryName(filePath)) is { Length: > 0 } d ? d : "system";
@@ -118,22 +122,13 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         var found = new List<string>();
         foreach (var f in Directory.EnumerateFiles(root, "*compose*", opts))
         {
-            var n = f.Replace('\\', '/');
-            if (ContainsAny(n, "/.claude/", "worktrees", "backup", "dbdumps", "/node_modules/", "/bin/", "/obj/"))
-                continue;
-            var name = Path.GetFileName(n).ToLowerInvariant();
+            if (PathFilter.IsNoise(root, f)) continue;
+            var name = Path.GetFileName(f).ToLowerInvariant();
             if (name is "docker-compose.yml" or "docker-compose.yaml" or "compose.yml" or "compose.yaml")
                 found.Add(f);
         }
         found.Sort(StringComparer.Ordinal);
         return found;
-    }
-
-    private static bool ContainsAny(string s, params string[] needles)
-    {
-        foreach (var needle in needles)
-            if (s.Contains(needle, StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
     }
 
     private static IReadOnlyList<SystemEdge> Dedup(List<SystemEdge> edges) =>

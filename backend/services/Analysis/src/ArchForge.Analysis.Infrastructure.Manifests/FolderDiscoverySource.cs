@@ -7,25 +7,23 @@ namespace ArchForge.Analysis.Infrastructure.Manifests;
 // без .slnx сервисами НЕ считаются (закрывает находку спайка P1.5-0).
 public sealed class FolderDiscoverySource : IServiceDiscoverySource
 {
-    private static readonly string[] Noise =
-        { "/.claude/", "worktrees", "backup", "dbdumps", "/node_modules/", "/bin/", "/obj/" };
-
     public IReadOnlyList<DiscoveredService> Discover(string root)
     {
         if (File.Exists(root) || !Directory.Exists(root)) return []; // ждём корень системы (папку)
 
         var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+        var slns = Directory.EnumerateFiles(root, "*.sln*", opts)
+            .Where(f => (f.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
+                         f.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))   // *.sln* ловит и .slnf
+                        && !PathFilter.IsNoise(root, f))
+            .OrderBy(f => f, StringComparer.Ordinal)                                // детерминизм до дедупа по папке
+            .ToList();
+
         var byRoot = new Dictionary<string, DiscoveredService>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var sln in Directory.EnumerateFiles(root, "*.sln*", opts))
+        foreach (var sln in slns)
         {
-            if (!sln.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) &&
-                !sln.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)) continue; // *.sln* ловит и .slnf
-            if (IsNoise(sln)) continue;
-
             var svcRoot = Path.GetDirectoryName(sln);
             if (string.IsNullOrEmpty(svcRoot) || byRoot.ContainsKey(svcRoot)) continue; // одна папка = один сервис
-
             var name = Path.GetFileNameWithoutExtension(sln); // имя решения: AuthService, KalmykovGroup.Server
             byRoot[svcRoot] = new DiscoveredService(name, svcRoot, FindServiceCompose(svcRoot));
         }
@@ -47,13 +45,5 @@ public sealed class FolderDiscoverySource : IServiceDiscoverySource
             Path.GetFileName(f).ToLowerInvariant() is "docker-compose.yml" or "docker-compose.yaml"
                 or "compose.yml" or "compose.yaml");
         return baseCompose ?? candidates.FirstOrDefault();
-    }
-
-    private static bool IsNoise(string path)
-    {
-        var n = path.Replace('\\', '/');
-        foreach (var needle in Noise)
-            if (n.Contains(needle, StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
     }
 }
