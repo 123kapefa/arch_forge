@@ -69,6 +69,24 @@ public class RoslynRobustnessTests
         finally { Cleanup(tmp); }
     }
 
+    // Рискованный путь: у семантики есть catch(Exception)→floor. Отмена НЕ должна в него попасть
+    // (порядок catch: OperationCanceledException раньше). Тест упадёт, если кто-то схлопнет catch-блоки.
+    [Fact]
+    public void Semantic_read_propagates_cancellation_not_swallowed_as_fallback()
+    {
+        string tmp = MakeTemp();
+        try
+        {
+            File.WriteAllText(Path.Combine(tmp, "A.cs"), "public class A { }");
+            using var cts = new System.Threading.CancellationTokenSource();
+            cts.Cancel();
+
+            var semantic = new RoslynSemanticTypeSource(new RoslynTypeSource());
+            Assert.Throws<OperationCanceledException>(() => semantic.Read(tmp, cts.Token));
+        }
+        finally { Cleanup(tmp); }
+    }
+
     private static string MakeTemp()
     {
         string p = Path.Combine(Path.GetTempPath(), "archforge_rob_" + Guid.NewGuid().ToString("N"));
