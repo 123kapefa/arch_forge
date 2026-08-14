@@ -102,7 +102,7 @@
 .insp__drift { color: #ffb454; }
 .insp__drift ul, .insp__deps { margin: 0; padding-left: 0; list-style: none; }
 .insp__drift li { margin: 2px 0; }
-.insp__deps li { padding: 2px 0; color: #c9d1d9; border-bottom: 1px solid #21262d; }
+.insp__deps li { padding: 2px 0; color: #c9d1d9; border-bottom: 1px solid #21262d; overflow-wrap: anywhere; }
 .insp__deps li:last-child { border-bottom: none; }
 .insp__inc { color: #8b949e; }
 .insp__ek { color: #58a6ff; font-weight: 600; }

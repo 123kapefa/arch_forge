@@ -1,4 +1,5 @@
 import type { GraphDto, NodeDto } from './api';
+import { buildCodeUrl, nodeDeps } from './nodeInfo';
 import { layerColor } from './theme';
 
 /** Панель инспектора узла: роль/честность, дрейф, зависимости, якорь на исходник (P1-E). */
@@ -8,22 +9,20 @@ export function Inspector({ node, graph, onClose, onFocus }: {
   onClose: () => void;
   onFocus: (id: string) => void;
 }) {
-  const outgoing = graph.edges.filter((e) => e.source === node.id);
-  const incoming = graph.edges.filter((e) => e.target === node.id);
+  const { outgoing, incoming } = nodeDeps(graph, node.id);
   const nameOf = (id: string) => graph.nodes.find((n) => n.id === id)?.name ?? id;
   const color = layerColor(node.layer);
-  // Путь в IR абсолютный → ссылка открывает файл в VS Code (один слэш: macOS `/…`, Windows `/C:/…`).
-  const filePath = node.file.replace(/\\/g, '/');
-  const codeUrl = `vscode://file${filePath.startsWith('/') ? '' : '/'}${filePath}`;
+  const codeUrl = buildCodeUrl(node.file);
+  const drift = node.drift ?? [];
 
   return (
-    <aside className="insp">
+    <aside className="insp" aria-label={`Инспектор: ${node.name}`}>
       <div className="insp__head" style={{ borderTopColor: color }}>
         <div className="insp__title">
           <div className="insp__meta" style={{ color }}>{node.layer} · {node.kind}</div>
           <div className="insp__name" title={node.name}>{node.name}</div>
         </div>
-        <button className="insp__close" onClick={onClose} title="закрыть">✕</button>
+        <button className="insp__close" onClick={onClose} title="закрыть (Esc)">✕</button>
       </div>
 
       <div className="insp__role">
@@ -31,10 +30,10 @@ export function Inspector({ node, graph, onClose, onFocus }: {
         <span className={`insp__via via-${node.via}`}>{node.via}</span>
       </div>
 
-      {node.drift.length > 0 && (
+      {drift.length > 0 && (
         <div className="insp__block insp__drift">
           <div className="insp__k">⚠ Дрейф от свода</div>
-          <ul>{node.drift.map((d, i) => <li key={i}>{d}</li>)}</ul>
+          <ul>{drift.map((d, i) => <li key={i}>{d}</li>)}</ul>
         </div>
       )}
 

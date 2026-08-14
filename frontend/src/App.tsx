@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, Controls, MiniMap } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './App.css';
@@ -61,15 +61,23 @@ export default function App() {
     }
   }, []);
 
-  // «Разобрать»: фиксируем загруженный путь и сбрасываем срез.
+  // «Разобрать»: фиксируем загруженный путь и сбрасываем срез + выбор.
   const analyze = () => {
     const p = pathInput.trim();
     if (!p) return;
     setLoadedPath(p);
     setLayer(null);
     setFocus(null);
+    setSelectedId(null);
     load(p, null, null);
   };
+
+  // Esc закрывает инспектор.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedId(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const view = useMemo(
     () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
@@ -80,10 +88,15 @@ export default function App() {
     () => (graph ? [...new Set(graph.nodes.map((n) => n.layer))].sort() : []),
     [graph],
   );
-  // Инспектируемый узел резолвим из текущего графа по id — уйдёт из вида → панель сама закроется.
+  // Свечение выбранного узла ведём от нашего selectedId, а не от внутреннего selection React Flow.
+  const displayNodes = useMemo(
+    () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
+    [nodes, selectedId],
+  );
+  // Инспектируемый узел резолвим из ВИДА (учитывает фильтры) по id — уйдёт из вида → панель закроется.
   const selected = useMemo(
-    () => (graph && selectedId ? graph.nodes.find((n) => n.id === selectedId) ?? null : null),
-    [graph, selectedId],
+    () => (view && selectedId ? view.nodes.find((n) => n.id === selectedId) ?? null : null),
+    [view, selectedId],
   );
 
   // Меняется при любой смене видимого набора → ремоунт ReactFlow → повторный fitView.
@@ -161,7 +174,7 @@ export default function App() {
         )}
         <ReactFlow
           key={fitKey}
-          nodes={nodes}
+          nodes={displayNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
@@ -182,10 +195,10 @@ export default function App() {
           />
         </ReactFlow>
 
-        {selected && graph && (
+        {selected && view && (
           <Inspector
             node={selected}
-            graph={graph}
+            graph={view}
             onClose={() => setSelectedId(null)}
             onFocus={(id) => { setFocus(id); load(loadedPath, layer, id); }}
           />
