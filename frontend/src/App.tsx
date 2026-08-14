@@ -1,0 +1,321 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactFlow, Background, Controls, MiniMap } from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import './App.css';
+
+import { fetchMap, fetchImports, type GraphDto, type CoverageDto, type ImportsDto } from './api';
+import { filterGraph, toFlow, toLayerFlow } from './graph';
+import { layerViolations, isLayerDirectionViolation } from './lint';
+import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
+import { LayerNode, type LayerNodeData } from './nodes/LayerNode';
+import { Inspector } from './Inspector';
+import { LintPanel } from './LintPanel';
+import { ImportsPanel } from './ImportsPanel';
+import { layerColor } from './theme';
+
+const nodeTypes = { type: TypeNode, layer: LayerNode };
+const DEFAULT_PATH = ''; // без хардкода машины разработчика — путь вводит пользователь
+type Mode = 'layers' | 'types';
+
+function Coverage({ nodeCount, edgeCount, coverage }: {
+  nodeCount: number; edgeCount: number; coverage: CoverageDto;
+}) {
+  const t = Math.max(coverage.total, 1);
+  const pct = (n: number) => `${((n / t) * 100).toFixed(0)}%`;
+  return (
+    <div className="cov">
+      <span>{nodeCount} узлов · {edgeCount} связей</span>
+      <span className="cov__bar">
+        <span className="cov__seg cov__seg--marker" style={{ width: pct(coverage.marker) }} title={`маркер ${coverage.marker}`} />
+        <span className="cov__seg cov__seg--heuristic" style={{ width: pct(coverage.heuristic) }} title={`эвристика ${coverage.heuristic}`} />
+        <span className="cov__seg cov__seg--unknown" style={{ width: pct(coverage.unknown) }} title={`unknown ${coverage.unknown}`} />
+      </span>
+    </div>
+  );
+}
+
+export default function App() {
+  const [pathInput, setPathInput] = useState(DEFAULT_PATH);
+  const [loadedPath, setLoadedPath] = useState('');
+  const [graph, setGraph] = useState<GraphDto | null>(null);       // текущий вид (может быть проекцией слоя/фокуса)
+  const [fullGraph, setFullGraph] = useState<GraphDto | null>(null); // весь проект — для обзора/линта/списка слоёв
+  const [mode, setMode] = useState<Mode>('layers'); // уровень: обзор слоёв / типы (меняется при приходе графа)
+  const [layer, setLayer] = useState<string | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [lintOpen, setLintOpen] = useState(false);
+  const [importsOpen, setImportsOpen] = useState(false);
+  const [imports, setImports] = useState<ImportsDto | null>(null);
+  const [importsLoading, setImportsLoading] = useState(false);
+  const [hideTests, setHideTests] = useState(false);
+  const [hideIsolated, setHideIsolated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const reqSeq = useRef(0);
+  const importsSeq = useRef(0);
+
+  // path/layer/focus передаются явно на вызове — нет стейл-замыканий. reqSeq отбрасывает устаревшие
+  // ответы (гонка). mode переключаем ТОЛЬКО когда пришёл соответствующий граф. При ошибке граф держим.
+  // Полный граф (без layer/focus) сохраняем отдельно — линт/обзор считаем по всему проекту.
+  const load = useCallback(async (p: string, nextLayer: string | null, nextFocus: string | null, resultMode: Mode) => {
+    const id = ++reqSeq.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const g = await fetchMap({ path: p, layer: nextLayer || undefined, focus: nextFocus || undefined });
+      if (id !== reqSeq.current) return;
+      setGraph(g);
+      if (!nextLayer && !nextFocus) setFullGraph(g);
+      setMode(resultMode);
+    } catch (e) {
+      if (id !== reqSeq.current) return;
+      setError(String(e));
+    } finally {
+      if (id === reqSeq.current) setLoading(false);
+    }
+  }, []);
+
+  const analyze = () => {
+    const p = pathInput.trim();
+    if (!p) return;
+    setLoadedPath(p);
+    setLayer(null);
+    setFocus(null);
+    setSelectedId(null);
+    importsSeq.current++;   // отменить возможный висящий запрос импортов старого пути
+    setImports(null);       // новый проект — сбросить кеш импортов
+    setImportsOpen(false);
+    setLintOpen(false);
+    load(p, null, null, 'layers');
+  };
+
+  const drillLayer = (l: string) => {
+    setLayer(l);
+    setFocus(null);
+    setSelectedId(null);
+    load(loadedPath, l, null, 'types');
+  };
+  const backToLayers = useCallback(() => {
+    if (mode === 'layers' && layer === null && !loading) return; // уже на обзоре — не дёргаем сеть
+    setLayer(null);
+    setFocus(null);
+    setSelectedId(null);
+    load(loadedPath, null, null, 'layers');
+  }, [mode, layer, loading, loadedPath, load]);
+
+  // Переход из панели линта к узлу — фокус на нём (видно нарушающее ребро) + инспектор.
+  const goToNode = (id: string) => {
+    setLayer(null);
+    setFocus(id);
+    setSelectedId(id);
+    setLintOpen(false);
+    load(loadedPath, null, id, 'types');
+  };
+
+  // Импорты грузим лениво при первом открытии панели. Панели слева взаимоисключаемы.
+  const toggleImports = () => {
+    setLintOpen(false);
+    const next = !importsOpen;
+    setImportsOpen(next);
+    if (next && !imports && loadedPath) {
+      const id = ++importsSeq.current;
+      setImportsLoading(true);
+      fetchImports(loadedPath)
+        .then((data) => { if (id === importsSeq.current) setImports(data); })
+        .catch((e) => { if (id === importsSeq.current) setError(String(e)); })
+        .finally(() => { if (id === importsSeq.current) setImportsLoading(false); });
+    }
+  };
+  const toggleLint = () => { setImportsOpen(false); setLintOpen((o) => !o); };
+
+  // Esc: закрыть инспектор/панели, иначе подняться к обзору слоёв. Без побочки внутри апдейтера setState.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (selectedId) setSelectedId(null);
+      else if (importsOpen) setImportsOpen(false);
+      else if (lintOpen) setLintOpen(false);
+      else if (mode === 'types') backToLayers();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode, selectedId, lintOpen, importsOpen, backToLayers]);
+
+  const view = useMemo(
+    () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
+    [graph, hideTests, hideIsolated],
+  );
+  const { nodes, edges } = useMemo(
+    () => (mode === 'layers' ? toLayerFlow(fullGraph) : toFlow(view)),
+    [mode, fullGraph, view],
+  );
+  const layers = useMemo(
+    () => (fullGraph ? [...new Set(fullGraph.nodes.map((n) => n.layer))].sort() : []),
+    [fullGraph],
+  );
+  const violations = useMemo(() => (fullGraph ? layerViolations(fullGraph) : []), [fullGraph]);
+  const violationIds = useMemo(() => new Set(violations.map((v) => v.id)), [violations]);
+
+  const displayNodes = useMemo(
+    () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
+    [nodes, selectedId],
+  );
+  const displayEdges = useMemo(
+    () => edges.map((e) => {
+      const bad = mode === 'types'
+        ? violationIds.has(e.id)
+        : isLayerDirectionViolation(e.source.replace(/^layer:/, ''), e.target.replace(/^layer:/, ''));
+      return bad
+        ? { ...e, style: { strokeWidth: 2 }, labelStyle: { fill: '#f85149', fontWeight: 700 }, className: 'edge-viol' }
+        : e;
+    }),
+    [edges, mode, violationIds],
+  );
+  const selected = useMemo(
+    () => (mode === 'types' && view && selectedId ? view.nodes.find((n) => n.id === selectedId) ?? null : null),
+    [mode, view, selectedId],
+  );
+
+  const fitKey = [mode, layer ?? 'all', focus ?? '', hideTests, hideIsolated, nodes.length, edges.length].join('|');
+  const emptyView = graph !== null && nodes.length === 0;
+  const focusName = focus ? (graph?.nodes.find((n) => n.id === focus)?.name ?? focus) : null;
+  const lintCount = (fullGraph?.drift.length ?? 0) + violations.length;
+
+  return (
+    <div className="app">
+      <header className="bar">
+        <input
+          className="bar__path"
+          value={pathInput}
+          onChange={(e) => setPathInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') analyze(); }}
+          placeholder="путь к .NET проекту (папка solution)"
+          spellCheck={false}
+        />
+        <button onClick={analyze} disabled={loading || !pathInput.trim()}>
+          {loading ? '…' : 'Разобрать'}
+        </button>
+
+        {graph && (
+          <>
+            <nav className="crumbs">
+              <button className="crumbs__home" onClick={backToLayers} title="к обзору слоёв">
+                {graph.project}
+              </button>
+              {mode === 'types' && (
+                <>
+                  <span className="crumbs__sep">›</span>
+                  <span className="crumbs__cur">{layer ?? 'все типы'}</span>
+                  {focusName && <><span className="crumbs__sep">›</span><span className="crumbs__cur">{focusName}</span></>}
+                </>
+              )}
+            </nav>
+
+            <select
+              value={mode === 'types' ? (layer ?? '') : ''}
+              onChange={(e) => {
+                const v = e.target.value || null;
+                if (v) drillLayer(v); else backToLayers();
+              }}
+            >
+              <option value="">обзор слоёв</option>
+              {layers.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+
+            <label className="tog">
+              <input type="checkbox" checked={hideTests} onChange={(e) => setHideTests(e.target.checked)} />
+              без tests
+            </label>
+            <label className="tog">
+              <input type="checkbox" checked={hideIsolated} onChange={(e) => setHideIsolated(e.target.checked)} />
+              без одиночек
+            </label>
+
+            {focus && (
+              <button
+                className="bar__focus"
+                onClick={() => { setFocus(null); load(loadedPath, layer, null, 'types'); }}
+                title="сбросить фокус"
+              >
+                ✕ focus: {focusName}
+              </button>
+            )}
+
+            <button
+              className={`lintbtn${importsOpen ? ' is-on' : ''}`}
+              onClick={toggleImports}
+              title="сторонние библиотеки: версии, кто использует, конфликты"
+            >
+              📦 Импорты
+            </button>
+            <button
+              className={`lintbtn${lintOpen ? ' is-on' : ''}${lintCount > 0 ? ' has-issues' : ''}`}
+              onClick={toggleLint}
+              title="дрейф от свода + нарушения слоёв (по всему проекту)"
+            >
+              ⚠ Линт · {lintCount}
+            </button>
+
+            {view && <Coverage nodeCount={view.nodes.length} edgeCount={view.edges.length} coverage={graph.coverage} />}
+          </>
+        )}
+      </header>
+
+      {error && <div className="err">{error}</div>}
+
+      <div className="canvas">
+        {!graph && !error && (
+          <div className="hint">Укажи путь к .NET-проекту и нажми «Разобрать». Сверху — обзор слоёв; клик по слою — провал в его типы.</div>
+        )}
+        {emptyView && (
+          <div className="hint">Под текущие фильтры ничего не попало — ослабь «без tests»/«без одиночек» или смени слой.</div>
+        )}
+        <ReactFlow
+          key={fitKey}
+          nodes={displayNodes}
+          edges={displayEdges}
+          nodeTypes={nodeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.15 }}
+          minZoom={0.1}
+          onlyRenderVisibleElements
+          onNodeClick={(_, n) => {
+            if (mode === 'layers') drillLayer((n.data as LayerNodeData).layer);
+            else setSelectedId(n.id);
+          }}
+          onPaneClick={() => setSelectedId(null)}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background gap={20} color="#20262f" />
+          <Controls />
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(n) => layerColor((n.data as TypeNodeData | LayerNodeData).layer)}
+            maskColor="rgba(13,17,23,0.7)"
+          />
+        </ReactFlow>
+
+        {importsOpen && <ImportsPanel imports={imports} loading={importsLoading} onClose={() => setImportsOpen(false)} />}
+
+        {lintOpen && fullGraph && (
+          <LintPanel
+            drift={fullGraph.drift}
+            violations={violations}
+            onClose={() => setLintOpen(false)}
+            onGoTo={goToNode}
+          />
+        )}
+
+        {selected && view && (
+          <Inspector
+            node={selected}
+            graph={view}
+            onClose={() => setSelectedId(null)}
+            onFocus={(id) => { setFocus(id); load(loadedPath, layer, id, 'types'); }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}

@@ -4,7 +4,7 @@
 
 ## Отношение к archlens
 
-arch_forge строится на **.NET по своду** (Clean Architecture), а archlens (Node/TS) — **референс идей** (IR-модель, «Импорты за кнопкой», раскладка), не кодовая база бэка. Фронт (React + React Flow) переиспользуем из archlens. Решение и микросервисная декомпозиция — `adr/0009-dotnet-roslyn-microservices.md`.
+arch_forge строится на **.NET по своду** (Clean Architecture), а archlens (Node/TS) — **референс идей** (IR-модель, «Импорты за кнопкой», раскладка), не кодовая база. Фронт — **свой клиент** на React + React Flow (`@xyflow/react`), не reuse archlens. Решения — `adr/0009` (бэк + декомпозиция) и `adr/0010` (фронт).
 
 ## Проблема
 
