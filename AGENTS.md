@@ -21,6 +21,7 @@ arch_forge — инструмент, который статически раз�
 
 - Тесты: `dotnet test`.
 - Линт/сборка: `dotnet build`.
+- Фронт (если менялся `frontend/`): `npm run build`, `npm run test`, `npm run lint`.
 - При изменении API проверить клиентов и контракт.
 
 ## Hard rules
