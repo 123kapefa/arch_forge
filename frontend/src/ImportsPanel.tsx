@@ -1,5 +1,14 @@
 import type { ImportsDto } from './api';
 
+// Русская плюрализация: 1 проект / 2–4 проекта / 5+ проектов.
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
+}
+
 /** Панель импортов (P1-G): прямые библиотеки — версии, кто использует, конфликты версий. */
 export function ImportsPanel({ imports, loading, onClose }: {
   imports: ImportsDto | null;
@@ -25,7 +34,7 @@ export function ImportsPanel({ imports, loading, onClose }: {
               <div className="imports__meta">
                 <span className="imports__ver">{p.versions.join(', ') || '—'}</span>
                 <span className="imports__used" title={p.usedBy.join('\n')}>
-                  {p.usedBy.length} {p.usedBy.length === 1 ? 'проект' : 'проектов'}
+                  {p.usedBy.length} {plural(p.usedBy.length, 'проект', 'проекта', 'проектов')}
                 </span>
                 {p.versionConflict && <span className="imports__conflict">⚠ конфликт версий</span>}
               </div>

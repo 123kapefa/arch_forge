@@ -52,6 +52,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const reqSeq = useRef(0);
+  const importsSeq = useRef(0);
 
   // path/layer/focus передаются явно на вызове — нет стейл-замыканий. reqSeq отбрасывает устаревшие
   // ответы (гонка). mode переключаем ТОЛЬКО когда пришёл соответствующий граф. При ошибке граф держим.
@@ -81,6 +82,7 @@ export default function App() {
     setLayer(null);
     setFocus(null);
     setSelectedId(null);
+    importsSeq.current++;   // отменить возможный висящий запрос импортов старого пути
     setImports(null);       // новый проект — сбросить кеш импортов
     setImportsOpen(false);
     setLintOpen(false);
@@ -116,11 +118,12 @@ export default function App() {
     const next = !importsOpen;
     setImportsOpen(next);
     if (next && !imports && loadedPath) {
+      const id = ++importsSeq.current;
       setImportsLoading(true);
       fetchImports(loadedPath)
-        .then(setImports)
-        .catch((e) => setError(String(e)))
-        .finally(() => setImportsLoading(false));
+        .then((data) => { if (id === importsSeq.current) setImports(data); })
+        .catch((e) => { if (id === importsSeq.current) setError(String(e)); })
+        .finally(() => { if (id === importsSeq.current) setImportsLoading(false); });
     }
   };
   const toggleLint = () => { setImportsOpen(false); setLintOpen((o) => !o); };
