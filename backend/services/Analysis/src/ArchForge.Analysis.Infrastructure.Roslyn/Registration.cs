@@ -7,7 +7,10 @@ public static class Registration
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services)
     {
-        services.AddSingleton<ITypeSource, RoslynTypeSource>();
+        // Семантика поверх синтаксического пола (adr/0008): ITypeSource = семантика, floor — фолбэк.
+        services.AddSingleton<RoslynTypeSource>();
+        services.AddSingleton<ITypeSource>(sp =>
+            new RoslynSemanticTypeSource(sp.GetRequiredService<RoslynTypeSource>()));
         return services;
     }
 }

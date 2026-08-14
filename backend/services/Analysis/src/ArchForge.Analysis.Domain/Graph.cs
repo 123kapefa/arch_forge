@@ -12,7 +12,7 @@ public sealed record TypeInfo(
     string File,
     IReadOnlyList<string> Drift);
 
-public sealed record TypeEdge(string From, string To, string Kind); // implements | holds | uses
+public sealed record TypeEdge(string From, string To, string Kind); // implements | holds | uses | raises | handles
 
 public sealed record Coverage(int Marker, int Heuristic, int Unknown);
 
