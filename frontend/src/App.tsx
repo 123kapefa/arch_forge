@@ -6,6 +6,7 @@ import './App.css';
 import { fetchMap, type GraphDto, type CoverageDto } from './api';
 import { filterGraph, toFlow } from './graph';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
+import { Inspector } from './Inspector';
 import { layerColor } from './theme';
 
 const nodeTypes = { type: TypeNode };
@@ -35,6 +36,7 @@ export default function App() {
   const [graph, setGraph] = useState<GraphDto | null>(null);
   const [layer, setLayer] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hideTests, setHideTests] = useState(false);
   const [hideIsolated, setHideIsolated] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +79,11 @@ export default function App() {
   const layers = useMemo(
     () => (graph ? [...new Set(graph.nodes.map((n) => n.layer))].sort() : []),
     [graph],
+  );
+  // Инспектируемый узел резолвим из текущего графа по id — уйдёт из вида → панель сама закроется.
+  const selected = useMemo(
+    () => (graph && selectedId ? graph.nodes.find((n) => n.id === selectedId) ?? null : null),
+    [graph, selectedId],
   );
 
   // Меняется при любой смене видимого набора → ремоунт ReactFlow → повторный fitView.
@@ -147,7 +154,7 @@ export default function App() {
 
       <div className="canvas">
         {!graph && !error && (
-          <div className="hint">Укажи путь к .NET-проекту и нажми «Разобрать». Клик по плашке — фокус на её связях.</div>
+          <div className="hint">Укажи путь к .NET-проекту и нажми «Разобрать». Клик по плашке — инспектор (роль, дрейф, связи, «открыть в коде»).</div>
         )}
         {emptyView && (
           <div className="hint">Под текущие фильтры ничего не попало — ослабь «без tests»/«без одиночек» или смени слой.</div>
@@ -161,7 +168,8 @@ export default function App() {
           fitViewOptions={{ padding: 0.15 }}
           minZoom={0.1}
           onlyRenderVisibleElements
-          onNodeClick={(_, n) => { setFocus(n.id); load(loadedPath, layer, n.id); }}
+          onNodeClick={(_, n) => setSelectedId(n.id)}
+          onPaneClick={() => setSelectedId(null)}
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={20} color="#20262f" />
@@ -173,6 +181,15 @@ export default function App() {
             maskColor="rgba(13,17,23,0.7)"
           />
         </ReactFlow>
+
+        {selected && graph && (
+          <Inspector
+            node={selected}
+            graph={graph}
+            onClose={() => setSelectedId(null)}
+            onFocus={(id) => { setFocus(id); load(loadedPath, layer, id); }}
+          />
+        )}
       </div>
     </div>
   );
