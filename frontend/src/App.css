@@ -76,3 +76,49 @@
 .react-flow__edge-text { fill: #8b949e; font-size: 10px; }
 .react-flow__edge-textbg { fill: #0d1117; }
 .react-flow__edge-path { stroke: #4a5568; }
+
+/* Инспектор узла (P1-E) */
+.insp {
+  position: absolute; top: 10px; right: 10px; bottom: 10px; width: 320px; z-index: 5;
+  display: flex; flex-direction: column; gap: 10px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+  padding: 12px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.45);
+  font-size: 13px; color: #e6edf3;
+}
+.insp__head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  border-top: 3px solid #888; margin: -12px -12px 0; padding: 10px 12px 0; border-radius: 10px 10px 0 0;
+}
+.insp__meta { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
+.insp__name { font-size: 16px; font-weight: 700; word-break: break-word; }
+.insp__close { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 14px; padding: 2px 6px; }
+.insp__close:hover { color: #e6edf3; }
+.insp__role { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #c9d1d9; }
+.insp__via { font-size: 10px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; color: #8b949e; }
+.insp__via.via-marker { color: #57c78a; border-color: #2e5e45; }
+.insp__via.via-heuristic { color: #d9a441; border-color: #5e4d2e; }
+.insp__block { display: flex; flex-direction: column; gap: 4px; }
+.insp__k { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: .03em; }
+.insp__drift { color: #ffb454; }
+.insp__drift ul, .insp__deps { margin: 0; padding-left: 0; list-style: none; }
+.insp__drift li { margin: 2px 0; }
+.insp__deps li { padding: 2px 0; color: #c9d1d9; border-bottom: 1px solid #21262d; overflow-wrap: anywhere; }
+.insp__deps li:last-child { border-bottom: none; }
+.insp__inc { color: #8b949e; }
+.insp__ek { color: #58a6ff; font-weight: 600; }
+.insp__none { color: #6e7681; font-style: italic; }
+.insp__file {
+  font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; color: #8b949e;
+  word-break: break-all; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 6px;
+}
+.insp__actions { display: flex; gap: 8px; margin-top: auto; padding-top: 6px; }
+.insp__open {
+  flex: 1; text-align: center; text-decoration: none; padding: 7px 10px; border-radius: 6px;
+  background: #1f6feb; color: #fff; font-weight: 600; font-size: 12px;
+}
+.insp__open:hover { background: #2f81f7; }
+.insp__actions button {
+  padding: 7px 10px; background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+  border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.insp__actions button:hover { background: #30363d; }

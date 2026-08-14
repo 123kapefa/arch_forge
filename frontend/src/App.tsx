@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, Controls, MiniMap } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './App.css';
@@ -6,6 +6,7 @@ import './App.css';
 import { fetchMap, type GraphDto, type CoverageDto } from './api';
 import { filterGraph, toFlow } from './graph';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
+import { Inspector } from './Inspector';
 import { layerColor } from './theme';
 
 const nodeTypes = { type: TypeNode };
@@ -35,6 +36,7 @@ export default function App() {
   const [graph, setGraph] = useState<GraphDto | null>(null);
   const [layer, setLayer] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hideTests, setHideTests] = useState(false);
   const [hideIsolated, setHideIsolated] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,15 +61,23 @@ export default function App() {
     }
   }, []);
 
-  // «Разобрать»: фиксируем загруженный путь и сбрасываем срез.
+  // «Разобрать»: фиксируем загруженный путь и сбрасываем срез + выбор.
   const analyze = () => {
     const p = pathInput.trim();
     if (!p) return;
     setLoadedPath(p);
     setLayer(null);
     setFocus(null);
+    setSelectedId(null);
     load(p, null, null);
   };
+
+  // Esc закрывает инспектор.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedId(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const view = useMemo(
     () => (graph ? filterGraph(graph, { hideTests, hideIsolated }) : null),
@@ -77,6 +87,16 @@ export default function App() {
   const layers = useMemo(
     () => (graph ? [...new Set(graph.nodes.map((n) => n.layer))].sort() : []),
     [graph],
+  );
+  // Свечение выбранного узла ведём от нашего selectedId, а не от внутреннего selection React Flow.
+  const displayNodes = useMemo(
+    () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
+    [nodes, selectedId],
+  );
+  // Инспектируемый узел резолвим из ВИДА (учитывает фильтры) по id — уйдёт из вида → панель закроется.
+  const selected = useMemo(
+    () => (view && selectedId ? view.nodes.find((n) => n.id === selectedId) ?? null : null),
+    [view, selectedId],
   );
 
   // Меняется при любой смене видимого набора → ремоунт ReactFlow → повторный fitView.
@@ -147,21 +167,22 @@ export default function App() {
 
       <div className="canvas">
         {!graph && !error && (
-          <div className="hint">Укажи путь к .NET-проекту и нажми «Разобрать». Клик по плашке — фокус на её связях.</div>
+          <div className="hint">Укажи путь к .NET-проекту и нажми «Разобрать». Клик по плашке — инспектор (роль, дрейф, связи, «открыть в коде»).</div>
         )}
         {emptyView && (
           <div className="hint">Под текущие фильтры ничего не попало — ослабь «без tests»/«без одиночек» или смени слой.</div>
         )}
         <ReactFlow
           key={fitKey}
-          nodes={nodes}
+          nodes={displayNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.15 }}
           minZoom={0.1}
           onlyRenderVisibleElements
-          onNodeClick={(_, n) => { setFocus(n.id); load(loadedPath, layer, n.id); }}
+          onNodeClick={(_, n) => setSelectedId(n.id)}
+          onPaneClick={() => setSelectedId(null)}
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={20} color="#20262f" />
@@ -173,6 +194,15 @@ export default function App() {
             maskColor="rgba(13,17,23,0.7)"
           />
         </ReactFlow>
+
+        {selected && view && (
+          <Inspector
+            node={selected}
+            graph={view}
+            onClose={() => setSelectedId(null)}
+            onFocus={(id) => { setFocus(id); load(loadedPath, layer, id); }}
+          />
+        )}
       </div>
     </div>
   );
