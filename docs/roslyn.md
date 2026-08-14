@@ -16,7 +16,7 @@ Roslyn (`Microsoft.CodeAnalysis`) — официальный компилято�
 Парсинг текста `.cs` в дерево (классы, методы, базовый список, дженерики, атрибуты). Только **структура**: видит строку «`IdentityDbContext`», но не знает, что это. Быстро, на одном файле, даже на битом/несобираемом коде. Резильентно → используется как пол (`adr/0008`). API: `CSharpSyntaxTree.ParseText`.
 
 ### 2. Семантика (Compilation + Symbols) — точность
-Все файлы **+ ссылки на сборки** → `Compilation` (вся программа понята целиком). У каждого типа — символ (`INamedTypeSymbol`) с разрешёнными `BaseType`, `AllInterfaces`, членами, атрибутами, неймспейсом. `SemanticModel` отвечает «что значит этот идентификатор». Требует, чтобы проект собирался (нужны референсы) — потому `Analysis` тяжёлый и отдельный.
+Все файлы **+ ссылки на сборки** → `Compilation` (вся программа понята целиком). У каждого типа — символ (`INamedTypeSymbol`) с разрешёнными `BaseType`, `AllInterfaces`, членами, атрибутами, неймспейсом. `SemanticModel` отвечает «что значит этот идентификатор». Ссылки берём из готового `bin/` таргета + рантайма — не требуя успешного design-time build (`adr/0008`), — потому `Analysis` тяжёлый и отдельный.
 
 ## Разница на примере
 
@@ -28,9 +28,9 @@ Roslyn (`Microsoft.CodeAnalysis`) — официальный компилято�
 
 ## Пайплайн (сервис Analysis)
 
-`MSBuildWorkspace` (читает `.sln/.csproj` + референсы) → `Compilation` на проект → обход символов типов → классификация ролей по convention-pack + тип-граф + линт → IR (контракт `ArchForge.Contracts`).
+Парсим все `.cs` таргета в `SyntaxTree` → собираем ссылки на сборки из готового `bin/` таргета + рантайма (`TRUSTED_PLATFORM_ASSEMBLIES`) → `CSharpCompilation.Create` → обход символов типов (`SemanticModel`) → классификация ролей по convention-pack + тип-граф + линт → IR (контракт `ArchForge.Contracts`).
 
-Если проект не собирается (строгий билд — напр. `TreatWarningsAsErrors` + NuGet-audit `NU1903` у `auth_service`) → падаем на синтаксический пол.
+Ключевой ход (`adr/0008`): ссылки берём из **готового `bin/`**, а не через `MSBuildWorkspace`/design-time build — тот валится на строгом билде (напр. `TreatWarningsAsErrors` + NuGet-audit `NU1903` у `auth_service`). Оппортунистично: если семантику собрать нельзя (нет `bin/`, слишком много ссылок, любой сбой) → падаем на синтаксический пол.
 
 ## Границы и бонусы
 
@@ -40,4 +40,4 @@ Roslyn (`Microsoft.CodeAnalysis`) — официальный компилято�
 
 ## Ключевые типы
 
-`SyntaxTree` (дерево одного файла) · `Compilation` (вся программа) · `INamedTypeSymbol`/`ISymbol` (разрешённый элемент) · `SemanticModel` (синтаксис → символ) · `MSBuildWorkspace` (загрузка реального solution с референсами).
+`SyntaxTree` (дерево одного файла) · `CSharpCompilation` (вся программа из деревьев + `MetadataReference` из `bin/`) · `INamedTypeSymbol`/`ISymbol` (разрешённый элемент) · `SemanticModel` (синтаксис → символ).
