@@ -62,7 +62,8 @@ public sealed class TypeClassifier(ConventionPack pack)
         return new AnalysisResult(types, BuildEdges(raw), new Coverage(marker, heuristic, unknown), drift);
     }
 
-    // Рёбра между своими типами: implements (базы) + uses/holds (параметры первичного ctor).
+    // Рёбра между своими типами: implements (базы) + семантические Refs (uses/holds/raises/handles).
+    // Если Refs пусты (синтаксический пол) — fallback на регекс по тексту первичного ctor.
     private static IReadOnlyList<TypeEdge> BuildEdges(IReadOnlyList<RawType> raw)
     {
         var names = raw.Select(r => r.Name).ToHashSet();
@@ -71,15 +72,24 @@ public sealed class TypeClassifier(ConventionPack pack)
 
         foreach (var r in raw)
         {
-            void Add(string to, string kind)
+            var implemented = new HashSet<string>();
+            void Add(string to, string kind, bool skipIfImplemented = false)
             {
                 if (to == r.Name || !names.Contains(to)) return;
+                if (skipIfImplemented && implemented.Contains(to)) return; // не дублируем implements другим видом
                 if (seen.Add($"{r.Name}|{to}|{kind}")) edges.Add(new TypeEdge(r.Name, to, kind));
             }
 
-            foreach (var b in r.Bases) Add(b, "implements");
-            var ek = r.Kind == "record" ? "holds" : "uses";
-            foreach (Match m in Regex.Matches(r.CtorParams, "[A-Z][A-Za-z0-9_]*")) Add(m.Value, ek);
+            foreach (var b in r.Bases)
+                if (names.Contains(b)) { Add(b, "implements"); implemented.Add(b); }
+
+            if (r.Refs.Count > 0)
+                foreach (var rf in r.Refs) Add(rf.Name, rf.Kind, skipIfImplemented: true);
+            else
+            {
+                var ek = r.Kind == "record" ? "holds" : "uses";
+                foreach (Match m in Regex.Matches(r.CtorParams, "[A-Z][A-Za-z0-9_]*")) Add(m.Value, ek, skipIfImplemented: true);
+            }
         }
 
         return edges;

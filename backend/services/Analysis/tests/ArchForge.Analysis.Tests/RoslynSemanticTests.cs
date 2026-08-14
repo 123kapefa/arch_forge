@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core;
 using ArchForge.Analysis.Infrastructure.Roslyn;
 using Xunit;
 
@@ -51,5 +52,23 @@ public class RoslynSemanticTests
         {
             Directory.Delete(tmp, recursive: true);
         }
+    }
+
+    [SkippableFact]
+    public void Semantic_edges_exceed_syntactic_and_add_holds()
+    {
+        Skip.IfNot(Directory.Exists(Target), $"нет собранного таргета auth_service ({Target})");
+
+        var pack = ConventionPack.Default();
+        var semantic = new TypeClassifier(pack).Classify(new RoslynSemanticTypeSource(new RoslynTypeSource()).Read(Target));
+        var syntactic = new TypeClassifier(pack).Classify(new RoslynTypeSource().Read(Target));
+
+        // Семантика видит поля/свойства/параметры методов, а не только текст первичного ctor → рёбер строго больше.
+        Assert.True(semantic.Edges.Count > syntactic.Edges.Count,
+            $"semantic {semantic.Edges.Count} ≤ syntactic {syntactic.Edges.Count}");
+
+        // Появляется holds — композиция по полям/свойствам своих типов (напр. AuthDbContext).
+        Assert.Contains(semantic.Edges, e => e.Kind == "holds");
+        Assert.Contains(semantic.Edges, e => e.From == "AuthDbContext" && e.Kind == "holds");
     }
 }
