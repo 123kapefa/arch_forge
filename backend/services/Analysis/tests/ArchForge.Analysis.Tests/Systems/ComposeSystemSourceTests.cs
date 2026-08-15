@@ -59,6 +59,51 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Detects_service_cycle_through_pipeline()
+    {
+        // два сервиса зовут друг друга по HTTP → цикл (нет чёткого направления зависимостей).
+        // Проверяем, что детектор проведён сквозь весь конвейер Read, а не только юнит.
+        var f = WriteCompose("""
+            services:
+              svc-a:
+                image: ns/svc-a:1
+                environment: { SvcB__Url: "http://svc-b:8080" }
+              svc-b:
+                image: ns/svc-b:1
+                environment: { SvcA__Url: "http://svc-a:8080" }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "svc-a", "svc-b", "http-call"));
+            Assert.True(HasEdge(g, "svc-b", "svc-a", "http-call"));
+            // ровно одна проблема — сам цикл, без посторонних (shared-db/ambiguous)
+            var problem = Assert.Single(g.Problems);
+            Assert.Equal("service-cycle", problem.Kind);
+            Assert.Equal(ProblemSeverity.Critical, problem.Severity);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Регресс к находке ревью #20 (Critical): две НЕСВЯЗАННЫЕ системы с сервисами, зовущими друг друга по
+    // HTTP, не образуют ложный service-cycle — межкомпозное разрешение имени неуверенно (0.5), не Critical.
+    [Fact]
+    public void Cross_system_name_match_is_not_a_false_cycle()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_xsys_" + Guid.NewGuid().ToString("N"));
+        MakeCallingSvc(root, "checkout-service", "Checkout.slnx", "checkout", "payments");
+        MakeCallingSvc(root, "payments-service", "Payments.slnx", "payments", "checkout");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.True(HasEdge(g, "checkout", "payments", "http-call")); // рёбра честно есть...
+            Assert.True(HasEdge(g, "payments", "checkout", "http-call"));
+            Assert.DoesNotContain(g.Problems, p => p.Kind == "service-cycle"); // ...но не громкий ложный Critical
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public void Detects_shared_db_when_two_apps_write_one()
     {
         var f = WriteCompose("""
@@ -388,5 +433,14 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         File.WriteAllText(Path.Combine(p, sln), "<Solution/>");
         File.WriteAllText(Path.Combine(p, "docker-compose.yml"),
             $"services:\n  api: {{ image: {apiImage}, environment: {{ ConnectionStrings__Db: \"Host=db\" }} }}\n  db: {{ image: postgres:16 }}\n");
+    }
+
+    // отдельный сервис-репозиторий (свой solution + compose), где <svc> зовёт <target> по HTTP
+    private static void MakeCallingSvc(string root, string dir, string sln, string svc, string target)
+    {
+        var p = Directory.CreateDirectory(Path.Combine(root, dir)).FullName;
+        File.WriteAllText(Path.Combine(p, sln), "<Solution/>");
+        File.WriteAllText(Path.Combine(p, "docker-compose.yml"),
+            $"services:\n  {svc}: {{ image: ghcr.io/ns/{svc}:1, environment: {{ Target__Url: \"http://{target}:8080\" }} }}\n");
     }
 }
