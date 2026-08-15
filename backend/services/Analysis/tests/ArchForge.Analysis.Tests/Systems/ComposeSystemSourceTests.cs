@@ -215,6 +215,173 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    // ---- P1.5-D: http-call ----
+
+    [Fact]
+    public void Http_call_edge_from_service_url_env()
+    {
+        var f = WriteCompose("""
+            services:
+              web:
+                image: ghcr.io/ns/web:1
+                environment: { Backend__Url: "http://api:8080", ConnectionStrings__Db: "Host=db" }
+              api: { image: ghcr.io/ns/api:1 }
+              db:  { image: postgres:16 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "web", "api", "http-call")); // цель резолвится по имени сервиса
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Http_call_to_unknown_service_is_external()
+    {
+        var f = WriteCompose("""
+            services:
+              web: { image: web:1, environment: { Sms__Url: "http://sms-api:8080" } }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Kind == SystemNodeKind.External && n.Name == "sms-api");
+            Assert.True(HasEdge(g, "web", "sms-api", "http-call")); // неизвестный сервис → внешний узел (честно)
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Public_and_localhost_urls_are_ignored()
+    {
+        var f = WriteCompose("""
+            services:
+              web:
+                image: web:1
+                environment:
+                  Turnstile__Url: "https://challenges.cloudflare.com/x"
+                  Self__Url: "http://localhost:5000"
+                  ASPNETCORE_URLS: "http://+:8080"
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");
+            Assert.DoesNotContain(g.Nodes, n => n.Kind == SystemNodeKind.External);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Connection_to_topic_is_publishes_not_rwdb()
+    {
+        var f = WriteCompose("""
+            services:
+              app:   { image: app:1, environment: { ConnectionStrings__Bus: "Host=kafka" } }
+              kafka: { image: bitnami/kafka:3 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Name == "kafka" && n.Kind == SystemNodeKind.Topic);
+            Assert.True(HasEdge(g, "app", "kafka", "publishes"));
+            Assert.False(HasEdge(g, "app", "kafka", "rw-db")); // топик — не БД
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [SkippableFact]
+    public void Real_workspace_has_http_call_edges()
+    {
+        Skip.IfNot(Directory.Exists(Workspace), "таргет product-site-workspace не найден");
+
+        var g = new ComposeSystemSource().Read(Workspace);
+        var byId = g.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
+        var httpCalls = g.Edges.Where(e => e.Kind == "http-call").ToList();
+        output.WriteLine($"http-call рёбер={httpCalls.Count}");
+        foreach (var e in httpCalls.Take(12))
+            output.WriteLine($"  {byId[e.Source].Name} → {(byId.TryGetValue(e.Target, out var t) ? t.Name : e.Target)}");
+
+        Assert.NotEmpty(httpCalls);                              // межсервисные вызовы product_site
+        Assert.True(HasEdge(g, "orders-api", "catalog-api", "http-call")); // конкретная реальная связь
+    }
+
+    [Fact]
+    public void Http_url_with_userinfo_resolves_real_host()
+    {
+        var f = WriteCompose("""
+            services:
+              web:    { image: web:1, environment: { Es__Url: "http://user:pass@search:9200" } }
+              search: { image: search:1 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "web", "search", "http-call")); // хост = search, не «user»
+            Assert.DoesNotContain(g.Nodes, n => n.Name == "user");
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Ambiguous_http_target_reports_coverage_not_silence()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_amb_" + Guid.NewGuid().ToString("N"));
+        MakeSvc(root, "sysA", "A.slnx", "ghcr.io/ns/a:1"); // сервис «api»
+        MakeSvc(root, "sysB", "B.slnx", "ghcr.io/ns/b:1"); // ещё один одноимённый «api»
+        var c = Directory.CreateDirectory(Path.Combine(root, "sysC")).FullName;
+        File.WriteAllText(Path.Combine(c, "C.slnx"), "<Solution/>");
+        File.WriteAllText(Path.Combine(c, "docker-compose.yml"),
+            "services:\n  web: { image: web:1, environment: { Backend__Url: \"http://api:8080\" } }\n");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.Contains(g.Problems, p => p.Kind == "ambiguous-target"); // не молчим (adr/0008)
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");     // но и не выдумываем цель
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Http_url_to_known_broker_does_not_duplicate_node()
+    {
+        var f = WriteCompose("""
+            services:
+              worker: { image: worker:1, environment: { Broker__AdminUrl: "http://kafka:8082" } }
+              kafka:  { image: bitnami/kafka:3 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Equal(1, g.Nodes.Count(n => n.Name == "kafka"));  // не двоится (Topic + External)
+            Assert.True(HasEdge(g, "worker", "kafka", "http-call")); // ребро к существующему узлу
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Ip_literals_and_case_dedup_are_handled()
+    {
+        var f = WriteCompose("""
+            services:
+              web:
+                image: web:1
+                environment:
+                  A__Url: "http://10.0.0.5:8080"
+                  B__Url: "http://[::1]:9000"
+                  C__Url: "http://sms-api:8080"
+                  D__Url: "http://SMS-API:8080"
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.DoesNotContain(g.Edges, e => e.Target.Contains("10.0.0") || e.Target.Contains("::1")); // IP не узел
+            Assert.Equal(1, g.Nodes.Count(n => n.Kind == SystemNodeKind.External));                       // один sms-api
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
     private static void MakeSvc(string root, string dir, string sln, string apiImage)
     {
         var p = Directory.CreateDirectory(Path.Combine(root, dir)).FullName;
