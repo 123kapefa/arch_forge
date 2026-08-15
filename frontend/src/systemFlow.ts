@@ -138,6 +138,23 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
   return { nodes: layout(nodes), edges: [...edges.values()] };
 }
 
+const LAYER_ORDER = ['API', 'Application', 'Domain', 'Infrastructure', 'Contracts', 'Persistence', 'Web', 'Shared'];
+
+/** L1: слои сервиса как узлы (колонка, канонический порядок Clean Arch). Раскрываются в типы (L2, backlog). */
+export function buildLayerFlow(node: SystemNode): { nodes: Node[]; edges: Edge[] } {
+  const layers = [...(node.layers ?? [])].sort((a, b) => {
+    const ia = LAYER_ORDER.indexOf(a.name), ib = LAYER_ORDER.indexOf(b.name);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.name.localeCompare(b.name);
+  });
+  const nodes: Node[] = layers.map((l, i) => ({
+    id: `layer:${l.name}`,
+    type: 'layer',
+    position: { x: 0, y: i * 150 },
+    data: { layer: l },
+  }));
+  return { nodes, edges: [] };
+}
+
 /** Фильтр вида поверх готовой раскладки (сохраняет позиции): прячет рёбра по виду/уверенности, tests и одиночек. */
 export function filterFlow(
   flow: { nodes: Node[]; edges: Edge[] },

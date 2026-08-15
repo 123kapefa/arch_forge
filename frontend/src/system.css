@@ -36,6 +36,24 @@
 .crumb--root { font-weight: 600; }
 .crumbs { color: var(--muted); }
 .crumbs b { color: var(--text); }
+.crumb-link { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; padding: 0; }
+.crumb-link:hover { color: var(--accent); text-decoration: underline; }
+
+/* --- узел слоя (L1) --- */
+.layer-card {
+  width: 260px; background: var(--card); border: 1px solid var(--card-line);
+  border-radius: 10px; padding: 10px 12px 12px;
+}
+.layer-card.is-selected { box-shadow: 0 0 0 2px var(--accent); }
+.layer-card.health-warning { border-color: rgba(224, 178, 74, 0.5); }
+.layer-card.health-critical { border-color: rgba(229, 72, 77, 0.6); }
+.layer-card__head { display: flex; align-items: center; gap: 8px; }
+.layer-card__name { font-weight: 600; font-size: 14px; flex: 1; }
+.layer-card.health-warning .layer-card__mark { color: var(--warn); }
+.layer-card.health-critical .layer-card__mark { color: var(--crit); }
+.layer-card.health-ok .layer-card__mark { color: var(--ok); }
+.layer-card__meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.layer-card__foot { color: var(--muted); font-size: 11px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--card-line); }
 
 /* --- иконки (SVG, наследуют цвет текста) --- */
 .icon { display: block; flex: none; }

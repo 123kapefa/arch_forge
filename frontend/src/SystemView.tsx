@@ -9,10 +9,11 @@ import '@xyflow/react/dist/style.css';
 import './system.css';
 
 import { fetchSystem, type SystemGraph } from './system';
-import { buildSystemFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
+import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
 import { gridLayout } from './gridLayout';
 import { RoutedEdge } from './RoutedEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
+import { LayerCard } from './nodes/LayerCard';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
@@ -20,7 +21,7 @@ import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
 
-const nodeTypes = { sys: SystemNodeView };
+const nodeTypes = { sys: SystemNodeView, layer: LayerCard };
 const edgeTypes = { routed: RoutedEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
@@ -41,8 +42,9 @@ const Flow = forwardRef<FlowHandle, {
   onDirty: (saved: boolean) => void; // true = совпадает с сохранённой, false = есть изменения
   selectedId: string | null;         // выбранный узел — его связи подсвечиваем
   onSelect: (n: Node) => void;
+  onDoubleClick: (n: Node) => void;  // двойной клик — drill на следующий уровень
   onClear: () => void;
-}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, onSelect, onClear }, ref) {
+}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, onSelect, onDoubleClick, onClear }, ref) {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
@@ -147,6 +149,7 @@ const Flow = forwardRef<FlowHandle, {
       onNodeMouseEnter={(_, n) => setHoverId(n.id)}
       onNodeMouseLeave={() => setHoverId(null)}
       onNodeClick={(_, n) => onSelect(n)}
+      onNodeDoubleClick={(_, n) => onDoubleClick(n)}
       onPaneClick={onClear}
     >
       <Background gap={GRID} />
@@ -344,6 +347,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [runLayers, setRunLayers] = useState(true); // анализ кода: нарушения слоёв (architecture)
   const [runDrift, setRunDrift] = useState(true);   // анализ кода: дрейф от свода (convention)
   const [selected, setSelected] = useState<Node | null>(null);
+  const [drill, setDrill] = useState<Node | null>(null); // сервис, раскрытый в слои (L1); null → L0
   const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
   const [minConfidence, setMinConfidence] = useState(0);
   const [hideIsolated, setHideIsolated] = useState(false);
@@ -369,6 +373,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setLoading(true);
     setError(null);
     setSelected(null);
+    setDrill(null);
     try {
       // какие код-анализы гнать — выбор пользователя (флаги drift/layers)
       const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers });
@@ -399,6 +404,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setLoadedPath('');
     setBranch(null);
     setSelected(null);
+    setDrill(null);
     try { localStorage.removeItem('af_path'); } catch { /* ignore */ }
   }, []);
 
@@ -447,6 +453,17 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     () => filterFlow(laid, { edgeKinds, minConfidence, hideIsolated, hideTests }),
     [laid, edgeKinds, minConfidence, hideIsolated, hideTests],
   );
+  // L1: сервис раскрыт в слои. activeFlow — что показываем на доске (L0 или L1).
+  const drilledFlow = useMemo(
+    () => (drill ? buildLayerFlow((drill.data as SystemNodeData).node) : { nodes: [] as Node[], edges: [] as Edge[] }),
+    [drill],
+  );
+  const activeFlow = drill ? drilledFlow : flow;
+  const onDoubleClick = useCallback((n: Node) => {
+    if (drill) return; // L1 → L2 (типы) — backlog
+    const sn = (n.data as SystemNodeData).node;
+    if (sn.layers && sn.layers.length > 0) { setSelected(null); setDrill(n); } // сервис со слоями → L1
+  }, [drill]);
   const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
 
   // Клик по проблеме/связи → навести на узел. Если location — узел: выбрать + центрировать.
@@ -524,7 +541,16 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
             </>
           )}
         </div>
-        <nav className="crumbs"><b>System</b> ▸ Service ▸ Layer ▸ Type ▸ Member</nav>
+        <nav className="crumbs">
+          {drill ? (
+            <>
+              <button className="crumb-link" onClick={() => setDrill(null)}>System</button>
+              {' ▸ '}<b>{(drill.data as SystemNodeData).node.name}</b>{' ▸ Layer'}
+            </>
+          ) : (
+            <><b>System</b> ▸ Service ▸ Layer ▸ Type ▸ Member</>
+          )}
+        </nav>
         <div className="sysview__right">
           {graph && (
             <span className={`saved ${saved ? 'saved--ok' : 'saved--dirty'}`}>
@@ -650,12 +676,13 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
                 <ReactFlowProvider>
                   <Flow
                     ref={flowRef}
-                    flow={flow}
+                    flow={activeFlow}
                     magnet={magnet}
-                    storageKey={storageKey}
+                    storageKey={drill ? '' : storageKey}
                     onDirty={setSaved}
                     selectedId={selected?.id ?? null}
                     onSelect={setSelected}
+                    onDoubleClick={onDoubleClick}
                     onClear={() => setSelected(null)}
                   />
                 </ReactFlowProvider>
