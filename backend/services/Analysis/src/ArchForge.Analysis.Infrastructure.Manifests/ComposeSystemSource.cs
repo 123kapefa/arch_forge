@@ -20,7 +20,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     private const double HttpConfident = 0.8; // цель в ТОМ ЖЕ compose — DNS-сеть compose достоверна
     private const double HttpInferred = 0.5;  // цель в ДРУГОМ compose — разрешима лишь при общей внешней сети (не верифицируем)
     private const double HttpExternal = 0.4;  // хост вне скана — честный внешний узел
-    private const double BusConf = 0.7;       // uses-bus: подключение к шине есть, но направление pub/sub неизвестно
+    private const double BusConf = 0.7;       // uses-bus к шине того же compose: подключение есть, направление неизвестно
+    private const double BusExternal = 0.4;   // uses-bus к брокеру вне скана (managed/облачный) — вне скана, ниже уверенность
 
     // Инфра по БАЗЕ образа (последний сегмент пути без тега) — точным совпадением, а не подстрокой.
     private static readonly Dictionary<string, SystemNodeKind> InfraByBaseImage = new(StringComparer.OrdinalIgnoreCase)
@@ -79,16 +80,27 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                         }
                     }
 
-                    // uses-bus из config-ключей вне connection strings (RabbitMQ__Host, Kafka__BootstrapServers…) —
-                    // резолвим в локальный Topic (фильтр: только шина того же compose), направление неизвестно.
-                    if (IsBusHostKey(key) && BusHost(value) is { } busHost &&
-                        local.TryGetValue(busHost, out var bus) && bus.Kind == SystemNodeKind.Topic &&
-                        !edges.Any(e => e.Source == sourceId && e.Target == bus.Id && e.Kind == "uses-bus"))
-                        edges.Add(new SystemEdge(sourceId, bus.Id, "uses-bus", EdgeVia.Config, BusConf));
+                    // uses-bus из config-ключей вне connection strings (RabbitMQ__Host, Kafka__BootstrapServers…).
+                    // Локальный Topic → ребро к нему; брокер вне compose (managed/облачный) → честный внешний узел
+                    // (как http-call для незнакомых хостов). Направление pub/sub неизвестно. Дубли схлопнет Dedup().
+                    var handledAsBus = false;
+                    if (BusEndpoint.IsHostKey(key) && BusEndpoint.Host(value) is { } busHost)
+                    {
+                        handledAsBus = true; // строка учтена как подключение к шине → не дублируем её как http-call
+                        if (local.TryGetValue(busHost, out var bus) && bus.Kind == SystemNodeKind.Topic)
+                            edges.Add(new SystemEdge(sourceId, bus.Id, "uses-bus", EdgeVia.Config, BusConf));
+                        else if (!local.ContainsKey(busHost))
+                        {
+                            var extId = "bus://" + busHost;
+                            nodes.TryAdd(extId, new SystemNode(extId, busHost, SystemNodeKind.External));
+                            edges.Add(new SystemEdge(sourceId, extId, "uses-bus", EdgeVia.Config, BusExternal));
+                        }
+                    }
 
                     // http-call: URL-ключ (*Url/*Uri/*BaseAddress) со значением-URL на другой сервис —
                     // резолвим глобально после разбора всех (ключ-фильтр убирает telemetry/health-URL из шума).
-                    if (IsUrlKey(key) && UrlHost(value) is { } targetHost)
+                    // Пропускаем, если ту же строку уже учли как подключение к шине (RabbitMQ__Uri: http://… → не двоим).
+                    if (!handledAsBus && IsUrlKey(key) && UrlHost(value) is { } targetHost)
                         httpIntents.Add((sourceId, targetHost));
                 }
 
@@ -162,39 +174,6 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         key.Contains("url", StringComparison.OrdinalIgnoreCase) ||
         key.Contains("uri", StringComparison.OrdinalIgnoreCase) ||
         key.Contains("baseaddress", StringComparison.OrdinalIgnoreCase);
-
-    // Известные шины как СЕГМЕНТ config-ключа (RabbitMQ__Host, MassTransit__RabbitMq__Host, Kafka__BootstrapServers).
-    private static readonly string[] BusKeyTokens =
-        { "rabbitmq", "rabbit", "kafka", "redpanda", "nats", "amqp", "servicebus", "eventbus", "messagebus", "masstransit" };
-
-    // Ключ указывает на ХОСТ шины: первый сегмент — известная шина, последний — host/broker-подобное поле.
-    // Ложные срабатывания отсекает финальный фильтр «резолвится в локальный Topic» на месте вызова.
-    private static bool IsBusHostKey(string key)
-    {
-        var segs = key.Split("__", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (segs.Length == 0 || !BusKeyTokens.Contains(segs[0].ToLowerInvariant())) return false;
-        return segs[^1].ToLowerInvariant() is "host" or "hostname" or "bootstrapservers" or "brokers"
-            or "server" or "servers" or "endpoint" or "url" or "uri" or "connection" or "connectionstring";
-    }
-
-    // Хост шины из значения: «amqp://user:pass@rabbitmq:5672» / «kafka1:9092,kafka2:9092» / «rabbitmq» → «rabbitmq».
-    private static string? BusHost(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var v = value.Trim();
-        var scheme = v.IndexOf("://", StringComparison.Ordinal);
-        if (scheme >= 0) v = v[(scheme + 3)..];   // отрезаем amqp:// / kafka://
-        v = v.Split(',')[0];                       // несколько брокеров → первый
-        var at = v.LastIndexOf('@');
-        if (at >= 0) v = v[(at + 1)..];            // userinfo
-        v = v.Split('/', '?')[0];
-        if (v.StartsWith("[", StringComparison.Ordinal)) return null; // IPv6-литерал
-        var host = v.Split(':')[0];                // отрезаем порт
-        if (host.Length == 0 || host.Contains("${", StringComparison.Ordinal)) return null;
-        if (System.Net.IPAddress.TryParse(host, out _)) return null;
-        host = host.Split('.')[0];                 // DNS-хвост
-        return host is "localhost" or "+" or "*" ? null : host;
-    }
 
     // Известные публичные домены (точным суффиксом, а не голым TLD — иначе внутренние зоны .io/.dev терялись бы).
     private static readonly string[] PublicDomains =

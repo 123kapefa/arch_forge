@@ -379,6 +379,42 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
     }
 
+    // Ревью #21 M3: bus-host ключ с http-значением (management URL брокера) НЕ даёт двойного ребра
+    // (uses-bus + http-call) — строка учтена как подключение к шине.
+    [Fact]
+    public void Bus_host_http_uri_does_not_create_duplicate_http_call()
+    {
+        var f = WriteCompose("""
+            services:
+              app: { image: ns/app:1, environment: { RabbitMQ__Uri: "http://rabbitmq:15672" } }
+              rabbitmq: { image: rabbitmq:3-management-alpine }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "app", "rabbitmq", "uses-bus"));
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call"); // не двоим ту же строку в http-call
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Ревью #21 M4: брокер вне compose (managed/облачный) виден честным внешним узлом, а не молча пропадает.
+    [Fact]
+    public void External_broker_becomes_external_node()
+    {
+        var f = WriteCompose("""
+            services:
+              app: { image: ns/app:1, environment: { Kafka__BootstrapServers: "pkc-xyz.eu.confluent.cloud:9092" } }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Kind == SystemNodeKind.External && n.Name == "pkc-xyz");
+            Assert.True(HasEdge(g, "app", "pkc-xyz", "uses-bus"));
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
     [SkippableFact]
     public void Real_workspace_has_http_call_edges()
     {

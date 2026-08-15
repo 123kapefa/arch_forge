@@ -56,6 +56,36 @@ public class DanglingEventDetectorTests
     }
 
     [Fact]
+    public void Independent_topics_do_not_cross_contaminate()
+    {
+        // три топика в одном графе: dangling / healthy / isolated — каждый классифицируется независимо
+        var g = new SystemGraph(
+            [Svc("p"), Svc("c"), Bus("dang"), Bus("ok"), Bus("iso")],
+            [
+                Edge("p", "dang", "publishes"),                              // dang: publish без subscribe
+                Edge("p", "ok", "publishes"), Edge("c", "ok", "subscribes"), // ok: оба
+                // iso: без рёбер
+            ], []);
+
+        var p = DanglingEventDetector.Detect(g);
+        Assert.Equal(2, p.Count);
+        Assert.Contains(p, x => x is { Kind: "dangling-event" } && x.Location == "dang");
+        Assert.Contains(p, x => x is { Kind: "isolated-topic" } && x.Location == "iso");
+        Assert.DoesNotContain(p, x => x.Location == "ok"); // здоровый поток — без проблемы
+    }
+
+    [Fact]
+    public void Distinct_publishers_counted_not_edges()
+    {
+        // два ребра publishes от ОДНОГО сервиса → «(1)», а не «(2)»
+        var g = new SystemGraph([Svc("p"), Bus("bus")],
+            [Edge("p", "bus", "publishes"), Edge("p", "bus", "publishes")], []);
+
+        var problem = Assert.Single(DanglingEventDetector.Detect(g));
+        Assert.Contains("(1)", problem.Title);
+    }
+
+    [Fact]
     public void Deferred_publish_does_not_count()
     {
         // отложенное (unknown ${VAR}) publish-ребро не считаем достоверным издателем

@@ -17,11 +17,16 @@ public static class DanglingEventDetector
     public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph)
     {
         var problems = new List<SystemProblem>();
-        foreach (var topic in graph.Nodes.Where(n => n.Kind == SystemNodeKind.Topic))
+        // дедуп по Id (дубли Id → один топик, а не дублирующая проблема) — консистентно с ServiceCycleDetector
+        var topics = graph.Nodes.Where(n => n.Kind == SystemNodeKind.Topic)
+            .GroupBy(n => n.Id, StringComparer.Ordinal).Select(g => g.First());
+
+        foreach (var topic in topics)
         {
             var touching = graph.Edges.Where(e => e.Source == topic.Id || e.Target == topic.Id).ToList();
-            var publishers = touching.Count(e => e is { Kind: "publishes", Deferred: false });
-            var subscribers = touching.Count(e => e is { Kind: "subscribes", Deferred: false });
+            // считаем РАЗЛИЧНЫЕ сервисы (второй конец ребра), а не рёбра — иначе текст «(2)» при одном издателе
+            var publishers = Endpoints(touching, topic.Id, "publishes");
+            var subscribers = Endpoints(touching, topic.Id, "subscribes");
 
             if (touching.Count == 0)
                 problems.Add(new SystemProblem(ProblemSeverity.Coverage, "isolated-topic",
@@ -37,4 +42,10 @@ public static class DanglingEventDetector
         }
         return problems;
     }
+
+    // Число РАЗЛИЧНЫХ сервисов на другом конце достоверных (не Deferred) рёбер данного вида к топику.
+    private static int Endpoints(IEnumerable<SystemEdge> touching, string topicId, string kind) =>
+        touching.Where(e => e.Kind == kind && !e.Deferred)
+            .Select(e => e.Source == topicId ? e.Target : e.Source)
+            .Distinct(StringComparer.Ordinal).Count();
 }
