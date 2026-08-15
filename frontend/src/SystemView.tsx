@@ -14,7 +14,8 @@ import { problemsByLens, severityCounts, type Lens } from './systemModel';
 const nodeTypes = { sys: SystemNodeView };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
-const MAGNET_SPEED = 0.45;
+// Низкий порог = магнит только при явно медленном, «прицельном» движении, а не при обычном перетаскивании.
+const MAGNET_SPEED = 0.15;
 
 /**
  * Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре.
