@@ -4,7 +4,7 @@ import '@xyflow/react/dist/style.css';
 import './system.css';
 
 import { fetchSystem, type SystemGraph } from './system';
-import { buildSystemFlow, type SystemNodeData } from './systemFlow';
+import { buildSystemFlow, filterGraph, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
 
@@ -46,6 +46,9 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [lens, setLens] = useState<Lens>('architecture');
   const [selected, setSelected] = useState<Node | null>(null);
+  const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
+  const [minConfidence, setMinConfidence] = useState(0);
+  const [hideIsolated, setHideIsolated] = useState(false);
 
   const load = useCallback(async () => {
     const path = pathInput.trim();
@@ -54,8 +57,10 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setError(null);
     setSelected(null);
     try {
-      // код-линзы включены: нужны карточки со слоями + дрейф/нарушения
-      setGraph(await fetchSystem({ path, drift: true, layers: true }));
+      // код-линзы включены: нужны проблемы слоёв/дрейфа + сводка сервисов (для drill)
+      const g = await fetchSystem({ path, drift: true, layers: true });
+      setGraph(g);
+      setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setGraph(null);
@@ -64,10 +69,21 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     }
   }, [pathInput]);
 
-  const { nodes, edges } = useMemo(
-    () => (graph ? buildSystemFlow(graph) : { nodes: [], edges: [] }),
-    [graph],
+  const view = useMemo(
+    () => (graph ? filterGraph(graph, { edgeKinds, minConfidence, hideIsolated }) : null),
+    [graph, edgeKinds, minConfidence, hideIsolated],
   );
+  const { nodes, edges } = useMemo(
+    () => (view ? buildSystemFlow(view) : { nodes: [], edges: [] }),
+    [view],
+  );
+  const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
+  const toggleEdgeKind = (k: string) =>
+    setEdgeKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
   const counts = useMemo(() => severityCounts(graph?.problems), [graph]);
   const lensProblems = useMemo(() => problemsByLens(graph?.problems, lens), [graph, lens]);
 
@@ -95,9 +111,35 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           </div>
           <div className="panel__group">
             <div className="panel__label">РЁБРА</div>
-            <div className="legend"><span className="legend__line legend__line--db" /> rw-db</div>
-            <div className="legend"><span className="legend__line legend__line--http" /> http-call</div>
-            <div className="legend"><span className="legend__line legend__line--bus" /> шина</div>
+            {allEdgeKinds.length === 0 && <div className="panel__empty">—</div>}
+            {allEdgeKinds.map((k) => {
+              const st = edgeStyle(k, false);
+              return (
+                <label key={k} className="opt">
+                  <input type="checkbox" checked={edgeKinds.has(k)} onChange={() => toggleEdgeKind(k)} />
+                  <span
+                    className="legend__line"
+                    style={{ borderTopColor: st.stroke, borderTopStyle: st.strokeDasharray ? 'dashed' : 'solid' }}
+                  />
+                  {k}
+                </label>
+              );
+            })}
+          </div>
+          <div className="panel__group">
+            <div className="panel__label">УВЕРЕННОСТЬ · порог {minConfidence.toFixed(2)}</div>
+            <input
+              type="range" min={0} max={1} step={0.05} value={minConfidence}
+              onChange={(e) => setMinConfidence(Number(e.target.value))} style={{ width: '100%' }}
+            />
+            <div className="panel__hint">скрыть слабые/эвристические связи</div>
+          </div>
+          <div className="panel__group">
+            <div className="panel__label">ФИЛЬТРЫ</div>
+            <label className="opt">
+              <input type="checkbox" checked={hideIsolated} onChange={(e) => setHideIsolated(e.target.checked)} />
+              без одиночек
+            </label>
           </div>
         </aside>
 
@@ -113,12 +155,15 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           </form>
           {error && <div className="sysview__error">{error}</div>}
           <div className="sysview__flow">
+            {/* key по набору узлов/рёбер → ремоунт + fitView при загрузке/фильтре (переумещение) */}
             <ReactFlow
+              key={`${nodes.length}|${edges.length}`}
               nodes={nodes}
               edges={edges}
               nodeTypes={nodeTypes}
               fitView
-              minZoom={0.15}
+              fitViewOptions={{ padding: 0.15 }}
+              minZoom={0.1}
               onNodeClick={(_, n) => setSelected(n)}
               onPaneClick={() => setSelected(null)}
             >

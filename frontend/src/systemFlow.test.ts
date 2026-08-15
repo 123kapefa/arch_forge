@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SystemGraph } from './system';
-import { buildSystemFlow, edgeStyle, isInfra } from './systemFlow';
+import { buildSystemFlow, edgeStyle, isInfra, filterGraph, edgeKindsOf } from './systemFlow';
 
 const graph: SystemGraph = {
   project: 'sys',
@@ -42,6 +42,37 @@ describe('buildSystemFlow — микросервисы как узлы (без �
     const redis = nodes.find((n) => n.id === 'p/redis')!;
     expect((redis.data as { health: string }).health).toBe('warning');
     expect((redis.data as { problems: unknown[] }).problems).toHaveLength(1);
+  });
+});
+
+describe('filterGraph / edgeKindsOf', () => {
+  const g: SystemGraph = {
+    project: 's', coverage: { marker: 0, heuristic: 0, unknown: 0, total: 0 }, drift: [],
+    nodes: [
+      { id: 'a', name: 'a', kind: 'service' },
+      { id: 'b', name: 'b', kind: 'service' },
+      { id: 'iso', name: 'iso', kind: 'service' },
+    ],
+    edges: [
+      { id: 'e1', source: 'a', target: 'b', kind: 'http-call', confidence: 0.8 },
+      { id: 'e2', source: 'a', target: 'b', kind: 'rw-db', confidence: 0.4 },
+    ],
+  };
+
+  it('edgeKindsOf — уникальные виды, сортировка', () => {
+    expect(edgeKindsOf(g)).toEqual(['http-call', 'rw-db']);
+  });
+  it('фильтр по виду ребра', () => {
+    const r = filterGraph(g, { edgeKinds: new Set(['http-call']), minConfidence: 0, hideIsolated: false });
+    expect(r.edges.map((e) => e.kind)).toEqual(['http-call']);
+  });
+  it('порог confidence прячет слабые связи', () => {
+    const r = filterGraph(g, { edgeKinds: new Set(['http-call', 'rw-db']), minConfidence: 0.5, hideIsolated: false });
+    expect(r.edges.map((e) => e.id)).toEqual(['e1']); // 0.4 отсеян
+  });
+  it('без одиночек — узлы без связей убираются', () => {
+    const r = filterGraph(g, { edgeKinds: new Set(['http-call', 'rw-db']), minConfidence: 0, hideIsolated: true });
+    expect(r.nodes.map((n) => n.id).sort()).toEqual(['a', 'b']); // iso убран
   });
 });
 

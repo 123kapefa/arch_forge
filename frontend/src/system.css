@@ -1,16 +1,20 @@
 /* L0 System Overview — тёмная оболочка под макет. */
 .sysview {
-  --bg: #0d1117;
-  --panel: #12161d;
-  --card: #171d27;
-  --card-line: #263041;
+  /* палитра по прототипу (Claude Design) */
+  --bg: #0b0f17;
+  --panel: #10151e;
+  --card: #121722;
+  --card-infra: #0f141d;
+  --card-line: #222c3a;
   --text: #c9d1d9;
   --muted: #7c8698;
-  --ok: #57c78a;
-  --warn: #e0a13c;
-  --crit: #e5534b;
+  --ok: #6fcf77;
+  --warn: #e0b24a;
+  --crit: #e5484d;
   --cover: #8a94a6;
-  --accent: #4aa3df;
+  --accent: #6c8cff;
+  --bus: #b98cff;
+  --edge: #3a4658;
 
   position: absolute;
   inset: 0;
@@ -57,6 +61,7 @@
 .panel__group { margin-bottom: 16px; }
 .panel__label { font-size: 10px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
 .panel__empty { color: var(--muted); font-style: italic; }
+.panel__hint { font-size: 10px; color: var(--muted); margin-top: 5px; }
 .opt { display: flex; align-items: center; gap: 7px; padding: 3px 0; cursor: pointer; }
 .legend { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--muted); }
 .legend__line { width: 22px; height: 0; border-top: 2px solid; }
@@ -99,9 +104,9 @@
   background: var(--card); border: 1px solid var(--card-line);
   border-radius: 9px; padding: 9px 11px;
 }
-.sys-node.kind-service { border-left: 3px solid var(--accent); }
-.sys-node.health-warning { border-color: rgba(224, 161, 60, 0.5); }
-.sys-node.health-critical { border-color: rgba(229, 83, 75, 0.6); }
+.sys-node.kind-datastore, .sys-node.kind-topic, .sys-node.kind-external { background: var(--card-infra); }
+.sys-node.health-warning { border-color: rgba(224, 178, 74, 0.5); }
+.sys-node.health-critical { border-color: rgba(229, 72, 77, 0.6); }
 .sys-node.is-selected { box-shadow: 0 0 0 2px var(--accent); }
 .sys-node__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .sys-node__icon { font-size: 15px; color: var(--muted); flex: none; }
