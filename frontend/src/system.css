@@ -36,8 +36,20 @@
 .crumb--root { font-weight: 600; }
 .crumbs { color: var(--muted); }
 .crumbs b { color: var(--text); }
+.sysview__right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.sysview__btn {
+  background: transparent;
+  border: 1px solid var(--card-line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.sysview__btn:hover { border-color: var(--accent); }
+.saved { font-size: 12px; display: inline-flex; align-items: center; }
+.saved--ok { color: var(--ok); }
+.saved--dirty { color: var(--warn); }
 .sysview__exit {
-  margin-left: auto;
   background: transparent;
   border: 1px solid var(--card-line);
   color: var(--muted);
