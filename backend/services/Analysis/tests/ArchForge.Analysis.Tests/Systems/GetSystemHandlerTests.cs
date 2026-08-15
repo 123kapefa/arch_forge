@@ -137,6 +137,27 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    // L0-сводка слоёв (Services) приходит при код-линзах и отсутствует без них.
+    [Fact]
+    public void Service_summary_present_only_with_code_lens()
+    {
+        var dir = TempDir("syssum");
+        try
+        {
+            var handler = new GetSystemHandler(new FakeSource(OneService()), Analyzer(dir, Layer));
+
+            Assert.Null(handler.Handle(new GetSystemQuery(dir))!.Services); // без флагов — лёгкий скан, сводки нет
+
+            var on = handler.Handle(new GetSystemQuery(dir, Layers: true));
+            var summary = Assert.Single(on!.Services!);
+            Assert.Contains(summary.Layers, l => l.Name == "Domain");
+
+            // сводка приходит и по линзе дрейфа (не только слоёв)
+            Assert.NotNull(handler.Handle(new GetSystemQuery(dir, Drift: true))!.Services);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     // Цель рефактора (ревью #24): при обеих линзах сервис разбирается РОВНО один раз, а не дважды.
     [Fact]
     public void Both_lenses_analyze_each_service_once()

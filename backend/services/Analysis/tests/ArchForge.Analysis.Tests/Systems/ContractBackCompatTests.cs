@@ -90,6 +90,30 @@ public class ContractBackCompatTests
     }
 
     [Fact]
+    public void Service_summary_round_trips()
+    {
+        var g = new GraphDto("sys", [], [], new CoverageDto(0, 0, 0, 0), [],
+            Services: [new ServiceSummaryDto("auth", "AuthService", "warning",
+                [new LayerSummaryDto("Domain", "warning", 9, Note: "Domain → Infrastructure")])]);
+
+        var back = JsonSerializer.Deserialize<GraphDto>(JsonSerializer.Serialize(g, Web), Web)!;
+
+        var svc = Assert.Single(back.Services!);
+        Assert.Equal("AuthService", svc.Name);
+        var layer = Assert.Single(svc.Layers);
+        Assert.Equal("Domain", layer.Name);
+        Assert.Equal(9, layer.Types);
+        Assert.Contains("Infrastructure", layer.Note);
+    }
+
+    [Fact]
+    public void Services_omitted_when_null()
+    {
+        var json = JsonSerializer.Serialize(new GraphDto("s", [], [], new CoverageDto(0, 0, 0, 0), []), Web);
+        Assert.DoesNotContain("services", json); // Ф1-байт-совместимость: поле не пишется при null
+    }
+
+    [Fact]
     public void Problem_category_is_additive()
     {
         // линза сериализуется; отсутствие (null) опускается → старый JSON без category валиден
