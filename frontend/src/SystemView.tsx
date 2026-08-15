@@ -135,7 +135,7 @@ const Flow = forwardRef<FlowHandle, {
       snapGrid={[GRID, GRID]}
       onNodeDragStart={() => { last.current = null; }}
       onNodeDrag={onNodeDrag}
-      onNodeDragStop={() => { last.current = null; setSnapNow(false); persist(); }}
+      onNodeDragStop={() => { last.current = null; setSnapNow(false); }}
       onNodeMouseEnter={(_, n) => setHoverId(n.id)}
       onNodeMouseLeave={() => setHoverId(null)}
       onNodeClick={(_, n) => onSelect(n)}
@@ -381,8 +381,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     });
   const counts = useMemo(() => severityCounts(graph?.problems), [graph]);
   const lensProblems = useMemo(() => problemsByLens(graph?.problems, lens), [graph, lens]);
-  // v2: старые (до ELK) сохранённые раскладки игнорируем — при открытии всегда чистая ELK-раскладка.
-  const storageKey = loadedPath ? `af_layout2:${loadedPath}` : '';
+  // v3: игнорируем прежние авто-сохранённые раскладки — при открытии всегда свежая ELK-раскладка.
+  const storageKey = loadedPath ? `af_layout3:${loadedPath}` : '';
 
   return (
     <div className="sysview">
