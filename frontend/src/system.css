@@ -198,7 +198,37 @@
 .panel__label { font-size: 10px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
 .panel__empty { color: var(--muted); font-style: italic; }
 .panel__hint { font-size: 10px; color: var(--muted); margin-top: 5px; }
-.opt { display: flex; align-items: center; gap: 7px; padding: 3px 0; cursor: pointer; }
+.opt { display: flex; align-items: center; gap: 10px; padding: 6px 8px; margin: 0 -8px; border-radius: 7px; cursor: pointer; }
+.opt:hover { background: rgba(108, 140, 255, 0.08); }
+/* невыбранные строки — приглушены (как в референсе) */
+.panel--view .opt:has(input:not(:checked)) { color: var(--muted); }
+
+/* кастомные амбер-чекбоксы с галочкой */
+.panel--view input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  width: 18px; height: 18px; flex: none; margin: 0;
+  border: 1px solid var(--card-line); border-radius: 5px; background: var(--card);
+  cursor: pointer; position: relative;
+}
+.panel--view input[type="checkbox"]:checked { background: var(--warn); border-color: var(--warn); }
+.panel--view input[type="checkbox"]:checked::after {
+  content: ''; position: absolute; left: 6px; top: 2px;
+  width: 4px; height: 9px; border: solid #06121c; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+/* кастомные амбер-радио (ЛИНЗА) */
+.panel--view input[type="radio"] {
+  appearance: none; -webkit-appearance: none;
+  width: 16px; height: 16px; flex: none; margin: 0;
+  border: 1px solid var(--card-line); border-radius: 50%; background: var(--card);
+  cursor: pointer; position: relative;
+}
+.panel--view input[type="radio"]:checked { border-color: var(--warn); }
+.panel--view input[type="radio"]:checked::after {
+  content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--warn);
+}
+/* амбер-слайдер (УВЕРЕННОСТЬ) */
+.panel--view input[type="range"] { accent-color: var(--warn); }
+
 .legend { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--muted); }
 .legend__line { width: 22px; height: 0; border-top: 2px solid; }
 .legend__line--db { border-color: var(--ok); }
