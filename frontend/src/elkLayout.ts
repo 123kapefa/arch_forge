@@ -7,10 +7,15 @@ import { isInfra, type SystemNodeData } from './systemFlow';
 const elk = new ELK();
 
 // Слоёная раскладка сверху вниз, ортогональные рёбра, зазоры — чтобы линии шли в «коридорах» между плашками.
+// Coffman-Graham с ограничением ширины слоя (layerBound) переносит лишние узлы в новые ряды —
+// иначе десятки «листьев» встают в один ряд и схема получается «простынёй» (плохо под 16:10).
+// Подобрано экспериментом на product_site: bound=8 → соотношение ~1.4 (вместо ~7.7).
 const LAYOUT_OPTIONS: Record<string, string> = {
   'elk.algorithm': 'layered',
   'elk.direction': 'DOWN',
   'elk.edgeRouting': 'ORTHOGONAL',
+  'elk.layered.layering.strategy': 'COFFMAN_GRAHAM',
+  'elk.layered.layering.coffmanGraham.layerBound': '8',
   'elk.layered.spacing.nodeNodeBetweenLayers': '90',
   'elk.spacing.nodeNode': '55',
   'elk.spacing.edgeNode': '24',
