@@ -498,15 +498,16 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       <div className="sysview__body">
         <aside className={`panel panel--view ${leftOpen ? '' : 'is-collapsed'}`}>
           {!leftOpen ? (
-            <button className="panel__toggle panel__toggle--open" onClick={() => setLeftOpen(true)} title="Показать ВИД">
+            <button className="panel__collapsed" onClick={() => setLeftOpen(true)} title="Показать ВИД">
               <Icon name="chevronRight" size={16} />
+              <span className="panel__vtitle">ВИД</span>
             </button>
           ) : (
           <>
-          <div className="panel__title">
-            ВИД
-            <button className="panel__toggle" onClick={() => setLeftOpen(false)} title="Скрыть"><Icon name="chevronLeft" size={14} /></button>
-          </div>
+          <button className="panel__header" onClick={() => setLeftOpen(false)}>
+            ВИД<Icon name="chevronLeft" size={15} />
+          </button>
+          <div className="panel__body">
           <div className="panel__group">
             <div className="panel__label">ЛИНЗА</div>
             <label className="opt">
@@ -570,6 +571,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               ))}
             </div>
           )}
+          </div>
           </>
           )}
         </aside>
@@ -600,18 +602,20 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
 
         <aside className={`panel panel--inspector ${rightOpen ? '' : 'is-collapsed'}`}>
           {!rightOpen ? (
-            <button className="panel__toggle panel__toggle--open" onClick={() => setRightOpen(true)} title="Показать инспектор">
+            <button className="panel__collapsed" onClick={() => setRightOpen(true)} title="Показать инспектор">
               <Icon name="chevronLeft" size={16} />
+              <span className="panel__vtitle">ИНСПЕКТОР</span>
             </button>
           ) : (
             <>
-              <div className="panel__title">
-                ИНСПЕКТОР
-                <button className="panel__toggle" onClick={() => setRightOpen(false)} title="Скрыть"><Icon name="chevronRight" size={14} /></button>
+              <button className="panel__header" onClick={() => setRightOpen(false)}>
+                ИНСПЕКТОР<Icon name="chevronRight" size={15} />
+              </button>
+              <div className="panel__body">
+                {selected && graph
+                  ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />
+                  : <div className="panel__empty">кликните узел</div>}
               </div>
-              {selected && graph
-                ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />
-                : <div className="panel__empty">кликните узел</div>}
             </>
           )}
         </aside>
