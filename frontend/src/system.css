@@ -217,10 +217,10 @@
 .sysview .react-flow { background: var(--bg); }
 
 /* --- тёмные контролы/миникарта React Flow (под тему) --- */
-/* контролы той же высоты, что миникарта (168px), кнопки распределены */
+/* контролы той же высоты, что миникарта (168px), кнопки распределены; ближе к краям */
 .sysview .react-flow__controls {
   box-shadow: none; display: flex; flex-direction: column;
-  height: 168px; justify-content: space-between;
+  height: 168px; justify-content: space-between; margin: 8px;
 }
 .sysview .react-flow__controls-button {
   width: 34px; height: 34px; box-shadow: none;
@@ -229,7 +229,7 @@
 }
 .sysview .react-flow__controls-button:hover { background: var(--panel); border-color: var(--accent); }
 .sysview .react-flow__controls-button svg { fill: currentColor; }
-.sysview .react-flow__minimap { background: var(--card); border: 1px solid var(--card-line); border-radius: 10px; }
+.sysview .react-flow__minimap { background: var(--card); border: 1px solid var(--card-line); border-radius: 10px; margin: 8px; }
 .sysview .react-flow__attribution { background: transparent; color: var(--muted); opacity: 0.4; }
 
 /* --- статус-бар --- */
