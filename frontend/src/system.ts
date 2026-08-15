@@ -2,7 +2,9 @@
 // (System.Text.Json Web = camelCase). Аддитивные поля Фазы 1.5 опциональны: бэкенд опускает их при null.
 //
 // Отдельный модуль от api.ts (Фаза 1), чтобы визуальная оболочка (L0/L1) импортировала системный
-// слой явно и он не пересекался с перепереносом фронт-прототипа.
+// слой явно.
+
+import { fetchWithTimeout } from './http';
 
 export type ProblemSeverity = 'critical' | 'warning' | 'coverage' | 'info';
 export type ProblemCategory = 'architecture' | 'convention';
@@ -12,9 +14,10 @@ export type SystemNodeKind = 'service' | 'datastore' | 'topic' | 'external' | st
 export interface SystemNode {
   id: string;
   name: string;
-  kind: string;          // service | datastore | topic | external
+  kind: SystemNodeKind;  // service | datastore | topic | external
   level?: string;        // system | service | type | member
   health?: string;       // ok | warning | critical (по самой суровой проблеме на узле)
+  parent?: string;       // id родителя (member→тип, тип→слой/сервис) — для крошек
   // Ф1-поля тоже присутствуют в контракте (на системном уровне пустые):
   layer?: string;
   role?: string;
@@ -43,6 +46,8 @@ export interface SystemEdge {
   kind: string;          // http-call | rw-db | uses-bus | publishes | subscribes | ...
   via?: string;          // compose | config | code | unknown (провенанс)
   confidence?: number;   // 0..1 (уверенность по источнику)
+  violation?: boolean;   // связь-нарушение (подсветка красным)
+  problem?: string;      // id проблемы (навигация клик-по-ребру → проблема)
 }
 
 export interface Problem {
@@ -63,6 +68,13 @@ export interface SystemCoverage {
   total: number;
 }
 
+/** Контур окружения (topology | instance | profile) — зарезервировано; бэкенд Фазы 1.5 пока не заполняет. */
+export interface EnvironmentDto {
+  id: string;
+  name: string;
+  kind: string;
+}
+
 export interface SystemGraph {
   project: string;
   nodes: SystemNode[];
@@ -71,6 +83,7 @@ export interface SystemGraph {
   drift: string[];
   health?: string;       // ok | warning | critical (rollup системы)
   problems?: Problem[];
+  environments?: EnvironmentDto[];
 }
 
 export interface SystemQuery {
@@ -84,28 +97,13 @@ export interface SystemQuery {
 // Код-линзы гоняют Roslyn по каждому сервису — дольше структурного скана; но не бесконечно.
 const TIMEOUT_MS = 120_000;
 
-async function fetchWithTimeout(url: string): Promise<Response> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  try {
-    return await fetch(url, { signal: ctrl.signal });
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') {
-      throw new Error(`Превышено время ожидания (${TIMEOUT_MS / 1000}с) — большой проект или сервис недоступен`);
-    }
-    throw e;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** GET /api/system (через сервис Map — единственная фронт-фейсинг точка, adr/0010). */
 export async function fetchSystem(q: SystemQuery): Promise<SystemGraph> {
   const params = new URLSearchParams({ path: q.path });
   if (q.drift) params.set('drift', 'true');
   if (q.layers) params.set('layers', 'true');
 
-  const res = await fetchWithTimeout(`/api/system?${params.toString()}`);
+  const res = await fetchWithTimeout(`/api/system?${params.toString()}`, TIMEOUT_MS);
   if (!res.ok) {
     const body = await res.text();
     let message = body;

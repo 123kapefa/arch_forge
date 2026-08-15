@@ -46,11 +46,25 @@ describe('worstSeverity', () => {
   it('пусто → null', () => {
     expect(worstSeverity([])).toBeNull();
   });
+  it('неизвестная severity мягче known — critical побеждает (fallback rank)', () => {
+    expect(worstSeverity([
+      { id: 'a', severity: 'wat', kind: 'k', title: '', location: 'l' },
+      { id: 'b', severity: 'critical', kind: 'k', title: '', location: 'l' },
+    ])).toBe('critical');
+  });
 });
 
 describe('severityCounts', () => {
   it('считает по важности', () => {
     expect(severityCounts(problems)).toEqual({ critical: 1, warning: 2, coverage: 1, info: 1 });
+  });
+  it('игнорирует prototype-ключи severity (constructor/toString) — без мусорных ключей', () => {
+    const ps: Problem[] = [
+      { id: 'a', severity: 'constructor', kind: 'k', title: '', location: 'l' },
+      { id: 'b', severity: 'toString', kind: 'k', title: '', location: 'l' },
+      { id: 'c', severity: 'warning', kind: 'k', title: '', location: 'l' },
+    ];
+    expect(severityCounts(ps)).toEqual({ critical: 0, warning: 1, coverage: 0, info: 0 });
   });
 });
 
@@ -67,6 +81,10 @@ describe('problemsAt / problemsUnder', () => {
   it('problemsUnder не ловит чужой namespace по частичному совпадению имени', () => {
     const ps: Problem[] = [{ id: 'q', severity: 'warning', kind: 'k', title: '', location: 'orders' }];
     expect(problemsUnder(ps, 'order')).toEqual([]); // «order» ≠ «orders» и не «order/…»
+  });
+  it('пустой namespace не матчит по ведущему /', () => {
+    const ps: Problem[] = [{ id: 'q', severity: 'warning', kind: 'k', title: '', location: '/abs' }];
+    expect(problemsUnder(ps, '')).toEqual([]);
   });
 });
 

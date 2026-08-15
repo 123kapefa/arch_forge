@@ -19,7 +19,8 @@ export function problemsByLens(problems: Problem[] | undefined, lens: Lens): Pro
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, warning: 1, coverage: 2, info: 3 };
 
 function rank(severity: string): number {
-  return severity in SEVERITY_ORDER ? SEVERITY_ORDER[severity] : SEVERITY_ORDER.info;
+  // Object.hasOwn, не `in` — иначе severity вроде 'constructor'/'toString' ложно матчит Object.prototype.
+  return Object.hasOwn(SEVERITY_ORDER, severity) ? SEVERITY_ORDER[severity] : SEVERITY_ORDER.info;
 }
 
 /** Самая суровая проблема набора (для подсветки узла/группы); null — если пусто. */
@@ -35,7 +36,7 @@ export function worstSeverity(problems: Problem[] | undefined): string | null {
 export function severityCounts(problems: Problem[] | undefined): Record<string, number> {
   const counts: Record<string, number> = { critical: 0, warning: 0, coverage: 0, info: 0 };
   for (const p of problems ?? []) {
-    if (p.severity in counts) counts[p.severity] += 1;
+    if (Object.hasOwn(counts, p.severity)) counts[p.severity] += 1; // не `in` — защита от prototype-ключей
   }
   return counts;
 }
@@ -50,8 +51,9 @@ export function problemsAt(problems: Problem[] | undefined, nodeId: string): Pro
  * Ловит per-service проблемы (дрейф, нарушения слоёв) для роллапа на сервис/группу.
  */
 export function problemsUnder(problems: Problem[] | undefined, namespace: string): Problem[] {
+  // префикс-матч только для непустого namespace (иначе '' дал бы startsWith('/') — ложные совпадения)
   return (problems ?? []).filter(
-    (p) => p.location === namespace || p.location.startsWith(`${namespace}/`),
+    (p) => p.location === namespace || (namespace !== '' && p.location.startsWith(`${namespace}/`)),
   );
 }
 
@@ -74,6 +76,6 @@ export function namespaceOf(nodeId: string): string {
  */
 export function serviceRootPath(scanRoot: string, node: SystemNode): string {
   const ns = namespaceOf(node.id);
-  const root = scanRoot.replace(/\/+$/, '');
+  const root = scanRoot.replace(/[/\\]+$/, ''); // хвостовой разделитель (POSIX или Windows)
   return ns ? `${root}/${ns}` : root;
 }
