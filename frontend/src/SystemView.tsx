@@ -33,12 +33,14 @@ const Flow = forwardRef<FlowHandle, {
   magnet: boolean;
   storageKey: string;                // ключ localStorage для раскладки ('' → не сохранять)
   onDirty: (saved: boolean) => void; // true = совпадает с сохранённой, false = есть изменения
+  selectedId: string | null;         // выбранный узел — его связи подсвечиваем
   onSelect: (n: Node) => void;
   onClear: () => void;
-}>(function Flow({ flow, magnet, storageKey, onDirty, onSelect, onClear }, ref) {
+}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, onSelect, onClear }, ref) {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
+  const [hoverId, setHoverId] = useState<string | null>(null); // узел под курсором — подсветка связей
   const last = useRef<{ x: number; y: number; t: number } | null>(null);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -55,6 +57,15 @@ const Flow = forwardRef<FlowHandle, {
     } catch { return ns; }
   }, [storageKey]);
 
+  // Записать текущие позиции узлов в localStorage (авто-сохранение раскладки).
+  const persist = useCallback(() => {
+    if (!storageKey) return;
+    const pos: Record<string, { x: number; y: number }> = {};
+    for (const n of nodesRef.current) pos[n.id] = n.position;
+    try { localStorage.setItem(storageKey, JSON.stringify(pos)); } catch { /* quota */ }
+    onDirty(true);
+  }, [storageKey, onDirty]);
+
   useEffect(() => {
     setNodes(applySaved(flow.nodes));
     setEdges(flow.edges);
@@ -65,20 +76,14 @@ const Flow = forwardRef<FlowHandle, {
   }, [flow, applySaved, setNodes, setEdges, rf, onDirty]);
 
   useImperativeHandle(ref, () => ({
-    save() {
-      if (!storageKey) return;
-      const pos: Record<string, { x: number; y: number }> = {};
-      for (const n of nodesRef.current) pos[n.id] = n.position;
-      try { localStorage.setItem(storageKey, JSON.stringify(pos)); } catch { /* quota */ }
-      onDirty(true);
-    },
+    save() { persist(); },
     reset() {
       if (storageKey) { try { localStorage.removeItem(storageKey); } catch { /* ignore */ } }
       setNodes(flow.nodes); // вернуть вычисленную раскладку (без сохранённых позиций)
       onDirty(true);
       setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
     },
-  }), [storageKey, flow, setNodes, rf, onDirty]);
+  }), [persist, storageKey, flow, setNodes, rf, onDirty]);
 
   // Перетаскивание узла → раскладка расходится с сохранённой.
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
@@ -99,19 +104,36 @@ const Flow = forwardRef<FlowHandle, {
     setSnapNow((cur) => (cur === want ? cur : want));
   }, []);
 
+  // Подсветка связей: наведение (или выбор) узла → его рёбра ярче и над блоками, остальные приглушены.
+  const highlightId = hoverId ?? selectedId;
+  const displayEdges = useMemo(() => {
+    if (!highlightId) return edges;
+    return edges.map((e) => {
+      const on = e.source === highlightId || e.target === highlightId;
+      return {
+        ...e,
+        zIndex: on ? 1000 : 0,
+        style: { ...e.style, opacity: on ? 1 : 0.08, strokeWidth: on ? 3 : e.style?.strokeWidth },
+      };
+    });
+  }, [edges, highlightId]);
+
   return (
     <ReactFlow
       nodes={nodes}
-      edges={edges}
+      edges={displayEdges}
       onNodesChange={handleNodesChange}
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       minZoom={0.08}
+      elevateEdgesOnSelect
       snapToGrid={magnet && snapNow}
       snapGrid={[GRID, GRID]}
       onNodeDragStart={() => { last.current = null; }}
       onNodeDrag={onNodeDrag}
-      onNodeDragStop={() => { last.current = null; setSnapNow(false); }}
+      onNodeDragStop={() => { last.current = null; setSnapNow(false); persist(); }}
+      onNodeMouseEnter={(_, n) => setHoverId(n.id)}
+      onNodeMouseLeave={() => setHoverId(null)}
       onNodeClick={(_, n) => onSelect(n)}
       onPaneClick={onClear}
     >
@@ -451,6 +473,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
                   magnet={magnet}
                   storageKey={storageKey}
                   onDirty={setSaved}
+                  selectedId={selected?.id ?? null}
                   onSelect={setSelected}
                   onClear={() => setSelected(null)}
                 />
