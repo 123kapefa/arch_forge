@@ -688,8 +688,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       )}
 
       <footer className="sysview__status">
-        <span className={`status__health health-${graph?.health ?? 'none'}`}>{graph?.health ?? '—'}</span>
-        {graph && <span className="status__proj">{graph.project}</span>}
+        {graph && <span className={`status__proj health-${graph.health ?? 'none'}`}>◆ {graph.project}</span>}
         {branch && <span className="status__branch"><Icon name="branch" size={13} /> {branch}</span>}
         {graph && <span className="status__ok">✓ анализ актуален</span>}
         <span className="status__right">
