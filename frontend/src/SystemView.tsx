@@ -12,6 +12,7 @@ import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
 
 const nodeTypes = { sys: SystemNodeView };
+const GRID = 20; // шаг сетки: точки фона + привязка при перетаскивании
 
 /** Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре. */
 function Flow({ flow, onSelect, onClear }: {
@@ -39,10 +40,12 @@ function Flow({ flow, onSelect, onClear }: {
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       minZoom={0.08}
+      snapToGrid
+      snapGrid={[GRID, GRID]}
       onNodeClick={(_, n) => onSelect(n)}
       onPaneClick={onClear}
     >
-      <Background />
+      <Background gap={GRID} />
       <Controls />
       <MiniMap pannable zoomable />
     </ReactFlow>
