@@ -26,7 +26,7 @@ public sealed class GetSystemEndpoint : IEndpoint
         });
 }
 
-public sealed class GetSystemHandler(ISystemSource source, DriftScanner? drift = null, LayerViolationScanner? layers = null)
+public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? analyzer = null)
 {
     public GraphDto? Handle(GetSystemQuery query, CancellationToken ct = default)
     {
@@ -36,12 +36,14 @@ public sealed class GetSystemHandler(ISystemSource source, DriftScanner? drift =
 
         SystemGraph graph = source.Read(query.Path, ct);
 
-        // Код-линзы — только по запросу, только для пути-папки и если сканер доступен (в тестах может быть null).
-        if (Directory.Exists(query.Path))
+        // Код-линзы (дрейф/слои) — по запросу, только для пути-папки, если анализатор доступен (в тестах может быть null).
+        // Общий per-service разбор ОДИН раз → чистые детекторы по флагам (без двойного Roslyn при обеих линзах).
+        if ((query.Drift || query.Layers) && analyzer is not null && Directory.Exists(query.Path))
         {
+            var analyses = analyzer.Analyze(query.Path, ct);
             var extra = new List<SystemProblem>();
-            if (query.Drift && drift is not null) extra.AddRange(drift.Scan(query.Path, ct));
-            if (query.Layers && layers is not null) extra.AddRange(layers.Scan(query.Path, ct));
+            if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
+            if (query.Layers) extra.AddRange(LayerViolationDetector.Detect(analyses));
             if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
         }
 

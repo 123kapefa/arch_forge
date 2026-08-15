@@ -1,15 +1,14 @@
 namespace ArchForge.Analysis.Core.Systems;
 
-// Линза «дрейф от свода»: отклонения per-service от свода (маркерные роли) на системный уровень как проблемы
-// категории convention, severity Info. Мягко (не красный алерт): на ЧУЖОМ таргете дрейф — это «другие конвенции»,
-// а не арх-проблема, поэтому отдельная линза, включаемая по запросу (adr/0008 — не выдаём различия за проблемы).
-// Разбор кода — через общий ServiceAnalyzer (гранулярность .sln; моно-репо анализируется целиком).
-public sealed class DriftScanner(ServiceAnalyzer analyzer)
+// Линза «дрейф от свода» (convention): извлекает отклонения из УЖЕ посчитанного per-service анализа.
+// Чистая функция над ServiceAnalysis — один проход ServiceAnalyzer питает обе код-линзы (без двойного Roslyn).
+// Мягко (Info, не красит health): на чужом таргете дрейф — «другие конвенции», а не арх-проблема (adr/0008).
+public static class DriftDetector
 {
-    public IReadOnlyList<SystemProblem> Scan(string root, CancellationToken ct = default)
+    public static IReadOnlyList<SystemProblem> Detect(IReadOnlyList<ServiceAnalysis> analyses)
     {
         var problems = new List<SystemProblem>();
-        foreach (var (svc, location, result) in analyzer.Analyze(root, ct))
+        foreach (var (svc, location, result) in analyses)
         {
             if (result is null) // сервис не разобрался — не молчим (adr/0008): честная Coverage в той же линзе
             {

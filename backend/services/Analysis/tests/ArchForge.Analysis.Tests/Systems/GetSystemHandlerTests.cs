@@ -22,6 +22,31 @@ public class GetSystemHandlerTests
         public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) => raw;
     }
 
+    // считает вызовы Read — для проверки «один Roslyn-проход на сервис» при обеих линзах.
+    private sealed class CountingTypes(IReadOnlyList<RawType> raw) : ITypeSource
+    {
+        public int Reads { get; private set; }
+        public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) { Reads++; return raw; }
+    }
+
+    // ServiceAnalyzer с одним сервисом (svc-a) поверх заданных типов.
+    private static ServiceAnalyzer Analyzer(string dir, params RawType[] raw) =>
+        new(new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
+            new FakeTypes(raw), new TypeClassifier(ConventionPack.Default()));
+
+    private static SystemGraph OneService() =>
+        new([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []);
+
+    private static string TempDir(string tag) =>
+        Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"archforge_{tag}_" + Guid.NewGuid().ToString("N"))).FullName;
+
+    private static readonly RawType Drift = new("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs");
+    private static readonly RawType[] Layer =
+    [
+        new("Order", "class", [], "(PaymentGateway g)", "Domain", "Order.cs"),
+        new("PaymentGateway", "class", [], "()", "Infrastructure", "PaymentGateway.cs"),
+    ];
+
     [Fact]
     public void Null_for_missing_or_empty_path()
     {
@@ -33,8 +58,7 @@ public class GetSystemHandlerTests
     [Fact]
     public void Maps_system_graph_for_existing_dir()
     {
-        var dir = Directory.CreateDirectory(
-            Path.Combine(Path.GetTempPath(), "archforge_sysh_" + Guid.NewGuid().ToString("N"))).FullName;
+        var dir = TempDir("sysh");
         try
         {
             var g = new SystemGraph([new SystemNode("x/api", "api", SystemNodeKind.Service, "api:1")], [], []);
@@ -46,12 +70,11 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    // Ревью #19 M1: эндпоинт/хендлер должен принимать и путь-к-файлу compose (источник его поддерживает).
+    // Ревью #19 M1: эндпоинт/хендлер принимает и путь-к-файлу compose.
     [Fact]
     public void Accepts_compose_file_path()
     {
-        var dir = Directory.CreateDirectory(
-            Path.Combine(Path.GetTempPath(), "archforge_sysf_" + Guid.NewGuid().ToString("N"))).FullName;
+        var dir = TempDir("sysf");
         var f = Path.Combine(dir, "docker-compose.yml");
         File.WriteAllText(f, "services:\n  api: { image: api:1 }\n");
         try
@@ -63,20 +86,13 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    // Линза «дрейф»: флаг drift включает convention-проблемы; по умолчанию их нет (лёгкий скан).
     [Fact]
     public void Drift_flag_toggles_convention_lens()
     {
-        var dir = Directory.CreateDirectory(
-            Path.Combine(Path.GetTempPath(), "archforge_sysd_" + Guid.NewGuid().ToString("N"))).FullName;
+        var dir = TempDir("sysd");
         try
         {
-            var source = new FakeSource(new SystemGraph([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []));
-            var scanner = new DriftScanner(new ServiceAnalyzer(
-                new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
-                new FakeTypes([new RawType("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs")]),
-                new TypeClassifier(ConventionPack.Default())));
-            var handler = new GetSystemHandler(source, scanner);
+            var handler = new GetSystemHandler(new FakeSource(OneService()), Analyzer(dir, Drift));
 
             var off = handler.Handle(new GetSystemQuery(dir, Drift: false));
             Assert.True(off!.Problems is null || off.Problems.All(p => p.Category != ProblemCategory.Convention));
@@ -87,55 +103,31 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    // Линза «слои»: флаг layers включает architecture-проблемы layer-violation; по умолчанию их нет.
     [Fact]
     public void Layers_flag_toggles_architecture_lens()
     {
-        var dir = Directory.CreateDirectory(
-            Path.Combine(Path.GetTempPath(), "archforge_sysl_" + Guid.NewGuid().ToString("N"))).FullName;
+        var dir = TempDir("sysl");
         try
         {
-            var source = new FakeSource(new SystemGraph([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []));
-            var analyzer = new ServiceAnalyzer(
-                new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
-                new FakeTypes(
-                [
-                    new RawType("Order", "class", [], "(PaymentGateway g)", "Domain", "Order.cs"),
-                    new RawType("PaymentGateway", "class", [], "()", "Infrastructure", "PaymentGateway.cs"),
-                ]),
-                new TypeClassifier(ConventionPack.Default()));
-            var handler = new GetSystemHandler(source, layers: new LayerViolationScanner(analyzer));
+            var handler = new GetSystemHandler(new FakeSource(OneService()), Analyzer(dir, Layer));
 
             var off = handler.Handle(new GetSystemQuery(dir, Layers: false));
             Assert.True(off!.Problems is null || off.Problems.All(p => p.Kind != "layer-violation"));
 
             var on = handler.Handle(new GetSystemQuery(dir, Layers: true));
-            Assert.Contains(on!.Problems!, p => p is { Kind: "layer-violation", Severity: "warning",
-                Category: ProblemCategory.Architecture });
+            Assert.Contains(on!.Problems!, p => p is { Kind: "layer-violation", Severity: "warning", Category: ProblemCategory.Architecture });
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    // Обе код-линзы одновременно: drift=true&layers=true мержит и convention, и architecture проблемы.
+    // Обе линзы одновременно: ОДИН проход ServiceAnalyzer питает оба детектора (без двойного Roslyn).
     [Fact]
     public void Drift_and_layers_together_add_both_lenses()
     {
-        var dir = Directory.CreateDirectory(
-            Path.Combine(Path.GetTempPath(), "archforge_sysdl_" + Guid.NewGuid().ToString("N"))).FullName;
+        var dir = TempDir("sysdl");
         try
         {
-            RawType[] raw =
-            [
-                new("Order", "class", [], "(PaymentGateway g)", "Domain", "Order.cs"),        // нарушение слоёв
-                new("PaymentGateway", "class", [], "()", "Infrastructure", "PaymentGateway.cs"),
-                new("RegisterHandler", "class", [], "(Dep d)", "Application", "RegisterHandler.cs"), // дрейф
-            ];
-            var source = new FakeSource(new SystemGraph([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []));
-            var discovery = new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]);
-            var classifier = new TypeClassifier(ConventionPack.Default());
-            var handler = new GetSystemHandler(source,
-                new DriftScanner(new ServiceAnalyzer(discovery, new FakeTypes(raw), classifier)),
-                new LayerViolationScanner(new ServiceAnalyzer(discovery, new FakeTypes(raw), classifier)));
+            var handler = new GetSystemHandler(new FakeSource(OneService()), Analyzer(dir, [Drift, .. Layer]));
 
             var dto = handler.Handle(new GetSystemQuery(dir, Drift: true, Layers: true));
 
@@ -145,25 +137,41 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    // Дрейф гоняется только для пути-папки (Directory.Exists); путь-к-файлу compose не запускает разбор кода.
+    // Цель рефактора (ревью #24): при обеих линзах сервис разбирается РОВНО один раз, а не дважды.
     [Fact]
-    public void Drift_flag_ignored_for_file_path()
+    public void Both_lenses_analyze_each_service_once()
     {
-        var dir = Directory.CreateDirectory(
-            Path.Combine(Path.GetTempPath(), "archforge_sysdf_" + Guid.NewGuid().ToString("N"))).FullName;
+        var dir = TempDir("sys1x");
+        try
+        {
+            var types = new CountingTypes([Drift, .. Layer]);
+            var analyzer = new ServiceAnalyzer(
+                new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
+                types, new TypeClassifier(ConventionPack.Default()));
+
+            new GetSystemHandler(new FakeSource(OneService()), analyzer)
+                .Handle(new GetSystemQuery(dir, Drift: true, Layers: true));
+
+            Assert.Equal(1, types.Reads); // один Roslyn-проход на сервис, хотя линзы обе
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // Код-линзы гоняются только для пути-папки; путь-к-файлу compose не запускает разбор кода.
+    [Fact]
+    public void Code_lenses_ignored_for_file_path()
+    {
+        var dir = TempDir("sysfl");
         var f = Path.Combine(dir, "docker-compose.yml");
         File.WriteAllText(f, "services:\n  api: { image: api:1 }\n");
         try
         {
-            // сканер с дрейфующим сервисом: для пути-к-ФАЙЛУ линза дрейфа не включается → convention-проблем нет
-            var scanner = new DriftScanner(new ServiceAnalyzer(
-                new FakeDiscovery([new DiscoveredService("X", Path.Combine(dir, "x"), "docker-compose.yml")]),
-                new FakeTypes([new RawType("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs")]),
-                new TypeClassifier(ConventionPack.Default())));
-            var dto = new GetSystemHandler(new ComposeSystemSource(), scanner).Handle(new GetSystemQuery(f, Drift: true));
+            var dto = new GetSystemHandler(new ComposeSystemSource(), Analyzer(dir, Drift))
+                .Handle(new GetSystemQuery(f, Drift: true, Layers: true));
 
             Assert.NotNull(dto);
-            Assert.True(dto!.Problems is null || dto.Problems.All(p => p.Category != ProblemCategory.Convention));
+            Assert.True(dto!.Problems is null || dto.Problems.All(p =>
+                p.Category != ProblemCategory.Convention && p.Kind != "layer-violation"));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
