@@ -225,8 +225,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             yield return (DirNameOf(f), f);
     }
 
-    private static string Rel(string root, string path) =>
-        Path.GetRelativePath(root, path).Replace('\\', '/');
+    private static string Rel(string root, string path) => SystemNamespace.Of(root, path);
 
     private static string DirNameOf(string filePath) =>
         Path.GetFileName(Path.GetDirectoryName(filePath)) is { Length: > 0 } d ? d : "system";

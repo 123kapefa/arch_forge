@@ -22,6 +22,10 @@ public class DriftScannerTests
     private static readonly RawType[] Clean =
         [new("CreateWidgetCommand", "record", ["ICommand"], "(string N)", "Application", "x.cs")];
 
+    // сервис С compose (иначе DriftScanner его отфильтрует — у него нет узлов в графе)
+    private static DiscoveredService Svc(string root, string name) =>
+        new(name, Path.Combine(root, name), "docker-compose.yml");
+
     private static DriftScanner Scanner(IReadOnlyList<DiscoveredService> svcs, Func<string, IReadOnlyList<RawType>> read) =>
         new(new StubDiscovery(svcs), new StubTypes(read), new TypeClassifier(ConventionPack.Default()));
 
@@ -32,15 +36,14 @@ public class DriftScannerTests
     public void Emits_convention_info_problem_per_drifting_service()
     {
         var root = TempRoot();
-        var svcs = new[] { new DiscoveredService("Svc.A", Path.Combine(root, "svc-a"), null) };
         try
         {
-            var p = Assert.Single(Scanner(svcs, _ => Drifting).Scan(root));
+            var p = Assert.Single(Scanner([Svc(root, "svc-a")], _ => Drifting).Scan(root));
             Assert.Equal(ProblemSeverity.Info, p.Severity);            // мягко — не красный
             Assert.Equal("drift", p.Kind);
             Assert.Equal(ProblemCategory.Convention, p.Category);      // отдельная линза
             Assert.Equal("svc-a", p.Location);                        // namespace = Rel(root, svc.Root)
-            Assert.Contains("Svc.A", p.Title);
+            Assert.Contains("svc-a", p.Title);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -49,26 +52,70 @@ public class DriftScannerTests
     public void Clean_service_yields_no_drift_problem()
     {
         var root = TempRoot();
-        var svcs = new[] { new DiscoveredService("Svc.Clean", Path.Combine(root, "clean"), null) };
-        try { Assert.Empty(Scanner(svcs, _ => Clean).Scan(root)); }
+        try { Assert.Empty(Scanner([Svc(root, "clean")], _ => Clean).Scan(root)); }
         finally { Directory.Delete(root, recursive: true); }
     }
 
     [Fact]
-    public void Broken_service_is_skipped_not_thrown()
+    public void Service_without_compose_is_skipped()
     {
         var root = TempRoot();
-        var svcs = new[]
-        {
-            new DiscoveredService("Bad", Path.Combine(root, "bad"), null),
-            new DiscoveredService("Good", Path.Combine(root, "good"), null),
-        };
         try
         {
-            // «bad» бросает при разборе → изоляция ошибок (adr/0008); «good» дрейфит → одна проблема
-            var p = Assert.Single(Scanner(svcs,
-                path => path.EndsWith("bad", StringComparison.Ordinal) ? throw new IOException("boom") : Drifting).Scan(root));
-            Assert.Equal("good", p.Location);
+            // «голый» .sln без compose → нет узлов в графе → дрейф был бы осиротевшим (ревью #22 M4)
+            var svcs = new[] { new DiscoveredService("Lib", Path.Combine(root, "lib"), null) };
+            Assert.Empty(Scanner(svcs, _ => Drifting).Scan(root));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Broken_service_reports_coverage_not_silence()
+    {
+        var root = TempRoot();
+        try
+        {
+            // «bad» бросает при разборе → не молчим: Coverage-проблема; «good» дрейфит → Info
+            var problems = Scanner([Svc(root, "bad"), Svc(root, "good")],
+                path => path.EndsWith("bad", StringComparison.Ordinal) ? throw new IOException("boom") : Drifting).Scan(root);
+
+            Assert.Contains(problems, p => p is { Kind: "drift-scan-failed", Severity: ProblemSeverity.Coverage }
+                && p.Location == "bad");
+            Assert.Contains(problems, p => p is { Kind: "drift", Severity: ProblemSeverity.Info } && p.Location == "good");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Multiple_drifting_services_deterministic_order()
+    {
+        var root = TempRoot();
+        try
+        {
+            var problems = Scanner([Svc(root, "a"), Svc(root, "b"), Svc(root, "c")], _ => Drifting).Scan(root);
+            Assert.Equal(new[] { "a", "b", "c" }, problems.Select(p => p.Location)); // порядок = порядок discovery
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Empty_discovery_yields_empty()
+    {
+        var root = TempRoot();
+        try { Assert.Empty(Scanner([], _ => Drifting).Scan(root)); }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Cancellation_is_observed()
+    {
+        var root = TempRoot();
+        try
+        {
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            Assert.Throws<OperationCanceledException>(
+                () => Scanner([Svc(root, "a")], _ => Drifting).Scan(root, cts.Token));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -76,7 +123,6 @@ public class DriftScannerTests
     [Fact]
     public void Missing_root_yields_empty()
     {
-        var svcs = new[] { new DiscoveredService("X", "/x", null) };
-        Assert.Empty(Scanner(svcs, _ => Drifting).Scan("/no/such/root/archforge-xyz"));
+        Assert.Empty(Scanner([Svc("/x", "a")], _ => Drifting).Scan("/no/such/root/archforge-xyz"));
     }
 }
