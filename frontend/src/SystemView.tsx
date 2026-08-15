@@ -10,7 +10,7 @@ import './system.css';
 
 import { fetchSystem, type SystemGraph } from './system';
 import { buildSystemFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
-import { layoutElk } from './elkLayout';
+import { gridLayout } from './gridLayout';
 import { RoutedEdge } from './RoutedEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
@@ -350,22 +350,12 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Полный граф → узлы/рёбра (сетка-заглушка). ELK считает раскладку один раз на проект (не на фильтр).
+  // Полный граф → узлы/рёбра, затем детерминированная сетка (ряды сервисов + спутники под ними). Один раз на проект.
   const fullFlow = useMemo(
     () => (graph ? buildSystemFlow(graph) : { nodes: [] as Node[], edges: [] as Edge[] }),
     [graph],
   );
-  const [laid, setLaid] = useState(fullFlow); // раскладка ELK (позиции + маршруты)
-  const [layouting, setLayouting] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    setLayouting(true);
-    layoutElk(fullFlow.nodes, fullFlow.edges)
-      .then((r) => { if (!cancelled) setLaid(r); })
-      .catch(() => { if (!cancelled) setLaid(fullFlow); })
-      .finally(() => { if (!cancelled) setLayouting(false); });
-    return () => { cancelled = true; };
-  }, [fullFlow]);
+  const laid = useMemo(() => gridLayout(fullFlow.nodes, fullFlow.edges), [fullFlow]);
 
   // Фильтр вида поверх готовой раскладки — мгновенно, без перераскладки.
   const flow = useMemo(
@@ -515,7 +505,6 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
         <span className={`status__health health-${graph?.health ?? 'none'}`}>{graph?.health ?? '—'}</span>
         <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}</span>
         <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
-        {layouting && <span>раскладка…</span>}
         <span className="status__lens">
           линза «{lens === 'architecture' ? 'реальные проблемы' : 'дрейф'}»: {lensProblems.length}
         </span>
