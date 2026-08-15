@@ -1,0 +1,153 @@
+/* L0 System Overview — тёмная оболочка под макет. */
+.sysview {
+  --bg: #0d1117;
+  --panel: #12161d;
+  --card: #171d27;
+  --card-line: #263041;
+  --text: #c9d1d9;
+  --muted: #7c8698;
+  --ok: #57c78a;
+  --warn: #e0a13c;
+  --crit: #e5534b;
+  --cover: #8a94a6;
+  --accent: #4aa3df;
+
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+/* --- крошки --- */
+.sysview__top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--card-line);
+}
+.crumb--root { font-weight: 600; }
+.crumbs { color: var(--muted); }
+.crumbs b { color: var(--text); }
+.sysview__exit {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--card-line);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+/* --- тело: панель · доска · инспектор --- */
+.sysview__body { flex: 1; display: flex; min-height: 0; }
+.panel {
+  width: 210px;
+  flex: none;
+  background: var(--panel);
+  padding: 12px;
+  overflow-y: auto;
+}
+.panel--view { border-right: 1px solid var(--card-line); }
+.panel--inspector { border-left: 1px solid var(--card-line); }
+.panel__title { font-size: 11px; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 12px; }
+.panel__group { margin-bottom: 16px; }
+.panel__label { font-size: 10px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
+.panel__empty { color: var(--muted); font-style: italic; }
+.opt { display: flex; align-items: center; gap: 7px; padding: 3px 0; cursor: pointer; }
+.legend { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--muted); }
+.legend__line { width: 22px; height: 0; border-top: 2px solid; }
+.legend__line--db { border-color: var(--ok); }
+.legend__line--http { border-color: var(--warn); border-top-style: dashed; }
+.legend__line--bus { border-color: #9b8cff; border-top-style: dashed; }
+
+/* --- доска --- */
+.sysview__board { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.sysview__load { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--card-line); }
+.sysview__load input {
+  flex: 1; background: var(--card); border: 1px solid var(--card-line);
+  color: var(--text); border-radius: 6px; padding: 6px 10px;
+}
+.sysview__load button {
+  background: var(--accent); border: none; color: #06121c;
+  border-radius: 6px; padding: 6px 16px; font-weight: 600; cursor: pointer;
+}
+.sysview__load button:disabled { opacity: 0.5; cursor: default; }
+.sysview__error { padding: 8px 12px; color: var(--crit); }
+.sysview__flow { flex: 1; min-height: 0; }
+.sysview .react-flow { background: var(--bg); }
+
+/* --- статус-бар --- */
+.sysview__status {
+  display: flex; gap: 20px; align-items: center;
+  padding: 6px 14px; border-top: 1px solid var(--card-line);
+  color: var(--muted); font-size: 12px;
+}
+.status__health { text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+.status__lens { margin-left: auto; }
+.health-ok { color: var(--ok); }
+.health-warning { color: var(--warn); }
+.health-critical { color: var(--crit); }
+.health-none { color: var(--muted); }
+
+/* --- карточка сервиса --- */
+.svc-card {
+  width: 232px; background: var(--card);
+  border: 1px solid var(--card-line); border-radius: 10px; overflow: hidden;
+}
+.svc-card.health-warning { border-color: rgba(224, 161, 60, 0.5); }
+.svc-card.health-critical { border-color: rgba(229, 83, 75, 0.6); }
+.svc-card.is-selected { box-shadow: 0 0 0 2px var(--accent); }
+.svc-card__head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 11px; border-bottom: 1px solid var(--card-line);
+}
+.svc-card__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.svc-card__name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.svc-card__badges { margin-left: auto; display: flex; gap: 4px; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; }
+.badge--critical { background: rgba(229, 83, 75, 0.18); color: var(--crit); }
+.badge--warning { background: rgba(224, 161, 60, 0.18); color: var(--warn); }
+.badge--coverage { background: rgba(138, 148, 166, 0.18); color: var(--cover); }
+.svc-card__layers { padding: 4px 0; }
+.svc-layer {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 11px; font-size: 12px;
+}
+.svc-layer__name { flex: none; min-width: 92px; }
+.svc-layer__note { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.svc-layer__mark { margin-left: auto; }
+.svc-layer.health-ok .svc-layer__mark { color: var(--ok); }
+.svc-layer.health-warning { color: var(--warn); }
+.svc-layer.health-critical { color: var(--crit); }
+.svc-card__foot { padding: 7px 11px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--card-line); }
+
+/* --- инфра-узел --- */
+.infra-node {
+  display: flex; align-items: center; gap: 9px; width: 178px;
+  background: var(--card); border: 1px solid var(--card-line);
+  border-radius: 9px; padding: 9px 11px;
+}
+.infra-node.health-warning { border-color: rgba(224, 161, 60, 0.5); }
+.infra-node.is-selected { box-shadow: 0 0 0 2px var(--accent); }
+.infra-node__icon { font-size: 15px; color: var(--muted); }
+.infra-node__body { display: flex; flex-direction: column; min-width: 0; }
+.infra-node__name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.infra-node__kind { font-size: 11px; color: var(--muted); }
+.infra-node__dot { width: 8px; height: 8px; border-radius: 50%; margin-left: auto; flex: none; }
+.infra-node__badge { font-size: 11px; color: var(--warn); }
+
+/* --- инспектор --- */
+.inspector__name { font-weight: 600; margin-bottom: 10px; }
+.inspector__layers { list-style: none; margin: 0 0 12px; padding: 0; }
+.inspector__layers li { display: flex; flex-direction: column; padding: 3px 0; }
+.inspector__layers em { color: var(--muted); font-size: 11px; }
+.inspector__sub { font-size: 10px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
+.inspector__problems { list-style: none; margin: 0; padding: 0; }
+.inspector__problems li { padding: 5px 0; border-top: 1px solid var(--card-line); font-size: 12px; }
+.inspector__problems b { color: var(--accent); margin-right: 4px; }
+.sev-critical b { color: var(--crit); }
+.sev-warning b { color: var(--warn); }
