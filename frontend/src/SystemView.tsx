@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow, ReactFlowProvider, useReactFlow, useNodesState, useEdgesState,
   Background, Controls, MiniMap, type Edge, type Node,
@@ -12,17 +12,24 @@ import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
 
 const nodeTypes = { sys: SystemNodeView };
-const GRID = 20; // шаг сетки: точки фона + привязка при перетаскивании
+const GRID = 20; // шаг сетки: точки фона + шаг магнита
+// Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
+const MAGNET_SPEED = 0.45;
 
-/** Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре. */
-function Flow({ flow, snap, onSelect, onClear }: {
+/**
+ * Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре.
+ * Магнит к сетке — по инерции: тянешь медленно → snapToGrid включается, быстро → свободно.
+ */
+function Flow({ flow, magnet, onSelect, onClear }: {
   flow: { nodes: Node[]; edges: Edge[] };
-  snap: boolean;
+  magnet: boolean;
   onSelect: (n: Node) => void;
   onClear: () => void;
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
+  const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
+  const last = useRef<{ x: number; y: number; t: number } | null>(null);
   const rf = useReactFlow();
 
   useEffect(() => {
@@ -33,6 +40,19 @@ function Flow({ flow, snap, onSelect, onClear }: {
     return () => clearTimeout(t);
   }, [flow, setNodes, setEdges, rf]);
 
+  // Скорость указателя за кадр → включаем/выключаем притяжение к сетке во время перетаскивания.
+  const onNodeDrag = useCallback((e: MouseEvent | TouchEvent) => {
+    const p = 'clientX' in e ? e : e.touches[0];
+    if (!p) return;
+    const t = performance.now();
+    const prev = last.current;
+    last.current = { x: p.clientX, y: p.clientY, t };
+    if (!prev || t <= prev.t) return;
+    const speed = Math.hypot(p.clientX - prev.x, p.clientY - prev.y) / (t - prev.t);
+    const want = speed < MAGNET_SPEED; // медленно → магнит
+    setSnapNow((cur) => (cur === want ? cur : want));
+  }, []);
+
   return (
     <ReactFlow
       nodes={nodes}
@@ -41,8 +61,11 @@ function Flow({ flow, snap, onSelect, onClear }: {
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       minZoom={0.08}
-      snapToGrid={snap}
+      snapToGrid={magnet && snapNow}
       snapGrid={[GRID, GRID]}
+      onNodeDragStart={() => { last.current = null; }}
+      onNodeDrag={onNodeDrag}
+      onNodeDragStop={() => { last.current = null; setSnapNow(false); }}
       onNodeClick={(_, n) => onSelect(n)}
       onPaneClick={onClear}
     >
@@ -92,7 +115,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
   const [minConfidence, setMinConfidence] = useState(0);
   const [hideIsolated, setHideIsolated] = useState(false);
-  const [snap, setSnap] = useState(false); // привязка к сетке — по требованию, не постоянно
+  const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
 
   const load = useCallback(async () => {
     const path = pathInput.trim();
@@ -185,9 +208,10 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               без одиночек
             </label>
             <label className="opt">
-              <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} />
-              привязка к сетке
+              <input type="checkbox" checked={magnet} onChange={(e) => setMagnet(e.target.checked)} />
+              магнит к сетке
             </label>
+            <div className="panel__hint">медленно тянешь — притягивает к точкам, быстро — свободно</div>
           </div>
         </aside>
 
@@ -204,7 +228,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           {error && <div className="sysview__error">{error}</div>}
           <div className="sysview__flow">
             <ReactFlowProvider>
-              <Flow flow={flow} snap={snap} onSelect={setSelected} onClear={() => setSelected(null)} />
+              <Flow flow={flow} magnet={magnet} onSelect={setSelected} onClear={() => setSelected(null)} />
             </ReactFlowProvider>
           </div>
         </main>
