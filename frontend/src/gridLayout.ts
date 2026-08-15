@@ -5,9 +5,9 @@ import type { Edge, Node } from '@xyflow/react';
 import { isInfra, type SystemNodeData } from './systemFlow';
 
 const CORE_W = 236, SAT_W = 190, SAT_H = 54;
-const GAP = 26;        // зазор внутри юнита
-const COL_GAP = 90;    // между юнитами по горизонтали
-const ROW_GAP = 80;    // между рядами юнитов
+const GAP = 40;        // зазор внутри юнита (сервис ↔ спутники, спутник ↔ спутник)
+const COL_GAP = 140;   // между юнитами по горизонтали
+const ROW_GAP = 130;   // между рядами юнитов
 const SAT_COLS = 2;    // спутники под сервисом в 2 колонки
 
 const nameOf = (n: Node) => (n.data as SystemNodeData).node.name;
