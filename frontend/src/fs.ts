@@ -15,6 +15,18 @@ export interface FsListing {
 
 const TIMEOUT_MS = 15_000;
 
+/** Текущая git-ветка открытого проекта (`GET /api/git`) — для статус-бара. null → нет репо/detached. */
+export async function fetchGitBranch(path: string): Promise<string | null> {
+  try {
+    const res = await fetchWithTimeout(`/api/git?path=${encodeURIComponent(path)}`, 8000);
+    if (!res.ok) return null;
+    const d = (await res.json()) as { branch?: string | null };
+    return d.branch ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function browseFs(path?: string): Promise<FsListing> {
   const q = path ? `?path=${encodeURIComponent(path)}` : '';
   const res = await fetchWithTimeout(`/api/fs${q}`, TIMEOUT_MS);

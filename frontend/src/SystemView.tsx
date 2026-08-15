@@ -16,6 +16,7 @@ import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
 import { repoColor } from './theme';
 import { FolderPicker } from './FolderPicker';
+import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
 
 const nodeTypes = { sys: SystemNodeView };
@@ -350,6 +351,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
   const [loadedPath, setLoadedPath] = useState(''); // путь загруженного проекта — ключ раскладки
+  const [branch, setBranch] = useState<string | null>(null); // git-ветка открытого проекта
   const [saved, setSaved] = useState(true);         // раскладка совпадает с сохранённой
   const [menuOpen, setMenuOpen] = useState(false);  // выпадающее меню проекта
   const [pickerOpen, setPickerOpen] = useState(false); // модалка выбора папки
@@ -371,6 +373,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       setLoadedPath(path);
       setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
       setRecents((prev) => pushRecent(prev, { path, name: g.project, nodes: g.nodes.length, at: Date.now() }));
+      void fetchGitBranch(path).then(setBranch); // git-ветка для статус-бара (не блокирует)
       try { localStorage.setItem('af_path', path); } catch { /* quota */ }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -391,6 +394,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const closeProject = useCallback(() => {
     setGraph(null);
     setLoadedPath('');
+    setBranch(null);
     setSelected(null);
     try { localStorage.removeItem('af_path'); } catch { /* ignore */ }
   }, []);
@@ -686,6 +690,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       <footer className="sysview__status">
         <span className={`status__health health-${graph?.health ?? 'none'}`}>{graph?.health ?? '—'}</span>
         {graph && <span className="status__proj">{graph.project}</span>}
+        {branch && <span className="status__branch"><Icon name="branch" size={13} /> {branch}</span>}
         {graph && <span className="status__ok">✓ анализ актуален</span>}
         <span className="status__right">
           <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}</span>

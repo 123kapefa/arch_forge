@@ -259,6 +259,7 @@
 }
 .status__health { text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
 .status__proj { color: var(--text); font-weight: 600; }
+.status__branch { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
 .status__ok { color: var(--ok); }
 .status__right { margin-left: auto; display: flex; gap: 16px; align-items: center; }
 .health-ok { color: var(--ok); }
