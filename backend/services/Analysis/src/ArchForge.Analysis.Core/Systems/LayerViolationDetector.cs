@@ -17,18 +17,11 @@ public static class LayerViolationDetector
                 continue;
             }
 
-            // имя типа → слой; НЕОДНОЗНАЧНЫЕ имена (один тип в РАЗНЫХ слоях) исключаем — не судим:
-            // ребро адресуется простым именем, «угадать» экземпляр нельзя → детерминизм + без ложных (adr/0008).
-            var layerOf = result.Types
-                .GroupBy(t => t.Name, StringComparer.Ordinal)
-                .Where(g => g.Select(t => t.Layer).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
-                .ToDictionary(g => g.Key, g => g.First().Layer, StringComparer.Ordinal);
+            var layerOf = LayerGraph.LayerByName(result.Types);
 
             // уникальные пары From→To: несколько видов рёбер (implements+uses) между теми же типами = один факт
-            var violations = result.Edges
-                .Where(e => layerOf.TryGetValue(e.From, out var fl) && layerOf.TryGetValue(e.To, out var tl)
-                            && LayerRules.IsViolation(fl, tl))
-                .Select(e => (e.From, e.To))
+            var violations = LayerGraph.Violations(result.Edges, layerOf)
+                .Select(v => (v.Edge.From, v.Edge.To))
                 .Distinct()
                 .ToList();
             if (violations.Count == 0) continue;

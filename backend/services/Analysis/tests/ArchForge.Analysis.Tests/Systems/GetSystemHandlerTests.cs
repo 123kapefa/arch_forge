@@ -151,6 +151,9 @@ public class GetSystemHandlerTests
             var on = handler.Handle(new GetSystemQuery(dir, Layers: true));
             var summary = Assert.Single(on!.Services!);
             Assert.Contains(summary.Layers, l => l.Name == "Domain");
+
+            // сводка приходит и по линзе дрейфа (не только слоёв)
+            Assert.NotNull(handler.Handle(new GetSystemQuery(dir, Drift: true))!.Services);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

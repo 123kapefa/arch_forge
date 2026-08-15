@@ -32,6 +32,44 @@ public class ServiceSummaryBuilderTests
     }
 
     [Fact]
+    public void Drift_does_not_color_layer_health()
+    {
+        // High-фикс ревью #26: дрейф — конвенция, НЕ красит health (инвариант линз, adr/0008), только заметка.
+        RawType[] raw = [new("RegisterHandler", "class", [], "(Dep d)", "Application", "app.cs")]; // дрейф в Application
+        var s = Assert.Single(ServiceSummaryBuilder.Build([Svc("s", raw)]));
+
+        var app = s.Layers.Single(l => l.Name == "Application");
+        Assert.Equal("ok", app.Health);            // дрейф не красит health
+        Assert.Contains("расхождений", app.Note);   // но виден в заметке
+        Assert.Equal("ok", s.Health);               // и сервис не warning из-за одного дрейфа
+    }
+
+    [Fact]
+    public void Unknown_role_in_note_not_health()
+    {
+        RawType[] raw = [new("Thing", "class", [], "()", "Domain", "d.cs")]; // класс без роли/маркера → via unknown
+        var s = Assert.Single(ServiceSummaryBuilder.Build([Svc("s", raw)]));
+
+        var domain = s.Layers.Single(l => l.Name == "Domain");
+        Assert.Equal("ok", domain.Health);          // coverage не красит health
+        Assert.Contains("без роли", domain.Note);
+    }
+
+    [Fact]
+    public void Ambiguous_type_name_across_layers_no_false_violation()
+    {
+        // одноимённый тип в двух слоях неоднозначен → не участвует в нарушении → без ложного warning
+        RawType[] raw =
+        [
+            new("Foo", "class", [], "(Result r)", "Application", "Foo.cs"),
+            new("Result", "class", [], "()", "Domain", "domain/Result.cs"),
+            new("Result", "class", [], "()", "Infrastructure", "infra/Result.cs"),
+        ];
+        var s = Assert.Single(ServiceSummaryBuilder.Build([Svc("s", raw)]));
+        Assert.All(s.Layers, l => Assert.Equal("ok", l.Health));
+    }
+
+    [Fact]
     public void Clean_service_is_all_ok()
     {
         RawType[] raw =

@@ -5,6 +5,8 @@ namespace ArchForge.Analysis.Core.Systems;
 
 // L0-сводка по найденным сервисам (.sln): карточка со слоями + здоровье каждого слоя (превью L1).
 // Агрегирует ТОТ ЖЕ per-service Roslyn-анализ (ServiceAnalysis), что и код-линзы — без второго прохода.
+// Ограничение: карточка только у сервисов С compose (ServiceAnalyzer фильтрует их — у остальных нет узлов
+// в системном графе, к которым привязать карточку); .sln-библиотека без compose в сводку не попадает.
 public static class ServiceSummaryBuilder
 {
     // Канонический порядок слоёв чистой архитектуры (внешние сверху карточки → внутренние вниз).
@@ -25,17 +27,13 @@ public static class ServiceSummaryBuilder
 
     private static IReadOnlyList<LayerSummaryDto> BuildLayers(AnalysisResult result)
     {
-        // имя типа → слой; неоднозначные (один тип в разных слоях) исключаем (как в LayerViolationDetector)
-        var layerOf = result.Types
-            .GroupBy(t => t.Name, StringComparer.Ordinal)
-            .Where(g => g.Select(t => t.Layer).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
-            .ToDictionary(g => g.Key, g => g.First().Layer, StringComparer.Ordinal);
+        var layerOf = LayerGraph.LayerByName(result.Types);
 
-        // слой-источник → внешний слой-цель, если есть нарушение направления
+        // слой-источник → внешний слой-цель нарушения; берём МИНИМАЛЬНЫЙ по Ordinal — детерминизм заметки
         var violationTo = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var e in result.Edges)
-            if (layerOf.TryGetValue(e.From, out var fl) && layerOf.TryGetValue(e.To, out var tl) && LayerRules.IsViolation(fl, tl))
-                violationTo.TryAdd(fl, tl);
+        foreach (var (_, fl, tl) in LayerGraph.Violations(result.Edges, layerOf))
+            if (!violationTo.TryGetValue(fl, out var cur) || string.CompareOrdinal(tl, cur) < 0)
+                violationTo[fl] = tl;
 
         var layers = new List<LayerSummaryDto>();
         foreach (var g in result.Types
@@ -48,8 +46,9 @@ public static class ServiceSummaryBuilder
             var unknownRole = types.Count(t => string.Equals(t.Via, "unknown", StringComparison.Ordinal));
             var hasViolation = violationTo.TryGetValue(g.Key, out var toLayer);
 
-            // нарушение слоя / дрейф → warning; только coverage (роль unknown) не портит health, но в заметке
-            var health = hasViolation || driftCount > 0 ? "warning" : "ok";
+            // ТОЛЬКО нарушение направления слоя красит health (реальная арх-проблема). Дрейф и роль-unknown —
+            // конвенции/покрытие: показываем в заметке, но health НЕ портим (adr/0008, инвариант линз).
+            var health = hasViolation ? "warning" : "ok";
             var note = hasViolation ? $"{name} → {Canonical(toLayer!)} · нарушение слоя"
                 : driftCount > 0 ? $"{driftCount} расхождений со сводом"
                 : unknownRole > 0 ? $"{unknownRole} тип(ов) без роли"
