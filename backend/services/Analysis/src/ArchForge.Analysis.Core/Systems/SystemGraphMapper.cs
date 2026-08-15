@@ -6,17 +6,25 @@ namespace ArchForge.Analysis.Core.Systems;
 // Узлы service/datastore/topic/external; рёбра с Via/Confidence; проблемы → ProblemDto; здоровье — из проблем.
 public static class SystemGraphMapper
 {
-    public static GraphDto ToDto(SystemGraph g, string project)
+    public static GraphDto ToDto(SystemGraph g, string project,
+        IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null)
     {
         // здоровье узла — по самой суровой проблеме, где он location (Critical=0 < Warning=1 < Coverage=2)
         var worstByLocation = g.Problems
             .GroupBy(p => p.Location, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.Min(p => (int)p.Severity), StringComparer.Ordinal);
 
-        var nodes = g.Nodes.Select(n => new NodeDto(
-            n.Id, n.Name, KindString(n.Kind), Layer: "", Role: "", Via: "", File: "", Drift: [],
-            Level: LevelOf(n.Kind),
-            Health: worstByLocation.TryGetValue(n.Id, out var sev) ? HealthOf(sev) : "ok")).ToList();
+        var nodes = g.Nodes.Select(n =>
+        {
+            var problemHealth = worstByLocation.TryGetValue(n.Id, out var sev) ? HealthOf(sev) : "ok";
+            // слои микросервиса (L0: «внутри сервиса — слои») + их здоровье учитываем в health узла
+            var layers = nodeLayers is not null && nodeLayers.TryGetValue(
+                MicroserviceLayerBuilder.NodeKey(n.Id, n.Name), out var entry) ? entry : null;
+            var health = layers is null ? problemHealth : Worse(problemHealth, layers.Health);
+            return new NodeDto(
+                n.Id, n.Name, KindString(n.Kind), Layer: "", Role: "", Via: "", File: "", Drift: [],
+                Level: LevelOf(n.Kind), Health: health, Layers: layers?.Layers);
+        }).ToList();
 
         var edges = g.Edges.Select(e => new EdgeDto(
             $"{e.Source}-{e.Kind}->{e.Target}", e.Source, e.Target, e.Kind,
@@ -68,4 +76,7 @@ public static class SystemGraphMapper
 
     // health красит только critical/warning; coverage и info (дрейф) — не красят узел
     private static string HealthOf(int worstSeverity) => worstSeverity switch { 0 => "critical", 1 => "warning", _ => "ok" };
+
+    private static int HealthRank(string h) => h switch { "critical" => 0, "warning" => 1, _ => 2 };
+    private static string Worse(string a, string b) => HealthRank(a) <= HealthRank(b) ? a : b;
 }

@@ -45,7 +45,9 @@ public sealed record NodeDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     string? Health = null,                                 // ok | warning | critical
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<MemberDto>? Members = null);             // члены type-узла (эндпоинты контроллера и т.п.)
+    IReadOnlyList<MemberDto>? Members = null,              // члены type-узла (эндпоинты контроллера и т.п.)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<LayerSummaryDto>? Layers = null);       // слои сервиса-узла (L0: «внутри сервиса — слои»)
 
 public sealed record EdgeDto(
     string Id,

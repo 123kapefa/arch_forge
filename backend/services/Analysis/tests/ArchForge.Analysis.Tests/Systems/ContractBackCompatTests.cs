@@ -107,6 +107,23 @@ public class ContractBackCompatTests
     }
 
     [Fact]
+    public void Node_layers_round_trip()
+    {
+        var node = new NodeDto("svc", "catalog-api", "service", "", "", "", "", [],
+            Level: "service", Health: "warning",
+            Layers: [new LayerSummaryDto("Application", "warning", 44, Note: "Application → Infrastructure")]);
+
+        var back = JsonSerializer.Deserialize<NodeDto>(JsonSerializer.Serialize(node, Web), Web)!;
+
+        var layer = Assert.Single(back.Layers!);
+        Assert.Equal("Application", layer.Name);
+        Assert.Equal(44, layer.Types);
+        // без слоёв поле опускается (Ф1-совместимость)
+        Assert.DoesNotContain("layers", JsonSerializer.Serialize(
+            new NodeDto("n", "N", "class", "Domain", "Aggregate", "marker", "N.cs", []), Web));
+    }
+
+    [Fact]
     public void Services_omitted_when_null()
     {
         var json = JsonSerializer.Serialize(new GraphDto("s", [], [], new CoverageDto(0, 0, 0, 0), []), Web);

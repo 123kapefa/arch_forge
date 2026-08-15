@@ -26,6 +26,7 @@ export interface SystemNode {
   drift?: string[];
   service?: string;
   members?: SystemMember[];
+  layers?: LayerSummary[]; // слои сервиса-узла (L0: «внутри сервиса — слои»)
 }
 
 export interface SystemMember {

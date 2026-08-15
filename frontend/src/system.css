@@ -115,6 +115,33 @@
 .sys-node__sub { font-size: 11px; color: var(--muted); }
 .sys-node__badge { font-size: 11px; color: var(--warn); flex: none; }
 
+/* --- карточка сервиса со слоями (L0) --- */
+.svc-card {
+  width: 236px; background: var(--card);
+  border: 1px solid var(--card-line); border-radius: 10px; overflow: hidden;
+}
+.svc-card.health-warning { border-color: rgba(224, 178, 74, 0.5); }
+.svc-card.health-critical { border-color: rgba(229, 72, 77, 0.6); }
+.svc-card.is-selected { box-shadow: 0 0 0 2px var(--accent); }
+.svc-card__head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 11px; border-bottom: 1px solid var(--card-line);
+}
+.svc-card__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.svc-card__name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.svc-card__head .badge { margin-left: auto; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; }
+.badge--warning { background: rgba(224, 178, 74, 0.18); color: var(--warn); }
+.svc-card__layers { padding: 3px 0; }
+.svc-layer { display: flex; align-items: center; gap: 8px; padding: 3px 11px; font-size: 12px; }
+.svc-layer__name { flex: none; min-width: 96px; }
+.svc-layer__note { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.svc-layer__mark { margin-left: auto; }
+.svc-layer.health-ok .svc-layer__mark { color: var(--ok); }
+.svc-layer.health-warning { color: var(--warn); }
+.svc-layer.health-critical { color: var(--crit); }
+.svc-card__foot { padding: 6px 11px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--card-line); }
+
 /* --- инспектор --- */
 .inspector__name { font-weight: 600; }
 .inspector__kind { color: var(--muted); font-size: 11px; margin-bottom: 12px; }

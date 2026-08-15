@@ -56,21 +56,31 @@ export function edgeKindsOf(g: SystemGraph): string[] {
   return [...new Set(g.edges.map((e) => e.kind))].sort();
 }
 
+// Размер узла: карточка со слоями выше/шире компактной плашки — dagre должен это учесть.
+function nodeSize(n: Node): { w: number; h: number } {
+  const d = n.data as SystemNodeData;
+  const layers = d.node.layers;
+  if (d.node.kind === 'service' && layers && layers.length > 0) {
+    return { w: 236, h: 42 + layers.length * 25 + 26 }; // head + строки-слои + footer
+  }
+  return { w: 190, h: 56 };
+}
+
 // Раскладка dagre сверху-вниз: поток вызовов/зависимостей как в Blueprints (внешние → сервисы → инфра).
-const NODE_W = 190;
-const NODE_H = 56;
 function layout(nodes: Node[], edges: Edge[]): Node[] {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: 38, ranksep: 82 });
-  nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
+  g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 90 });
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n)]));
+  nodes.forEach((n) => g.setNode(n.id, size.get(n.id)!));
   edges.forEach((e) => g.setEdge(e.source, e.target));
   dagre.layout(g);
   return nodes.map((n) => {
     const p = g.node(n.id);
+    const s = size.get(n.id)!;
     return {
       ...n,
-      position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 },
+      position: { x: p.x - s.w / 2, y: p.y - s.h / 2 },
       targetPosition: Position.Top,
       sourcePosition: Position.Bottom,
     };
