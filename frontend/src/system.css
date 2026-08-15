@@ -173,7 +173,19 @@
 }
 .panel--view { border-right: 1px solid var(--card-line); }
 .panel--inspector { border-left: 1px solid var(--card-line); }
-.panel__title { font-size: 11px; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 12px; }
+/* --- сворачивание боковых панелей --- */
+.panel.is-collapsed { width: 34px; padding: 8px 0; overflow: visible; }
+.panel__title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 12px;
+}
+.panel__toggle {
+  margin-left: auto; background: transparent; border: 1px solid var(--card-line);
+  color: var(--muted); border-radius: 6px; padding: 3px; cursor: pointer;
+  display: inline-flex; align-items: center;
+}
+.panel__toggle:hover { border-color: var(--accent); color: var(--text); }
+.panel__toggle--open { margin: 0 auto; }
 .panel__group { margin-bottom: 16px; }
 .panel__label { font-size: 10px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
 .panel__empty { color: var(--muted); font-style: italic; }
@@ -195,6 +207,18 @@
 .sysview__empty b { color: var(--text); }
 .sysview__flow { flex: 1; min-height: 0; }
 .sysview .react-flow { background: var(--bg); }
+
+/* --- тёмные контролы/миникарта React Flow (под тему) --- */
+.sysview .react-flow__controls { box-shadow: none; display: flex; flex-direction: column; gap: 8px; }
+.sysview .react-flow__controls-button {
+  width: 34px; height: 34px; box-shadow: none;
+  background: var(--card); border: 1px solid var(--card-line); border-radius: 9px;
+  color: var(--text);
+}
+.sysview .react-flow__controls-button:hover { background: var(--panel); border-color: var(--accent); }
+.sysview .react-flow__controls-button svg { fill: currentColor; }
+.sysview .react-flow__minimap { background: var(--card); border: 1px solid var(--card-line); border-radius: 10px; }
+.sysview .react-flow__attribution { background: transparent; color: var(--muted); opacity: 0.4; }
 
 /* --- статус-бар --- */
 .sysview__status {

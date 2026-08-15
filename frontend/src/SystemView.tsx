@@ -145,7 +145,7 @@ const Flow = forwardRef<FlowHandle, {
     >
       <Background gap={GRID} />
       <Controls />
-      <MiniMap pannable zoomable />
+      <MiniMap pannable zoomable nodeColor="#3a4658" maskColor="rgba(11,15,23,0.6)" />
     </ReactFlow>
   );
 });
@@ -341,6 +341,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [hideIsolated, setHideIsolated] = useState(false);
   const [hideTests, setHideTests] = useState(false);
   const [problemsOpen, setProblemsOpen] = useState(false); // нижняя панель «Проблемы проекта»
+  const [leftOpen, setLeftOpen] = useState(true);   // панель ВИД
+  const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
   const [loadedPath, setLoadedPath] = useState(''); // путь загруженного проекта — ключ раскладки
   const [saved, setSaved] = useState(true);         // раскладка совпадает с сохранённой
@@ -494,8 +496,17 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       </header>
 
       <div className="sysview__body">
-        <aside className="panel panel--view">
-          <div className="panel__title">ВИД</div>
+        <aside className={`panel panel--view ${leftOpen ? '' : 'is-collapsed'}`}>
+          {!leftOpen ? (
+            <button className="panel__toggle panel__toggle--open" onClick={() => setLeftOpen(true)} title="Показать ВИД">
+              <Icon name="chevronRight" size={16} />
+            </button>
+          ) : (
+          <>
+          <div className="panel__title">
+            ВИД
+            <button className="panel__toggle" onClick={() => setLeftOpen(false)} title="Скрыть"><Icon name="chevronLeft" size={14} /></button>
+          </div>
           <div className="panel__group">
             <div className="panel__label">ЛИНЗА</div>
             <label className="opt">
@@ -559,6 +570,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               ))}
             </div>
           )}
+          </>
+          )}
         </aside>
 
         <main className="sysview__board">
@@ -585,11 +598,22 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           </div>
         </main>
 
-        <aside className="panel panel--inspector">
-          <div className="panel__title">ИНСПЕКТОР</div>
-          {selected && graph
-            ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />
-            : <div className="panel__empty">кликните узел</div>}
+        <aside className={`panel panel--inspector ${rightOpen ? '' : 'is-collapsed'}`}>
+          {!rightOpen ? (
+            <button className="panel__toggle panel__toggle--open" onClick={() => setRightOpen(true)} title="Показать инспектор">
+              <Icon name="chevronLeft" size={16} />
+            </button>
+          ) : (
+            <>
+              <div className="panel__title">
+                ИНСПЕКТОР
+                <button className="panel__toggle" onClick={() => setRightOpen(false)} title="Скрыть"><Icon name="chevronRight" size={14} /></button>
+              </div>
+              {selected && graph
+                ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />
+                : <div className="panel__empty">кликните узел</div>}
+            </>
+          )}
         </aside>
       </div>
 
