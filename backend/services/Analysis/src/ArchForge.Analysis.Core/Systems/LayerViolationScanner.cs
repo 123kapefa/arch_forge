@@ -17,19 +17,24 @@ public sealed class LayerViolationScanner(ServiceAnalyzer analyzer)
                 continue;
             }
 
-            // имя типа → слой (дубли имён → первый: честная деградация, а не падение)
+            // имя типа → слой; НЕОДНОЗНАЧНЫЕ имена (один тип в РАЗНЫХ слоях) исключаем — не судим:
+            // ребро адресуется простым именем, «угадать» экземпляр нельзя → детерминизм + без ложных (adr/0008).
             var layerOf = result.Types
                 .GroupBy(t => t.Name, StringComparer.Ordinal)
+                .Where(g => g.Select(t => t.Layer).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
                 .ToDictionary(g => g.Key, g => g.First().Layer, StringComparer.Ordinal);
 
+            // уникальные пары From→To: несколько видов рёбер (implements+uses) между теми же типами = один факт
             var violations = result.Edges
                 .Where(e => layerOf.TryGetValue(e.From, out var fl) && layerOf.TryGetValue(e.To, out var tl)
                             && LayerRules.IsViolation(fl, tl))
+                .Select(e => (e.From, e.To))
+                .Distinct()
                 .ToList();
             if (violations.Count == 0) continue;
 
             var examples = string.Join("; ", violations.Take(3)
-                .Select(e => $"{e.From} ({layerOf[e.From]}) → {e.To} ({layerOf[e.To]})"));
+                .Select(v => $"{v.From} ({layerOf[v.From]}) → {v.To} ({layerOf[v.To]})"));
             problems.Add(new SystemProblem(ProblemSeverity.Warning, "layer-violation",
                 $"«{svc.Name}»: {violations.Count} нарушений направления слоёв. Напр.: {examples}",
                 location, ProblemCategory.Architecture));

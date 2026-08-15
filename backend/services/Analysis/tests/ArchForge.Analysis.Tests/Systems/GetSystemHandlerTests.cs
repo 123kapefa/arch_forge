@@ -116,6 +116,35 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    // Обе код-линзы одновременно: drift=true&layers=true мержит и convention, и architecture проблемы.
+    [Fact]
+    public void Drift_and_layers_together_add_both_lenses()
+    {
+        var dir = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "archforge_sysdl_" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            RawType[] raw =
+            [
+                new("Order", "class", [], "(PaymentGateway g)", "Domain", "Order.cs"),        // нарушение слоёв
+                new("PaymentGateway", "class", [], "()", "Infrastructure", "PaymentGateway.cs"),
+                new("RegisterHandler", "class", [], "(Dep d)", "Application", "RegisterHandler.cs"), // дрейф
+            ];
+            var source = new FakeSource(new SystemGraph([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []));
+            var discovery = new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]);
+            var classifier = new TypeClassifier(ConventionPack.Default());
+            var handler = new GetSystemHandler(source,
+                new DriftScanner(new ServiceAnalyzer(discovery, new FakeTypes(raw), classifier)),
+                new LayerViolationScanner(new ServiceAnalyzer(discovery, new FakeTypes(raw), classifier)));
+
+            var dto = handler.Handle(new GetSystemQuery(dir, Drift: true, Layers: true));
+
+            Assert.Contains(dto!.Problems!, p => p is { Kind: "drift", Category: ProblemCategory.Convention });
+            Assert.Contains(dto.Problems!, p => p is { Kind: "layer-violation", Category: ProblemCategory.Architecture });
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     // Дрейф гоняется только для пути-папки (Directory.Exists); путь-к-файлу compose не запускает разбор кода.
     [Fact]
     public void Drift_flag_ignored_for_file_path()

@@ -87,4 +87,41 @@ public class LayerViolationScannerTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    // Ревью #23 High #1: одноимённый тип в РАЗНЫХ слоях неоднозначен → слой не судим → без ложного нарушения.
+    [Fact]
+    public void Ambiguous_type_name_across_layers_is_not_judged()
+    {
+        RawType[] ambiguous =
+        [
+            new("Foo", "class", [], "(Result r)", "Application", "Foo.cs"), // ребро Foo→Result
+            new("Result", "class", [], "()", "Domain", "domain/Result.cs"),
+            new("Result", "class", [], "()", "Infrastructure", "infra/Result.cs"), // тот же тип в 2 слоях
+        ];
+        var root = TempRoot();
+        try { Assert.Empty(Scanner([Svc(root, "svc-a")], _ => ambiguous).Scan(root)); }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // Счётчик — полный, примеры урезаны до 3 (Take(3)).
+    [Fact]
+    public void Count_is_full_but_examples_truncated_to_three()
+    {
+        RawType[] four =
+        [
+            new("Hub", "class", [], "(A a, B b, C c, D d)", "Domain", "Hub.cs"), // 4 ребра в Infrastructure
+            new("A", "class", [], "()", "Infrastructure", "A.cs"),
+            new("B", "class", [], "()", "Infrastructure", "B.cs"),
+            new("C", "class", [], "()", "Infrastructure", "C.cs"),
+            new("D", "class", [], "()", "Infrastructure", "D.cs"),
+        ];
+        var root = TempRoot();
+        try
+        {
+            var p = Assert.Single(Scanner([Svc(root, "svc-a")], _ => four).Scan(root));
+            Assert.Contains("4 нарушений", p.Title);
+            Assert.Equal(3, p.Title.Split('→').Length - 1); // ровно 3 примера-стрелки
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }
