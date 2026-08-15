@@ -150,7 +150,7 @@ const Flow = forwardRef<FlowHandle, {
     >
       <Background gap={GRID} />
       <Controls />
-      <MiniMap pannable zoomable nodeColor="#3a4658" maskColor="rgba(11,15,23,0.6)" />
+      <MiniMap pannable zoomable nodeColor="#3a4658" maskColor="rgba(11,15,23,0.6)" style={{ width: 210, height: 168 }} />
     </ReactFlow>
   );
 });

@@ -217,7 +217,11 @@
 .sysview .react-flow { background: var(--bg); }
 
 /* --- тёмные контролы/миникарта React Flow (под тему) --- */
-.sysview .react-flow__controls { box-shadow: none; display: flex; flex-direction: column; gap: 8px; }
+/* контролы той же высоты, что миникарта (168px), кнопки распределены */
+.sysview .react-flow__controls {
+  box-shadow: none; display: flex; flex-direction: column;
+  height: 168px; justify-content: space-between;
+}
 .sysview .react-flow__controls-button {
   width: 34px; height: 34px; box-shadow: none;
   background: var(--card); border: 1px solid var(--card-line); border-radius: 9px;
