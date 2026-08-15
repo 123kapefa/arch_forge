@@ -25,7 +25,7 @@ const GRID = 20; // шаг сетки: точки фона + шаг магнит
 // Низкий порог = магнит только при явно медленном, «прицельном» движении, а не при обычном перетаскивании.
 const MAGNET_SPEED = 0.05;
 
-export type FlowHandle = { save: () => void; reset: () => void; focus: (id: string) => void };
+export type FlowHandle = { save: () => void; reset: () => void; focus: (ids: string[]) => void };
 
 /**
  * Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре.
@@ -87,7 +87,10 @@ const Flow = forwardRef<FlowHandle, {
       onDirty(true);
       setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
     },
-    focus(id) { rf.fitView({ nodes: [{ id }], duration: 400, maxZoom: 1.15, padding: 0.45 }); },
+    focus(ids) {
+      if (ids.length === 0) return;
+      rf.fitView({ nodes: ids.map((id) => ({ id })), duration: 400, maxZoom: 1.15, padding: 0.45 });
+    },
   }), [persist, storageKey, flow, setNodes, rf, onDirty]);
 
   // Перетаскивание узла → раскладка расходится с сохранённой.
@@ -427,11 +430,13 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   );
   const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
 
-  // Клик по проблеме/связи → выбрать узел и навести на него.
-  const focusNode = useCallback((id: string) => {
-    const node = laid.nodes.find((x) => x.id === id);
-    if (node) setSelected(node);
-    flowRef.current?.focus(id);
+  // Клик по проблеме/связи → навести на узел. Если location — узел: выбрать + центрировать.
+  // Если это namespace-префикс (дрейф/слой per-service): навести на все узлы репозитория. Иначе — не двигать.
+  const focusNode = useCallback((location: string) => {
+    const node = laid.nodes.find((x) => x.id === location);
+    if (node) { setSelected(node); flowRef.current?.focus([location]); return; }
+    const nsIds = laid.nodes.filter((x) => namespaceOf(x.id) === location).map((x) => x.id);
+    if (nsIds.length > 0) { setSelected(null); flowRef.current?.focus(nsIds); }
   }, [laid]);
   const nameById = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.id, n.name])), [graph]);
   // Легенда «цвет плашки»: репозитории (namespace) сервис-узлов → цвет.
