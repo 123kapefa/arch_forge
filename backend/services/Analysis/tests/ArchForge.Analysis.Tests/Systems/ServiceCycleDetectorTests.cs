@@ -46,4 +46,39 @@ public class ServiceCycleDetectorTests
 
         Assert.Empty(ServiceCycleDetector.Detect(g));
     }
+
+    [Fact]
+    public void Ignores_low_confidence_cross_system_edges()
+    {
+        // цель разрешена лишь по совпадению имени между несвязанными системами (conf 0.5) →
+        // не выдумываем громкий Critical (ревью #20 — находка Critical о ложном цикле)
+        var g = new SystemGraph([Svc("sysA/checkout"), Svc("sysB/payments")],
+        [
+            new SystemEdge("sysA/checkout", "sysB/payments", "http-call", EdgeVia.Config, 0.5),
+            new SystemEdge("sysB/payments", "sysA/checkout", "http-call", EdgeVia.Config, 0.5),
+        ], []);
+
+        Assert.Empty(ServiceCycleDetector.Detect(g));
+    }
+
+    [Fact]
+    public void Reports_each_independent_cycle_separately()
+    {
+        // два несвязанных цикла a↔b и c↔d → две отдельные проблемы
+        var g = new SystemGraph([Svc("a"), Svc("b"), Svc("c"), Svc("d")],
+            [Http("a", "b"), Http("b", "a"), Http("c", "d"), Http("d", "c")], []);
+
+        var p = ServiceCycleDetector.Detect(g);
+        Assert.Equal(2, p.Count);
+        Assert.All(p, x => Assert.Equal("service-cycle", x.Kind));
+    }
+
+    [Fact]
+    public void Self_loop_is_not_a_cycle()
+    {
+        // сервис, зовущий сам себя, — не цикл зависимостей (компонента размера 1)
+        var g = new SystemGraph([Svc("a")], [Http("a", "a")], []);
+
+        Assert.Empty(ServiceCycleDetector.Detect(g));
+    }
 }

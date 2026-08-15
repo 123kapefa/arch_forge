@@ -2,18 +2,26 @@ namespace ArchForge.Analysis.Core.Systems;
 
 // Детектор системного анти-паттерна «цикл сервисов»: взаимно достижимые сервисы по http-call
 // (нет чёткого направления зависимостей). SCC (алгоритм Тарьяна) по подграфу http-call между Service-узлами;
-// компонента размером ≥2 = цикл. Честность (adr/0008): только уверенные (не Deferred) рёбра к своим сервисам.
+// компонента размером ≥2 = цикл.
 public static class ServiceCycleDetector
 {
+    // Цикл образуют только УВЕРЕННО разрешённые вызовы (цель в том же compose, conf 0.8). Догадки о цели по
+    // совпадению имени между несвязанными системами (0.5) не эскалируем в Critical — ложная уверенность хуже
+    // честного unknown (adr/0008). Межсистемные циклы — отдельный срез с меньшей серьёзностью (backlog).
+    private const double MinConfidence = 0.8;
+
     public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph)
     {
         var services = graph.Nodes.Where(n => n.Kind == SystemNodeKind.Service)
             .Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
-        var nameById = graph.Nodes.ToDictionary(n => n.Id, n => n.Name, StringComparer.Ordinal);
+        // безопасный build (дубли Id → берём первый, а не падаем — честная деградация)
+        var nameById = graph.Nodes
+            .GroupBy(n => n.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.Ordinal);
 
         var adj = services.ToDictionary(s => s, _ => new List<string>(), StringComparer.Ordinal);
         foreach (var e in graph.Edges)
-            if (e is { Kind: "http-call", Deferred: false } &&
+            if (e is { Kind: "http-call", Deferred: false } && e.Confidence >= MinConfidence &&
                 e.Source != e.Target && services.Contains(e.Source) && services.Contains(e.Target))
                 adj[e.Source].Add(e.Target);
 

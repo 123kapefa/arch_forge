@@ -15,6 +15,11 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 {
     private readonly IServiceDiscoverySource _discovery = discovery ?? new FolderDiscoverySource();
 
+    // Уверенность http-call по достоверности разрешения цели (пропагируется в детектор циклов, adr/0008):
+    private const double HttpConfident = 0.8; // цель в ТОМ ЖЕ compose — DNS-сеть compose достоверна
+    private const double HttpInferred = 0.5;  // цель в ДРУГОМ compose — разрешима лишь при общей внешней сети (не верифицируем)
+    private const double HttpExternal = 0.4;  // хост вне скана — честный внешний узел
+
     // Инфра по БАЗЕ образа (последний сегмент пути без тега) — точным совпадением, а не подстрокой.
     private static readonly Dictionary<string, SystemNodeKind> InfraByBaseImage = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -94,9 +99,11 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         return graph with { Problems = problems };
     }
 
-    // Резолвим цель http-call по имени узла глобально (среди ВСЕХ узлов, не только Service — иначе http-URL к
-    // известному брокеру/БД создал бы узел-дубль). Один узел → ребро; ноль → честный внешний узел;
-    // неоднозначно (≥2) → не выдумываем цель, но и НЕ молчим: Coverage-проблема с трассой (adr/0008).
+    // Резолвим цель http-call по имени узла (среди ВСЕХ узлов, не только Service — иначе http-URL к
+    // известному брокеру/БД создал бы узел-дубль). DNS docker-compose локален для сети ОДНОГО compose:
+    // цель в своём compose разрешаем достоверно (0.8); в чужом — лишь при общей внешней сети, которую
+    // статикой не подтвердить → 0.5 (не эскалируется в цикл-Critical по совпадению имён между системами).
+    // Ноль → честный внешний узел; неоднозначно → не выдумываем цель, но и НЕ молчим: Coverage (adr/0008).
     private static List<SystemProblem> ResolveHttpCalls(
         Dictionary<string, SystemNode> nodes, List<SystemEdge> edges,
         List<(string SourceId, string TargetHost)> intents, CancellationToken ct)
@@ -113,22 +120,33 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
             if (byName.TryGetValue(key, out var ids))
             {
-                var targets = ids.Where(id => id != sourceId).ToList();
-                if (targets.Count == 1)
-                    edges.Add(new SystemEdge(sourceId, targets[0], "http-call", EdgeVia.Config, 0.8));
-                else if (targets.Count > 1)
+                var others = ids.Where(id => id != sourceId).ToList();
+                if (others.Count == 0) continue; // только сам себя → self-call, пропускаем
+
+                var sameSystem = others.Where(id => SystemOf(id) == SystemOf(sourceId)).ToList();
+                if (sameSystem.Count == 1)                       // достоверно (DNS того же compose)
+                    edges.Add(new SystemEdge(sourceId, sameSystem[0], "http-call", EdgeVia.Config, HttpConfident));
+                else if (sameSystem.Count == 0 && others.Count == 1) // единственная цель в чужом compose — inferred
+                    edges.Add(new SystemEdge(sourceId, others[0], "http-call", EdgeVia.Config, HttpInferred));
+                else                                              // ≥2 кандидата (в своей или чужих системах) — неоднозначно
                     problems.Add(new SystemProblem(ProblemSeverity.Coverage, "ambiguous-target",
-                        $"неоднозначная цель http-call «{host}» — {targets.Count} одноимённых узла", sourceId));
-                // targets.Count == 0 (только сам себя) — self-call, пропускаем
+                        $"неоднозначная цель http-call «{host}» — {(sameSystem.Count > 1 ? sameSystem.Count : others.Count)} одноимённых узла", sourceId));
             }
             else
             {
                 var extId = "http://" + key; // регистр нормализован → нет дублей внешнего хоста
                 nodes.TryAdd(extId, new SystemNode(extId, key, SystemNodeKind.External));
-                edges.Add(new SystemEdge(sourceId, extId, "http-call", EdgeVia.Config, 0.4));
+                edges.Add(new SystemEdge(sourceId, extId, "http-call", EdgeVia.Config, HttpExternal));
             }
         }
         return problems;
+    }
+
+    // «Система» узла = namespace-префикс id ({system}/{svc}); внешние/инфра-id без '/' → пустая строка.
+    private static string SystemOf(string id)
+    {
+        var i = id.LastIndexOf('/');
+        return i > 0 ? id[..i] : "";
     }
 
     private static bool IsUrlKey(string key) =>
