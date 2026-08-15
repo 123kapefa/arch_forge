@@ -15,8 +15,9 @@ const nodeTypes = { sys: SystemNodeView };
 const GRID = 20; // шаг сетки: точки фона + привязка при перетаскивании
 
 /** Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре. */
-function Flow({ flow, onSelect, onClear }: {
+function Flow({ flow, snap, onSelect, onClear }: {
   flow: { nodes: Node[]; edges: Edge[] };
+  snap: boolean;
   onSelect: (n: Node) => void;
   onClear: () => void;
 }) {
@@ -40,7 +41,7 @@ function Flow({ flow, onSelect, onClear }: {
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       minZoom={0.08}
-      snapToGrid
+      snapToGrid={snap}
       snapGrid={[GRID, GRID]}
       onNodeClick={(_, n) => onSelect(n)}
       onPaneClick={onClear}
@@ -91,6 +92,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
   const [minConfidence, setMinConfidence] = useState(0);
   const [hideIsolated, setHideIsolated] = useState(false);
+  const [snap, setSnap] = useState(false); // привязка к сетке — по требованию, не постоянно
 
   const load = useCallback(async () => {
     const path = pathInput.trim();
@@ -182,6 +184,10 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               <input type="checkbox" checked={hideIsolated} onChange={(e) => setHideIsolated(e.target.checked)} />
               без одиночек
             </label>
+            <label className="opt">
+              <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} />
+              привязка к сетке
+            </label>
           </div>
         </aside>
 
@@ -198,7 +204,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           {error && <div className="sysview__error">{error}</div>}
           <div className="sysview__flow">
             <ReactFlowProvider>
-              <Flow flow={flow} onSelect={setSelected} onClear={() => setSelected(null)} />
+              <Flow flow={flow} snap={snap} onSelect={setSelected} onClear={() => setSelected(null)} />
             </ReactFlowProvider>
           </div>
         </main>
