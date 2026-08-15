@@ -1,0 +1,50 @@
+using ArchForge.Analysis.Core;
+using ArchForge.Analysis.Core.Systems;
+
+namespace ArchForge.Analysis.Tests.Systems;
+
+public class DriftDetectorTests
+{
+    private static readonly TypeClassifier Classifier = new(ConventionPack.Default());
+
+    // «RegisterHandler» без маркера ICommandHandler → эвристическая роль + дрейф.
+    private static readonly RawType[] Drifting = [new("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs")];
+    // команда с маркером ICommand → роль по маркеру, дрейфа нет.
+    private static readonly RawType[] Clean = [new("CreateWidgetCommand", "record", ["ICommand"], "(string N)", "Application", "x.cs")];
+
+    private static ServiceAnalysis Ok(string loc, RawType[] raw) =>
+        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw));
+    private static ServiceAnalysis Failed(string loc) =>
+        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, null);
+
+    [Fact]
+    public void Drifting_service_gives_convention_info()
+    {
+        var p = Assert.Single(DriftDetector.Detect([Ok("svc-a", Drifting)]));
+        Assert.Equal(ProblemSeverity.Info, p.Severity);            // мягко — не красный
+        Assert.Equal("drift", p.Kind);
+        Assert.Equal(ProblemCategory.Convention, p.Category);
+        Assert.Equal("svc-a", p.Location);
+        Assert.Contains("svc-a", p.Title);
+    }
+
+    [Fact]
+    public void Clean_service_gives_nothing() =>
+        Assert.Empty(DriftDetector.Detect([Ok("c", Clean)]));
+
+    [Fact]
+    public void Failed_service_reports_coverage_not_silence()
+    {
+        var p = Assert.Single(DriftDetector.Detect([Failed("bad")]));
+        Assert.Equal("drift-scan-failed", p.Kind);
+        Assert.Equal(ProblemSeverity.Coverage, p.Severity);
+        Assert.Equal(ProblemCategory.Convention, p.Category);
+    }
+
+    [Fact]
+    public void Multiple_services_preserve_order()
+    {
+        var problems = DriftDetector.Detect([Ok("a", Drifting), Ok("b", Drifting)]);
+        Assert.Equal(new[] { "a", "b" }, problems.Select(p => p.Location));
+    }
+}

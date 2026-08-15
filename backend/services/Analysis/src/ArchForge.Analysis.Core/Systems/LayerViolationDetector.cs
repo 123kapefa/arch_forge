@@ -1,14 +1,14 @@
 namespace ArchForge.Analysis.Core.Systems;
 
-// Свод-НЕЗАВИСИМЫЙ детектор нарушения направления слоёв — реальная арх-проблема (линза architecture).
-// По рёбрам тип-графа: ребро из внутреннего слоя во внешний (Domain→Infrastructure, Application→Api…) = нарушение
-// (см. LayerRules). Per-service (через общий ServiceAnalyzer). Включается флагом `/api/system?layers=true`.
-public sealed class LayerViolationScanner(ServiceAnalyzer analyzer)
+// Линза «нарушение направления слоёв» (architecture): извлекает нарушения из УЖЕ посчитанного анализа.
+// Чистая функция над ServiceAnalysis. В чистой архитектуре зависимости идут ВНУТРЬ; ребро тип-графа из
+// внутреннего слоя во внешний (Domain→Infrastructure, Application→Api…) = нарушение (см. LayerRules).
+public static class LayerViolationDetector
 {
-    public IReadOnlyList<SystemProblem> Scan(string root, CancellationToken ct = default)
+    public static IReadOnlyList<SystemProblem> Detect(IReadOnlyList<ServiceAnalysis> analyses)
     {
         var problems = new List<SystemProblem>();
-        foreach (var (svc, location, result) in analyzer.Analyze(root, ct))
+        foreach (var (svc, location, result) in analyses)
         {
             if (result is null)
             {

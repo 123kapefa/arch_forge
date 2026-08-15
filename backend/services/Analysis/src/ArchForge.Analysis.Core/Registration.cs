@@ -9,10 +9,9 @@ public static class Registration
     {
         services.AddSingleton(ConventionPack.Default());
         services.AddSingleton<TypeClassifier>();
-        // Код-линзы (дрейф/слои): общий ServiceAnalyzer нужен ITypeSource (Infra) + IServiceDiscoverySource (Manifests).
+        // Код-линзы (дрейф/слои): один общий ServiceAnalyzer (нужны ITypeSource из Infra + IServiceDiscoverySource
+        // из Manifests); хендлер гоняет его раз и питает чистые детекторы DriftDetector/LayerViolationDetector.
         services.AddTransient<Systems.ServiceAnalyzer>();
-        services.AddTransient<Systems.DriftScanner>();
-        services.AddTransient<Systems.LayerViolationScanner>();
         services.AddTransient<Features.Analysis.AnalyzeSolutionHandler>();
         services.AddTransient<Features.Imports.GetImportsHandler>();
         services.AddTransient<Features.Systems.GetSystemHandler>();
