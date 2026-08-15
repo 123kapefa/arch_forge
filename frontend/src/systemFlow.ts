@@ -1,4 +1,3 @@
-import dagre from '@dagrejs/dagre';
 import { MarkerType, Position, type Edge, type Node } from '@xyflow/react';
 import type { Problem, SystemGraph, SystemNode } from './system';
 import { problemsAt } from './systemModel';
@@ -56,35 +55,35 @@ export function edgeKindsOf(g: SystemGraph): string[] {
   return [...new Set(g.edges.map((e) => e.kind))].sort();
 }
 
-// Размер узла: карточка со слоями выше/шире компактной плашки — dagre должен это учесть.
-function nodeSize(n: Node): { w: number; h: number } {
-  const d = n.data as SystemNodeData;
-  const layers = d.node.layers;
-  if (d.node.kind === 'service' && layers && layers.length > 0) {
-    return { w: 236, h: 42 + layers.length * 25 + 26 }; // head + строки-слои + footer
-  }
-  return { w: 190, h: 56 };
-}
+// Детерминированная раскладка ярусами (без наложений, со структурой): внешние сверху → сервисы сеткой → инфра снизу.
+// Карточки со слоями крупные, поэтому сетка с большим шагом; dagre на 70+ узлах давал кашу.
+const KIND_OF = (n: Node) => (n.data as SystemNodeData).node.kind;
+const COLS = 6;
+const CELL_W = 290; // ширина колонки (карточка ~236 + зазор)
+const ROW_H = 250;  // высота ряда сервисов (карточка со слоями + зазор)
+const BAND_GAP = 210;
 
-// Раскладка dagre сверху-вниз: поток вызовов/зависимостей как в Blueprints (внешние → сервисы → инфра).
-function layout(nodes: Node[], edges: Edge[]): Node[] {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 90 });
-  const size = new Map(nodes.map((n) => [n.id, nodeSize(n)]));
-  nodes.forEach((n) => g.setNode(n.id, size.get(n.id)!));
-  edges.forEach((e) => g.setEdge(e.source, e.target));
-  dagre.layout(g);
-  return nodes.map((n) => {
-    const p = g.node(n.id);
-    const s = size.get(n.id)!;
-    return {
-      ...n,
-      position: { x: p.x - s.w / 2, y: p.y - s.h / 2 },
-      targetPosition: Position.Top,
-      sourcePosition: Position.Bottom,
-    };
-  });
+function layout(nodes: Node[]): Node[] {
+  const ext = nodes.filter((n) => KIND_OF(n) === 'external');
+  const infra = nodes.filter((n) => KIND_OF(n) === 'datastore' || KIND_OF(n) === 'topic');
+  const svc = nodes.filter((n) => KIND_OF(n) === 'service');
+
+  const out: Node[] = [];
+  const put = (n: Node, x: number, y: number) =>
+    out.push({ ...n, position: { x, y }, targetPosition: Position.Top, sourcePosition: Position.Bottom });
+
+  const gridW = COLS * CELL_W;
+  const svcTop = 180;
+  svc.forEach((n, i) => put(n, (i % COLS) * CELL_W, svcTop + Math.floor(i / COLS) * ROW_H));
+
+  // внешние — строка сверху, по центру над сеткой
+  ext.forEach((n, i) => put(n, (gridW - ext.length * BAND_GAP) / 2 + i * BAND_GAP, 0));
+
+  // инфра — строка снизу
+  const infraY = svcTop + Math.ceil(svc.length / COLS) * ROW_H + 40;
+  infra.forEach((n, i) => put(n, (gridW - infra.length * BAND_GAP) / 2 + i * BAND_GAP, infraY));
+
+  return out;
 }
 
 /**
@@ -120,6 +119,5 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
     });
   }
 
-  const edgeList = [...edges.values()];
-  return { nodes: layout(nodes, edgeList), edges: edgeList };
+  return { nodes: layout(nodes), edges: [...edges.values()] };
 }

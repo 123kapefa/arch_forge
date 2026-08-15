@@ -1,5 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
-import { ReactFlow, Background, Controls, MiniMap, type Node } from '@xyflow/react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ReactFlow, ReactFlowProvider, useReactFlow, useNodesState, useEdgesState,
+  Background, Controls, MiniMap, type Edge, type Node,
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './system.css';
 
@@ -9,6 +12,42 @@ import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
 
 const nodeTypes = { sys: SystemNodeView };
+
+/** Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре. */
+function Flow({ flow, onSelect, onClear }: {
+  flow: { nodes: Node[]; edges: Edge[] };
+  onSelect: (n: Node) => void;
+  onClear: () => void;
+}) {
+  const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
+  const rf = useReactFlow();
+
+  useEffect(() => {
+    setNodes(flow.nodes);
+    setEdges(flow.edges);
+    if (flow.nodes.length === 0) return;
+    const t = setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
+    return () => clearTimeout(t);
+  }, [flow, setNodes, setEdges, rf]);
+
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
+      nodeTypes={nodeTypes}
+      minZoom={0.08}
+      onNodeClick={(_, n) => onSelect(n)}
+      onPaneClick={onClear}
+    >
+      <Background />
+      <Controls />
+      <MiniMap pannable zoomable />
+    </ReactFlow>
+  );
+}
 
 const KIND_LABEL: Record<string, string> = {
   service: 'сервис', datastore: 'хранилище', topic: 'шина', external: 'внешний',
@@ -73,7 +112,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     () => (graph ? filterGraph(graph, { edgeKinds, minConfidence, hideIsolated }) : null),
     [graph, edgeKinds, minConfidence, hideIsolated],
   );
-  const { nodes, edges } = useMemo(
+  const flow = useMemo(
     () => (view ? buildSystemFlow(view) : { nodes: [], edges: [] }),
     [view],
   );
@@ -155,22 +194,9 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           </form>
           {error && <div className="sysview__error">{error}</div>}
           <div className="sysview__flow">
-            {/* key по набору узлов/рёбер → ремоунт + fitView при загрузке/фильтре (переумещение) */}
-            <ReactFlow
-              key={`${nodes.length}|${edges.length}`}
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              fitView
-              fitViewOptions={{ padding: 0.15 }}
-              minZoom={0.1}
-              onNodeClick={(_, n) => setSelected(n)}
-              onPaneClick={() => setSelected(null)}
-            >
-              <Background />
-              <Controls />
-              <MiniMap pannable zoomable />
-            </ReactFlow>
+            <ReactFlowProvider>
+              <Flow flow={flow} onSelect={setSelected} onClear={() => setSelected(null)} />
+            </ReactFlowProvider>
           </div>
         </main>
 
@@ -183,7 +209,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       <footer className="sysview__status">
         <span className={`status__health health-${graph?.health ?? 'none'}`}>{graph?.health ?? '—'}</span>
         <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}</span>
-        <span>{nodes.length} узлов · {edges.length} связей</span>
+        <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
         <span className="status__lens">
           линза «{lens === 'architecture' ? 'реальные проблемы' : 'дрейф'}»: {lensProblems.length}
         </span>
