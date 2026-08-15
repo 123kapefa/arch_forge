@@ -1,8 +1,10 @@
+import { useContext } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { SystemNodeData } from '../systemFlow';
 import { isInfra } from '../systemFlow';
 import { namespaceOf } from '../systemModel';
 import { repoColor } from '../theme';
+import { HiddenLayersContext } from '../layersContext';
 
 export type SystemNodeType = Node<SystemNodeData, 'sys'>;
 
@@ -21,7 +23,8 @@ export function SystemNodeView({ data, selected }: NodeProps<SystemNodeType>) {
   const { node, health, problems } = data;
   const infra = isInfra(node.kind);
   const accent = infra ? KIND_ACCENT[node.kind] ?? '#7c8698' : repoColor(namespaceOf(node.id));
-  const layers = node.layers;
+  const hiddenLayers = useContext(HiddenLayersContext);
+  const layers = node.layers?.filter((l) => !hiddenLayers.has(l.name)); // секция «СЛОИ» прячет выбранные
 
   // Сервис со слоями → карточка «внутри сервиса — слои» (L0)
   if (!infra && layers && layers.length > 0) {

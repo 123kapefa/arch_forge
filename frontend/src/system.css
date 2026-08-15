@@ -229,6 +229,7 @@
 /* амбер-слайдер (УВЕРЕННОСТЬ) */
 .panel--view input[type="range"] { accent-color: var(--warn); }
 
+.legend__bar { width: 3px; height: 16px; border-radius: 2px; flex: none; } /* цветная полоска слоя (секция СЛОИ) */
 .legend { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--muted); }
 .legend__line { width: 22px; height: 0; border-top: 2px solid; }
 .legend__line--db { border-color: var(--ok); }

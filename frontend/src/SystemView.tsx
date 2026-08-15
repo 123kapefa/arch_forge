@@ -14,7 +14,8 @@ import { gridLayout } from './gridLayout';
 import { RoutedEdge } from './RoutedEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
-import { repoColor } from './theme';
+import { repoColor, layerColor } from './theme';
+import { HiddenLayersContext } from './layersContext';
 import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
@@ -348,6 +349,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [hideIsolated, setHideIsolated] = useState(false);
   const [hideTests, setHideTests] = useState(false);
   const [problemsOpen, setProblemsOpen] = useState(false); // нижняя панель «Проблемы проекта»
+  const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(new Set()); // скрытые слои (секция СЛОИ)
   const [leftOpen, setLeftOpen] = useState(true);   // панель ВИД
   const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
@@ -462,6 +464,22 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     for (const n of graph?.nodes ?? []) if (n.kind === 'service') set.add(namespaceOf(n.id));
     return [...set].sort();
   }, [graph]);
+  // Секция СЛОИ: различные имена слоёв в каноническом порядке Clean Arch.
+  const allLayers = useMemo(() => {
+    const set = new Set<string>();
+    for (const n of graph?.nodes ?? []) for (const l of n.layers ?? []) set.add(l.name);
+    const order = ['API', 'Application', 'Domain', 'Infrastructure', 'Contracts', 'Persistence', 'Web', 'Shared'];
+    return [...set].sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+  }, [graph]);
+  const toggleLayer = (name: string) =>
+    setHiddenLayers((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
   const toggleEdgeKind = (k: string) =>
     setEdgeKinds((prev) => {
       const next = new Set(prev);
@@ -555,6 +573,18 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
             </label>
             <div className="panel__hint">{loading ? 'анализирую…' : 'по отдельности или вместе; структурный анализ идёт всегда'}</div>
           </div>
+          {allLayers.length > 0 && (
+            <div className="panel__group">
+              <div className="panel__label">СЛОИ</div>
+              {allLayers.map((name) => (
+                <label key={name} className="opt">
+                  <input type="checkbox" checked={!hiddenLayers.has(name)} onChange={() => toggleLayer(name)} />
+                  <span className="legend__bar" style={{ background: layerColor(name) }} />
+                  {name}
+                </label>
+              ))}
+            </div>
+          )}
           <div className="panel__group">
             <div className="panel__label">РЁБРА</div>
             {allEdgeKinds.length === 0 && <div className="panel__empty">—</div>}
@@ -616,18 +646,20 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           {error && <div className="sysview__error">{error}</div>}
           <div className="sysview__flow">
             {graph ? (
-              <ReactFlowProvider>
-                <Flow
-                  ref={flowRef}
-                  flow={flow}
-                  magnet={magnet}
-                  storageKey={storageKey}
-                  onDirty={setSaved}
-                  selectedId={selected?.id ?? null}
-                  onSelect={setSelected}
-                  onClear={() => setSelected(null)}
-                />
-              </ReactFlowProvider>
+              <HiddenLayersContext.Provider value={hiddenLayers}>
+                <ReactFlowProvider>
+                  <Flow
+                    ref={flowRef}
+                    flow={flow}
+                    magnet={magnet}
+                    storageKey={storageKey}
+                    onDirty={setSaved}
+                    selectedId={selected?.id ?? null}
+                    onSelect={setSelected}
+                    onClear={() => setSelected(null)}
+                  />
+                </ReactFlowProvider>
+              </HiddenLayersContext.Provider>
             ) : (
               <div className="sysview__empty">
                 {loading ? 'анализирую…' : <>Проект не открыт. Нажми <b>«Открыть проект»</b> вверху слева.</>}
