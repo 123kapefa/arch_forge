@@ -86,10 +86,19 @@ function layout(nodes: Node[]): Node[] {
   return out;
 }
 
+// Данные ребра L0 для фильтра и маршрутизации (points добавляет ELK-раскладка).
+interface EdgeData {
+  kind: string;
+  confidence: number;
+  violation: boolean;
+  [key: string]: unknown;
+}
+
 /**
  * SystemGraph → узлы/рёбра React Flow для L0.
  * Узлы — как есть (compose-микросервисы + инфра + внешние), БЕЗ роллапа в .sln: настоящая карта системы
- * с графом вызовов. Рёбра: петли убираем, дедуп по (src,tgt,kind), нарушение важнее. Раскладка dagre TB.
+ * с графом вызовов. Рёбра: петли убираем, дедуп по (src,tgt,kind), нарушение важнее.
+ * Позиции узлов и маршруты рёбер (обход плашек) считает ELK (elkLayout); тут — сетка-заглушка до раскладки.
  */
 export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node<SystemNodeData>[] = g.nodes.map((n) => ({
@@ -99,13 +108,17 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
     data: { node: n, health: n.health ?? 'ok', problems: problemsAt(g.problems, n.id) },
   }));
 
-  const edges = new Map<string, RoutedEdge>();
+  const edges = new Map<string, Edge>();
   for (const e of g.edges) {
     if (e.source === e.target) continue;
     const key = `${e.source}|${e.target}|${e.kind}`;
     const violation = e.violation ?? false;
+    const conf = e.confidence ?? 1;
     const prev = edges.get(key);
     if (prev) {
+      const d = prev.data as EdgeData;
+      d.violation ||= violation;
+      d.confidence = Math.max(d.confidence, conf);
       if (violation) prev.style = { ...prev.style, ...edgeStyle(e.kind, true) };
       continue;
     }
@@ -114,32 +127,30 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
       id: key,
       source: e.source,
       target: e.target,
-      type: 'smoothstep',                          // ортогональные линии (прямые углы)
-      pathOptions: { borderRadius: 10 },
+      type: 'routed',                              // кастомное ребро: маршрут ELK с обходом плашек
       style,
       markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke },
+      data: { kind: e.kind, confidence: conf, violation } satisfies EdgeData,
     });
   }
 
-  return { nodes: layout(nodes), edges: laneOffsets([...edges.values()]) };
+  return { nodes: layout(nodes), edges: [...edges.values()] };
 }
 
-// pathOptions отсутствует в базовом Edge этой версии — добавляем для smoothstep-маршрутизации.
-type RoutedEdge = Edge & { pathOptions?: { borderRadius?: number; offset?: number } };
-
-// Разводка по дорожкам: рёбра, сходящиеся в ОДИН узел, смещаем по offset, чтобы не сливались в одну линию.
-function laneOffsets(edges: RoutedEdge[]): Edge[] {
-  const byTarget = new Map<string, RoutedEdge[]>();
-  for (const e of edges) {
-    const g = byTarget.get(e.target);
-    if (g) g.push(e); else byTarget.set(e.target, [e]);
+/** Фильтр вида поверх готовой раскладки (сохраняет позиции): прячет рёбра по виду/уверенности и одиночек. */
+export function filterFlow(
+  flow: { nodes: Node[]; edges: Edge[] },
+  f: SystemFilters,
+): { nodes: Node[]; edges: Edge[] } {
+  const edges = flow.edges.filter((e) => {
+    const d = e.data as EdgeData;
+    return f.edgeKinds.has(d.kind) && d.confidence >= f.minConfidence;
+  });
+  let nodes = flow.nodes;
+  if (f.hideIsolated) {
+    const linked = new Set<string>();
+    for (const e of edges) { linked.add(e.source); linked.add(e.target); }
+    nodes = nodes.filter((n) => linked.has(n.id));
   }
-  for (const group of byTarget.values()) {
-    const n = group.length;
-    if (n < 2) continue;
-    group.forEach((e, i) => {
-      e.pathOptions = { borderRadius: 10, offset: (i - (n - 1) / 2) * 16 };
-    });
-  }
-  return edges;
+  return { nodes, edges };
 }

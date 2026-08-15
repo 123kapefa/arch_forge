@@ -9,13 +9,16 @@ import '@xyflow/react/dist/style.css';
 import './system.css';
 
 import { fetchSystem, type SystemGraph } from './system';
-import { buildSystemFlow, filterGraph, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
+import { buildSystemFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
+import { layoutElk } from './elkLayout';
+import { RoutedEdge } from './RoutedEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
 import { FolderPicker } from './FolderPicker';
 import { Icon, type IconName } from './Icon';
 
 const nodeTypes = { sys: SystemNodeView };
+const edgeTypes = { routed: RoutedEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
 // Низкий порог = магнит только при явно медленном, «прицельном» движении, а не при обычном перетаскивании.
@@ -125,6 +128,7 @@ const Flow = forwardRef<FlowHandle, {
       onNodesChange={handleNodesChange}
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
       minZoom={0.08}
       elevateEdgesOnSelect
       snapToGrid={magnet && snapNow}
@@ -346,13 +350,27 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const view = useMemo(
-    () => (graph ? filterGraph(graph, { edgeKinds, minConfidence, hideIsolated }) : null),
-    [graph, edgeKinds, minConfidence, hideIsolated],
+  // Полный граф → узлы/рёбра (сетка-заглушка). ELK считает раскладку один раз на проект (не на фильтр).
+  const fullFlow = useMemo(
+    () => (graph ? buildSystemFlow(graph) : { nodes: [] as Node[], edges: [] as Edge[] }),
+    [graph],
   );
+  const [laid, setLaid] = useState(fullFlow); // раскладка ELK (позиции + маршруты)
+  const [layouting, setLayouting] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setLayouting(true);
+    layoutElk(fullFlow.nodes, fullFlow.edges)
+      .then((r) => { if (!cancelled) setLaid(r); })
+      .catch(() => { if (!cancelled) setLaid(fullFlow); })
+      .finally(() => { if (!cancelled) setLayouting(false); });
+    return () => { cancelled = true; };
+  }, [fullFlow]);
+
+  // Фильтр вида поверх готовой раскладки — мгновенно, без перераскладки.
   const flow = useMemo(
-    () => (view ? buildSystemFlow(view) : { nodes: [], edges: [] }),
-    [view],
+    () => filterFlow(laid, { edgeKinds, minConfidence, hideIsolated }),
+    [laid, edgeKinds, minConfidence, hideIsolated],
   );
   const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
   const toggleEdgeKind = (k: string) =>
@@ -496,6 +514,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
         <span className={`status__health health-${graph?.health ?? 'none'}`}>{graph?.health ?? '—'}</span>
         <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}</span>
         <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
+        {layouting && <span>раскладка…</span>}
         <span className="status__lens">
           линза «{lens === 'architecture' ? 'реальные проблемы' : 'дрейф'}»: {lensProblems.length}
         </span>

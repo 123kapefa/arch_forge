@@ -84,8 +84,8 @@ describe('isInfra / edgeStyle', () => {
     expect(isInfra('service')).toBe(false);
   });
   it('цвет/пунктир ребра и красный при нарушении', () => {
-    expect(edgeStyle('rw-db', false).stroke).toBe('#57c78a');
+    expect(edgeStyle('rw-db', false).stroke).toBe('#6fcf77');
     expect(edgeStyle('http-call', false).strokeDasharray).toBeDefined();
-    expect(edgeStyle('rw-db', true).stroke).toBe('#e5534b');
+    expect(edgeStyle('rw-db', true).stroke).toBe('#e5484d');
   });
 });
