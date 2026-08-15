@@ -49,7 +49,7 @@ public sealed record EdgeDto(
     string Id,
     string Source, // Node.Id
     string Target, // Node.Id
-    string Kind,   // Ф1: implements|holds|uses|raises|handles · Ф1.5(+): http-call|publishes|subscribes|rw-db|calls
+    string Kind,   // Ф1: implements|holds|uses|raises|handles · Ф1.5(+): http-call|rw-db|uses-bus|publishes|subscribes|calls
     // --- Фаза 1.5 ---
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     string? Via = null,                                    // compose | config | code | unknown (провенанс)

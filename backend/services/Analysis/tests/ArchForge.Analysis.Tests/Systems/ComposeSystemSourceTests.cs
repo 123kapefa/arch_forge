@@ -319,7 +319,7 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Connection_to_topic_is_publishes_not_rwdb()
+    public void Connection_to_topic_is_uses_bus_not_rwdb()
     {
         var f = WriteCompose("""
             services:
@@ -330,8 +330,87 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         {
             var g = new ComposeSystemSource().Read(f);
             Assert.Contains(g.Nodes, n => n.Name == "kafka" && n.Kind == SystemNodeKind.Topic);
-            Assert.True(HasEdge(g, "app", "kafka", "publishes"));
-            Assert.False(HasEdge(g, "app", "kafka", "rw-db")); // топик — не БД
+            Assert.True(HasEdge(g, "app", "kafka", "uses-bus")); // подключение к шине, направление неизвестно
+            Assert.False(HasEdge(g, "app", "kafka", "rw-db"));   // топик — не БД
+            Assert.False(HasEdge(g, "app", "kafka", "publishes")); // направление pub/sub из compose НЕ выдаём
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Часть 1 «честная шина»: config-ключи вне connection strings (RabbitMQ__Host, Kafka__BootstrapServers)
+    // связывают сервис с шиной того же compose неориентированным uses-bus.
+    [Fact]
+    public void Bus_host_config_keys_connect_service_to_bus()
+    {
+        var f = WriteCompose("""
+            services:
+              orders:
+                image: ns/orders:1
+                environment:
+                  RabbitMQ__Host: "rabbitmq"
+                  Kafka__BootstrapServers: "kafka:9092"
+              rabbitmq: { image: rabbitmq:3-management-alpine }
+              kafka:    { image: bitnami/kafka:3 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "orders", "rabbitmq", "uses-bus"));
+            Assert.True(HasEdge(g, "orders", "kafka", "uses-bus"));
+            Assert.DoesNotContain(g.Edges, e => e.Kind is "publishes" or "subscribes"); // направление не выдумываем
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Bus_host_amqp_url_with_userinfo_and_port_resolves()
+    {
+        var f = WriteCompose("""
+            services:
+              worker: { image: ns/worker:1, environment: { RabbitMQ__Uri: "amqp://guest:guest@rabbitmq:5672/vhost" } }
+              rabbitmq: { image: rabbitmq:3 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "worker", "rabbitmq", "uses-bus")); // хост = rabbitmq (без схемы/userinfo/порта)
+            Assert.DoesNotContain(g.Nodes, n => n.Name == "guest");
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Ревью #21 M3: bus-host ключ с http-значением (management URL брокера) НЕ даёт двойного ребра
+    // (uses-bus + http-call) — строка учтена как подключение к шине.
+    [Fact]
+    public void Bus_host_http_uri_does_not_create_duplicate_http_call()
+    {
+        var f = WriteCompose("""
+            services:
+              app: { image: ns/app:1, environment: { RabbitMQ__Uri: "http://rabbitmq:15672" } }
+              rabbitmq: { image: rabbitmq:3-management-alpine }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "app", "rabbitmq", "uses-bus"));
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call"); // не двоим ту же строку в http-call
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Ревью #21 M4: брокер вне compose (managed/облачный) виден честным внешним узлом, а не молча пропадает.
+    [Fact]
+    public void External_broker_becomes_external_node()
+    {
+        var f = WriteCompose("""
+            services:
+              app: { image: ns/app:1, environment: { Kafka__BootstrapServers: "pkc-xyz.eu.confluent.cloud:9092" } }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Kind == SystemNodeKind.External && n.Name == "pkc-xyz");
+            Assert.True(HasEdge(g, "app", "pkc-xyz", "uses-bus"));
         }
         finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
     }
@@ -350,6 +429,22 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
 
         Assert.NotEmpty(httpCalls);                              // межсервисные вызовы product_site
         Assert.True(HasEdge(g, "orders-api", "catalog-api", "http-call")); // конкретная реальная связь
+    }
+
+    [SkippableFact]
+    public void Real_workspace_bus_is_connected_not_dangling()
+    {
+        Skip.IfNot(Directory.Exists(Workspace), "таргет product-site-workspace не найден");
+
+        var g = new ComposeSystemSource().Read(Workspace);
+        var topics = g.Nodes.Where(n => n.Kind == SystemNodeKind.Topic).ToList();
+        Skip.If(topics.Count == 0, "в выбранном compose таргета нет шины");
+
+        // rabbitmq реально используется (RabbitMQ__Host у нескольких сервисов) → uses-bus рёбра есть,
+        // значит НЕ isolated-topic. Направление pub/sub из compose неизвестно → и НЕ dangling/orphaned (честно).
+        foreach (var t in topics)
+            Assert.Contains(g.Edges, e => e.Kind == "uses-bus" && (e.Source == t.Id || e.Target == t.Id));
+        Assert.DoesNotContain(g.Problems, p => p.Kind is "isolated-topic" or "dangling-event" or "orphaned-subscription");
     }
 
     [Fact]

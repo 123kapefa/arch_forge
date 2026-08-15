@@ -8,9 +8,10 @@ namespace ArchForge.Analysis.Infrastructure.Manifests;
 // P1.5-D — поведенческие рёбра:
 //  • http-call: значения-URL в compose-env (CatalogService__Url: http://catalog-api:8080) → целевой сервис
 //    резолвим глобально по имени; не разрешили → честный внешний узел.
-//  • publishes/subscribes: на реальном таргете шины нет (Loyalty.Communication = HTTP-клиент) — честно отсутствуют.
-// Известные ограничения (backlog): http-call из appsettings.json (напр. auth→sms) — следующий срез;
-//  publish/subscribe появится при наличии шины (MassTransit/rabbit/kafka).
+//  • uses-bus: подключение к шине (ConnectionStrings__Bus, RabbitMQ__Host, Kafka__BootstrapServers…) →
+//    НЕОРИЕНТИРОВАННОЕ ребро к Topic. Направление (publish vs subscribe) из compose НЕ достаётся —
+//    честно не выдаём его (adr/0008); publishes/subscribes появятся из разбора кода (backlog).
+// Известные ограничения (backlog): http-call/bus-host из appsettings.json — следующий срез.
 public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = null) : ISystemSource
 {
     private readonly IServiceDiscoverySource _discovery = discovery ?? new FolderDiscoverySource();
@@ -19,6 +20,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     private const double HttpConfident = 0.8; // цель в ТОМ ЖЕ compose — DNS-сеть compose достоверна
     private const double HttpInferred = 0.5;  // цель в ДРУГОМ compose — разрешима лишь при общей внешней сети (не верифицируем)
     private const double HttpExternal = 0.4;  // хост вне скана — честный внешний узел
+    private const double BusConf = 0.7;       // uses-bus к шине того же compose: подключение есть, направление неизвестно
+    private const double BusExternal = 0.4;   // uses-bus к брокеру вне скана (managed/облачный) — вне скана, ниже уверенность
 
     // Инфра по БАЗЕ образа (последний сегмент пути без тега) — точным совпадением, а не подстрокой.
     private static readonly Dictionary<string, SystemNodeKind> InfraByBaseImage = new(StringComparer.OrdinalIgnoreCase)
@@ -59,7 +62,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
                 foreach (var (key, value) in svc.Environment)
                 {
-                    // rw-db / publishes из строк подключения
+                    // rw-db / uses-bus из строк подключения
                     if (key.StartsWith("ConnectionStrings__", StringComparison.Ordinal) &&
                         ConnectionString.ExtractHost(value) is { } host)
                     {
@@ -71,15 +74,33 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                         else if (local.TryGetValue(host, out var target) &&
                                  target.Kind is SystemNodeKind.Datastore or SystemNodeKind.Topic)
                         {
-                            // топик — publishes (направление producer/consumer не верифицируем → ниже conf); БД — rw-db
-                            var (kind, conf) = target.Kind == SystemNodeKind.Topic ? ("publishes", 0.7) : ("rw-db", 0.9);
+                            // топик — uses-bus (направление pub/sub из compose не достаётся); БД — rw-db
+                            var (kind, conf) = target.Kind == SystemNodeKind.Topic ? ("uses-bus", BusConf) : ("rw-db", 0.9);
                             edges.Add(new SystemEdge(sourceId, target.Id, kind, EdgeVia.Config, conf));
+                        }
+                    }
+
+                    // uses-bus из config-ключей вне connection strings (RabbitMQ__Host, Kafka__BootstrapServers…).
+                    // Локальный Topic → ребро к нему; брокер вне compose (managed/облачный) → честный внешний узел
+                    // (как http-call для незнакомых хостов). Направление pub/sub неизвестно. Дубли схлопнет Dedup().
+                    var handledAsBus = false;
+                    if (BusEndpoint.IsHostKey(key) && BusEndpoint.Host(value) is { } busHost)
+                    {
+                        handledAsBus = true; // строка учтена как подключение к шине → не дублируем её как http-call
+                        if (local.TryGetValue(busHost, out var bus) && bus.Kind == SystemNodeKind.Topic)
+                            edges.Add(new SystemEdge(sourceId, bus.Id, "uses-bus", EdgeVia.Config, BusConf));
+                        else if (!local.ContainsKey(busHost))
+                        {
+                            var extId = "bus://" + busHost;
+                            nodes.TryAdd(extId, new SystemNode(extId, busHost, SystemNodeKind.External));
+                            edges.Add(new SystemEdge(sourceId, extId, "uses-bus", EdgeVia.Config, BusExternal));
                         }
                     }
 
                     // http-call: URL-ключ (*Url/*Uri/*BaseAddress) со значением-URL на другой сервис —
                     // резолвим глобально после разбора всех (ключ-фильтр убирает telemetry/health-URL из шума).
-                    if (IsUrlKey(key) && UrlHost(value) is { } targetHost)
+                    // Пропускаем, если ту же строку уже учли как подключение к шине (RabbitMQ__Uri: http://… → не двоим).
+                    if (!handledAsBus && IsUrlKey(key) && UrlHost(value) is { } targetHost)
                         httpIntents.Add((sourceId, targetHost));
                 }
 
