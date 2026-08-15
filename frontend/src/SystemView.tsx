@@ -381,7 +381,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     });
   const counts = useMemo(() => severityCounts(graph?.problems), [graph]);
   const lensProblems = useMemo(() => problemsByLens(graph?.problems, lens), [graph, lens]);
-  const storageKey = loadedPath ? `af_layout:${loadedPath}` : '';
+  // v2: старые (до ELK) сохранённые раскладки игнорируем — при открытии всегда чистая ELK-раскладка.
+  const storageKey = loadedPath ? `af_layout2:${loadedPath}` : '';
 
   return (
     <div className="sysview">
