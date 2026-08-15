@@ -66,13 +66,15 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                         else if (local.TryGetValue(host, out var target) &&
                                  target.Kind is SystemNodeKind.Datastore or SystemNodeKind.Topic)
                         {
-                            var kind = target.Kind == SystemNodeKind.Topic ? "publishes" : "rw-db";
-                            edges.Add(new SystemEdge(sourceId, target.Id, kind, EdgeVia.Config, 0.9));
+                            // топик — publishes (направление producer/consumer не верифицируем → ниже conf); БД — rw-db
+                            var (kind, conf) = target.Kind == SystemNodeKind.Topic ? ("publishes", 0.7) : ("rw-db", 0.9);
+                            edges.Add(new SystemEdge(sourceId, target.Id, kind, EdgeVia.Config, conf));
                         }
                     }
 
-                    // http-call: значение — URL на другой сервис (резолвим глобально после разбора всех)
-                    if (UrlHost(value) is { } targetHost)
+                    // http-call: URL-ключ (*Url/*Uri/*BaseAddress) со значением-URL на другой сервис —
+                    // резолвим глобально после разбора всех (ключ-фильтр убирает telemetry/health-URL из шума).
+                    if (IsUrlKey(key) && UrlHost(value) is { } targetHost)
                         httpIntents.Add((sourceId, targetHost));
                 }
 
@@ -85,40 +87,61 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             }
         }
 
-        ResolveHttpCalls(nodes, edges, httpIntents);
+        var httpProblems = ResolveHttpCalls(nodes, edges, httpIntents, ct);
 
         var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), []);
-        return graph with { Problems = SharedDbDetector.Detect(graph) };
+        var problems = SharedDbDetector.Detect(graph).Concat(httpProblems).ToList();
+        return graph with { Problems = problems };
     }
 
-    // Резолвим цель http-call по имени сервиса глобально: попал в один сервис → ребро; иначе внешний узел (честно).
-    private static void ResolveHttpCalls(
+    // Резолвим цель http-call по имени узла глобально (среди ВСЕХ узлов, не только Service — иначе http-URL к
+    // известному брокеру/БД создал бы узел-дубль). Один узел → ребро; ноль → честный внешний узел;
+    // неоднозначно (≥2) → не выдумываем цель, но и НЕ молчим: Coverage-проблема с трассой (adr/0008).
+    private static List<SystemProblem> ResolveHttpCalls(
         Dictionary<string, SystemNode> nodes, List<SystemEdge> edges,
-        List<(string SourceId, string TargetHost)> intents)
+        List<(string SourceId, string TargetHost)> intents, CancellationToken ct)
     {
-        var appByName = nodes.Values
-            .Where(n => n.Kind == SystemNodeKind.Service)
-            .GroupBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Select(n => n.Id).ToList(), StringComparer.OrdinalIgnoreCase);
+        var problems = new List<SystemProblem>();
+        var byName = nodes.Values
+            .GroupBy(n => n.Name.ToLowerInvariant(), StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Select(n => n.Id).ToList(), StringComparer.Ordinal);
 
         foreach (var (sourceId, host) in intents.Distinct())
         {
-            if (appByName.TryGetValue(host, out var ids) && ids.Count == 1 && ids[0] != sourceId)
+            ct.ThrowIfCancellationRequested();
+            var key = host.ToLowerInvariant();
+
+            if (byName.TryGetValue(key, out var ids))
             {
-                edges.Add(new SystemEdge(sourceId, ids[0], "http-call", EdgeVia.Config, 0.8));
+                var targets = ids.Where(id => id != sourceId).ToList();
+                if (targets.Count == 1)
+                    edges.Add(new SystemEdge(sourceId, targets[0], "http-call", EdgeVia.Config, 0.8));
+                else if (targets.Count > 1)
+                    problems.Add(new SystemProblem(ProblemSeverity.Coverage, "ambiguous-target",
+                        $"неоднозначная цель http-call «{host}» — {targets.Count} одноимённых узла", sourceId));
+                // targets.Count == 0 (только сам себя) — self-call, пропускаем
             }
-            else if (!appByName.ContainsKey(host)) // неизвестный/внешний сервис — честный внешний узел
+            else
             {
-                var extId = "http://" + host;
-                nodes.TryAdd(extId, new SystemNode(extId, host, SystemNodeKind.External));
+                var extId = "http://" + key; // регистр нормализован → нет дублей внешнего хоста
+                nodes.TryAdd(extId, new SystemNode(extId, key, SystemNodeKind.External));
                 edges.Add(new SystemEdge(sourceId, extId, "http-call", EdgeVia.Config, 0.4));
             }
-            // неоднозначное имя (ids.Count > 1) — не выдумываем цель (adr/0008)
         }
+        return problems;
     }
 
+    private static bool IsUrlKey(string key) =>
+        key.Contains("url", StringComparison.OrdinalIgnoreCase) ||
+        key.Contains("uri", StringComparison.OrdinalIgnoreCase) ||
+        key.Contains("baseaddress", StringComparison.OrdinalIgnoreCase);
+
+    // Известные публичные домены (точным суффиксом, а не голым TLD — иначе внутренние зоны .io/.dev терялись бы).
+    private static readonly string[] PublicDomains =
+        { ".cloudflare.com", ".githubusercontent.com", ".github.com", ".googleapis.com", ".amazonaws.com", ".windows.net" };
+
     // Хост сервиса из URL-значения: «http://audit-api.product-site:8080» → «audit-api».
-    // null — если не http-URL, localhost/инфра или публичный интернет-адрес (не наш сервис).
+    // null — не http-URL / userinfo / IP-литерал / localhost / инфра / bind-паттерн / известный публичный домен.
     private static string? UrlHost(string? value)
     {
         if (value is null) return null;
@@ -127,20 +150,22 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         if (sep < 0 || !(v.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                          v.StartsWith("https://", StringComparison.OrdinalIgnoreCase))) return null;
 
-        var authority = v[(sep + 2)..].Split('/', '?')[0]; // host[:port]
+        var authority = v[(sep + 2)..].Split('/', '?')[0];
+        var at = authority.LastIndexOf('@');                                    // userinfo (user:pass@host) — отрезаем
+        if (at >= 0) authority = authority[(at + 1)..];
+        if (authority.StartsWith("[", StringComparison.Ordinal)) return null;   // IPv6-литерал — не сервис
+
         var fullHost = authority.Split(':')[0];
-        if (fullHost.Contains("${", StringComparison.Ordinal)) return null; // отложенное — не резолвим
+        if (fullHost.Length == 0 || fullHost.Contains("${", StringComparison.Ordinal)) return null;
+        if (System.Net.IPAddress.TryParse(fullHost, out _)) return null;        // IPv4-литерал — не сервис
 
-        var segs = fullHost.Split('.');
-        if (segs.Length > 1 &&
-            segs[^1].ToLowerInvariant() is "com" or "org" or "io" or "net" or "ru" or "dev" or "cloud" or "app")
-            return null; // публичный интернет-адрес (cloudflare/github) — не наш сервис
+        var lower = fullHost.ToLowerInvariant();
+        foreach (var pub in PublicDomains)
+            if (lower.EndsWith(pub, StringComparison.Ordinal)) return null;
 
-        var host = segs[0];
-        // "+"/"*" — bind-паттерны ASPNETCORE_URLS (http://+:8080), не адрес вызова; localhost/инфра — тоже не сервис.
-        if (host.Length == 0 || host is "localhost" or "minio" or "+" or "*" ||
-            host.StartsWith("127.", StringComparison.Ordinal) || host.StartsWith("0.0", StringComparison.Ordinal))
-            return null;
+        var host = fullHost.Split('.')[0];                                      // k8s-DNS: audit-api.product-site → audit-api
+        // "+"/"*" — bind-паттерны ASPNETCORE_URLS (http://+:8080); localhost/инфра — не сервис.
+        if (host is "localhost" or "minio" or "+" or "*") return null;
         return host;
     }
 
