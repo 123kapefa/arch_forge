@@ -10,21 +10,22 @@ namespace ArchForge.Analysis.Core.Features.Systems;
 // Вертикальный срез: разобрать КОРЕНЬ СИСТЕМЫ (мульти-сервис) → системный граф-контракт (Фаза 1.5).
 // Один сервис на пути → тоже валидный системный граф (discovery найдёт 1).
 
-public sealed record GetSystemQuery(string Path);
+// drift=true включает линзу «дрейф от свода» — доп. проблемы категории convention (тяжелее: разбор кода per-service).
+public sealed record GetSystemQuery(string Path, bool Drift = false);
 
 public sealed class GetSystemEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapGet("/api/system", (string path, GetSystemHandler handler, CancellationToken ct) =>
+        app.MapGet("/api/system", (string path, bool? drift, GetSystemHandler handler, CancellationToken ct) =>
         {
-            GraphDto? graph = handler.Handle(new GetSystemQuery(path), ct);
+            GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false), ct);
             return graph is null
                 ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
                 : Results.Ok(graph);
         });
 }
 
-public sealed class GetSystemHandler(ISystemSource source)
+public sealed class GetSystemHandler(ISystemSource source, DriftScanner? drift = null)
 {
     public GraphDto? Handle(GetSystemQuery query, CancellationToken ct = default)
     {
@@ -33,6 +34,14 @@ public sealed class GetSystemHandler(ISystemSource source)
             !(Directory.Exists(query.Path) || File.Exists(query.Path))) return null;
 
         SystemGraph graph = source.Read(query.Path, ct);
+
+        // Линза «дрейф» — только по запросу и только если сканер доступен (в тестах может быть null).
+        if (query.Drift && drift is not null && Directory.Exists(query.Path))
+        {
+            var convention = drift.Scan(query.Path, ct);
+            if (convention.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. convention] };
+        }
+
         string project = File.Exists(query.Path)
             ? Path.GetFileName(Path.GetDirectoryName(query.Path)) ?? "system"
             : new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;

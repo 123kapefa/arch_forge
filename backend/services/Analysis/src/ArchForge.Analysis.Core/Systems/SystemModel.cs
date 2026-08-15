@@ -8,7 +8,15 @@ public enum SystemNodeKind { Service, Datastore, Topic, External }
 /// <summary>Источник связи (провенанс, честность adr/0008).</summary>
 public enum EdgeVia { Compose, Config, Code, Unknown }
 
-public enum ProblemSeverity { Critical, Warning, Coverage }
+// Critical/Warning/Coverage — по возрастанию мягкости; Info — информативно (не влияет на health, линза «дрейф»).
+public enum ProblemSeverity { Critical, Warning, Coverage, Info }
+
+/// <summary>Линза проблемы: универсальная арх-проблема vs соответствие своду (див. две линзы, adr/0008).</summary>
+public static class ProblemCategory
+{
+    public const string Architecture = "architecture"; // свод-независимо (общая БД, цикл, висячее событие)
+    public const string Convention = "convention";      // отклонение от свода (дрейф) — только когда запрошено
+}
 
 /// <summary>Узел системы: сервис / хранилище / топик / внешний (отложенный) узел.</summary>
 public sealed record SystemNode(string Id, string Name, SystemNodeKind Kind, string? Image = null);
@@ -25,8 +33,10 @@ public sealed record SystemEdge(
     double Confidence,
     bool Deferred = false);
 
-/// <summary>Обнаруженная проблема с провенансом и местом.</summary>
-public sealed record SystemProblem(ProblemSeverity Severity, string Kind, string Title, string Location);
+/// <summary>Обнаруженная проблема с провенансом, местом и линзой (по умолчанию — арх-проблема).</summary>
+public sealed record SystemProblem(
+    ProblemSeverity Severity, string Kind, string Title, string Location,
+    string Category = ProblemCategory.Architecture);
 
 public sealed record SystemGraph(
     IReadOnlyList<SystemNode> Nodes,

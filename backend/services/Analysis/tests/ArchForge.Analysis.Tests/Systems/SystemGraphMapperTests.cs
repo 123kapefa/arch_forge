@@ -70,4 +70,21 @@ public class SystemGraphMapperTests
         Assert.Equal("ok", dto.Health);                                       // и не поднимает health графа
         Assert.Contains(dto.Problems!, p => p.Severity == "coverage");
     }
+
+    [Fact]
+    public void Convention_drift_maps_category_info_and_does_not_color_health()
+    {
+        var g = new SystemGraph(
+            [new SystemNode("svc-a/app", "app", SystemNodeKind.Service, "app:1")], [],
+            [new SystemProblem(ProblemSeverity.Info, "drift", "«Svc.A»: 4 расхождений", "svc-a/app",
+                ProblemCategory.Convention)]);
+
+        var dto = SystemGraphMapper.ToDto(g, "sys");
+
+        var p = Assert.Single(dto.Problems!);
+        Assert.Equal("info", p.Severity);
+        Assert.Equal("convention", p.Category);                                   // линза для фильтра на фронте
+        Assert.Contains(dto.Nodes, n => n.Id == "svc-a/app" && n.Health == "ok"); // дрейф не красит узел
+        Assert.Equal("ok", dto.Health);                                           // и не поднимает health системы
+    }
 }
