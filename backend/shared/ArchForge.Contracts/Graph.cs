@@ -78,12 +78,14 @@ public sealed record MemberDto(
 /// <summary>Проблема с провенансом и местом — навигация «клик → к узлу/ребру» + инспектор.</summary>
 public sealed record ProblemDto(
     string Id,
-    string Severity,   // critical | warning | coverage
+    string Severity,   // critical | warning | coverage | info
     string Kind,       // drift | layer-violation | unknown-role | shared-db | service-cycle | dangling-event | …
     string Title,
     string Location,   // nodeId | edgeId
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Via = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Fix = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Fix = null,
+    // линза для фильтрации на фронте: architecture (реальные проблемы) | convention (дрейф от свода)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Category = null);
 
 /// <summary>Контур окружения. Зарезервировано под P1.5 (топология/инстанс/профиль); в Фазе 1.5 не заполняется.</summary>
 public sealed record EnvironmentDto(string Id, string Name, string Kind); // topology | instance | profile

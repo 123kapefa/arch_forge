@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core;
 using ArchForge.Analysis.Core.Features.Systems;
 using ArchForge.Analysis.Core.Systems;
 using ArchForge.Analysis.Infrastructure.Manifests;
@@ -9,6 +10,16 @@ public class GetSystemHandlerTests
     private sealed class FakeSource(SystemGraph graph) : ISystemSource
     {
         public SystemGraph Read(string root, CancellationToken ct = default) => graph;
+    }
+
+    private sealed class FakeDiscovery(IReadOnlyList<DiscoveredService> svcs) : IServiceDiscoverySource
+    {
+        public IReadOnlyList<DiscoveredService> Discover(string root) => svcs;
+    }
+
+    private sealed class FakeTypes(IReadOnlyList<RawType> raw) : ITypeSource
+    {
+        public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) => raw;
     }
 
     [Fact]
@@ -48,6 +59,53 @@ public class GetSystemHandlerTests
             var dto = new GetSystemHandler(new ComposeSystemSource()).Handle(new GetSystemQuery(f));
             Assert.NotNull(dto);
             Assert.Contains(dto!.Nodes, n => n.Name == "api");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // Линза «дрейф»: флаг drift включает convention-проблемы; по умолчанию их нет (лёгкий скан).
+    [Fact]
+    public void Drift_flag_toggles_convention_lens()
+    {
+        var dir = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "archforge_sysd_" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var source = new FakeSource(new SystemGraph([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []));
+            var scanner = new DriftScanner(
+                new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
+                new FakeTypes([new RawType("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs")]),
+                new TypeClassifier(ConventionPack.Default()));
+            var handler = new GetSystemHandler(source, scanner);
+
+            var off = handler.Handle(new GetSystemQuery(dir, Drift: false));
+            Assert.True(off!.Problems is null || off.Problems.All(p => p.Category != ProblemCategory.Convention));
+
+            var on = handler.Handle(new GetSystemQuery(dir, Drift: true));
+            Assert.Contains(on!.Problems!, p => p is { Category: ProblemCategory.Convention, Severity: "info", Kind: "drift" });
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // Дрейф гоняется только для пути-папки (Directory.Exists); путь-к-файлу compose не запускает разбор кода.
+    [Fact]
+    public void Drift_flag_ignored_for_file_path()
+    {
+        var dir = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "archforge_sysdf_" + Guid.NewGuid().ToString("N"))).FullName;
+        var f = Path.Combine(dir, "docker-compose.yml");
+        File.WriteAllText(f, "services:\n  api: { image: api:1 }\n");
+        try
+        {
+            // сканер с дрейфующим сервисом: для пути-к-ФАЙЛУ линза дрейфа не включается → convention-проблем нет
+            var scanner = new DriftScanner(
+                new FakeDiscovery([new DiscoveredService("X", Path.Combine(dir, "x"), "docker-compose.yml")]),
+                new FakeTypes([new RawType("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs")]),
+                new TypeClassifier(ConventionPack.Default()));
+            var dto = new GetSystemHandler(new ComposeSystemSource(), scanner).Handle(new GetSystemQuery(f, Drift: true));
+
+            Assert.NotNull(dto);
+            Assert.True(dto!.Problems is null || dto.Problems.All(p => p.Category != ProblemCategory.Convention));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

@@ -23,7 +23,8 @@ public static class SystemGraphMapper
             Via: ViaString(e.Via), Confidence: e.Confidence)).ToList();
 
         var problems = g.Problems
-            .Select((p, i) => new ProblemDto($"p{i}", SeverityString(p.Severity), p.Kind, p.Title, p.Location))
+            .Select((p, i) => new ProblemDto($"p{i}", SeverityString(p.Severity), p.Kind, p.Title, p.Location,
+                Category: p.Category))
             .ToList();
 
         var health = g.Problems.Any(p => p.Severity == ProblemSeverity.Critical) ? "critical"
@@ -61,9 +62,10 @@ public static class SystemGraphMapper
     {
         ProblemSeverity.Critical => "critical",
         ProblemSeverity.Warning => "warning",
-        _ => "coverage",
+        ProblemSeverity.Coverage => "coverage",
+        _ => "info",
     };
 
-    // coverage-проблема не красит узел (визуально), только critical/warning
+    // health красит только critical/warning; coverage и info (дрейф) — не красят узел
     private static string HealthOf(int worstSeverity) => worstSeverity switch { 0 => "critical", 1 => "warning", _ => "ok" };
 }

@@ -88,4 +88,17 @@ public class ContractBackCompatTests
         Assert.Equal("Production", back.Name);
         Assert.Equal("instance", back.Kind);
     }
+
+    [Fact]
+    public void Problem_category_is_additive()
+    {
+        // линза сериализуется; отсутствие (null) опускается → старый JSON без category валиден
+        var withCat = new ProblemDto("p1", "info", "drift", "дрейф", "svc", Category: "convention");
+        var json = JsonSerializer.Serialize(withCat, Web);
+        Assert.Contains("\"category\":\"convention\"", json);
+        Assert.DoesNotContain("category", JsonSerializer.Serialize(
+            new ProblemDto("p2", "warning", "shared-db", "БД", "db"), Web));
+
+        Assert.Equal("convention", JsonSerializer.Deserialize<ProblemDto>(json, Web)!.Category);
+    }
 }

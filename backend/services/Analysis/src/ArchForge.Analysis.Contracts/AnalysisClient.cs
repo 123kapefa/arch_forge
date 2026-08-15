@@ -30,10 +30,12 @@ public sealed class AnalysisClient(HttpClient http)
         return await response.Content.ReadFromJsonAsync<ImportsDto>(ct);
     }
 
-    /// <summary>Собрать СИСТЕМНЫЙ граф (мульти-сервис, Фаза 1.5) по корню. null — если Analysis не смог.</summary>
-    public async Task<GraphDto?> GetSystemAsync(string path, CancellationToken ct = default)
+    /// <summary>Собрать СИСТЕМНЫЙ граф (мульти-сервис, Фаза 1.5) по корню. null — если Analysis не смог.
+    /// <paramref name="drift"/> включает линзу «дрейф от свода» (тяжелее: разбор кода per-service).</summary>
+    public async Task<GraphDto?> GetSystemAsync(string path, bool drift = false, CancellationToken ct = default)
     {
         string url = $"/api/system?path={Uri.EscapeDataString(path)}";
+        if (drift) url += "&drift=true";
         using HttpResponseMessage response = await http.GetAsync(url, ct);
         if (!response.IsSuccessStatusCode)
             return null;
