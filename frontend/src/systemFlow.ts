@@ -1,17 +1,13 @@
-import { MarkerType, type Edge, type Node } from '@xyflow/react';
-import type { Problem, ServiceSummary, SystemGraph, SystemNode } from './system';
-import { namespaceOf, problemsAt, problemsUnder } from './systemModel';
+import dagre from '@dagrejs/dagre';
+import { MarkerType, Position, type Edge, type Node } from '@xyflow/react';
+import type { Problem, SystemGraph, SystemNode } from './system';
+import { problemsAt } from './systemModel';
 
-// Данные узлов L0 (для рендереров).
-export interface ServiceCardData {
-  summary: ServiceSummary;
-  problems: Problem[]; // проблемы сервиса (node-located на его узлах + namespace-роллап дрейфа/слоёв)
-  [key: string]: unknown;
-}
-export interface InfraNodeData {
+// Данные узла L0 (сервис/инфра — единая форма; рендер различается по node.kind).
+export interface SystemNodeData {
   node: SystemNode;
   health: string;      // ok | warning | critical
-  problems: Problem[];
+  problems: Problem[]; // проблемы, локализованные на самом узле
   [key: string]: unknown;
 }
 
@@ -31,79 +27,65 @@ export function edgeStyle(kind: string, violation: boolean): { stroke: string; s
   return DASHED.has(kind) ? { stroke, strokeDasharray: '6 4' } : { stroke };
 }
 
-// Ярусная раскладка L0: внешние сверху → сервисы в центре → хранилища/топики снизу.
-const TIER_Y = { external: 0, service: 300, infra: 680 };
-const GAP = { external: 230, service: 300, infra: 210 };
+const INFRA_KINDS = new Set(['datastore', 'topic', 'external']);
+export function isInfra(kind: string): boolean {
+  return INFRA_KINDS.has(kind);
+}
 
-function place(ids: string[], y: number, gap: number): Map<string, { x: number; y: number }> {
-  const total = Math.max(ids.length - 1, 0) * gap;
-  const map = new Map<string, { x: number; y: number }>();
-  ids.forEach((id, i) => map.set(id, { x: i * gap - total / 2, y }));
-  return map;
+// Раскладка dagre сверху-вниз: поток вызовов/зависимостей как в Blueprints (внешние → сервисы → инфра).
+const NODE_W = 190;
+const NODE_H = 56;
+function layout(nodes: Node[], edges: Edge[]): Node[] {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'TB', nodesep: 38, ranksep: 82 });
+  nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
+  edges.forEach((e) => g.setEdge(e.source, e.target));
+  dagre.layout(g);
+  return nodes.map((n) => {
+    const p = g.node(n.id);
+    return {
+      ...n,
+      position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 },
+      targetPosition: Position.Top,
+      sourcePosition: Position.Bottom,
+    };
+  });
 }
 
 /**
  * SystemGraph → узлы/рёбра React Flow для L0.
- * Compose-узлы-сервисы сворачиваются в карточки .sln (по namespace-префиксу); инфра/внешние — как есть.
- * Рёбра роллапятся на уровень карточек; петли внутри одной карточки убираются; дедуп по (src,tgt,kind).
+ * Узлы — как есть (compose-микросервисы + инфра + внешние), БЕЗ роллапа в .sln: настоящая карта системы
+ * с графом вызовов. Рёбра: петли убираем, дедуп по (src,tgt,kind), нарушение важнее. Раскладка dagre TB.
  */
 export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] } {
-  const services = g.services ?? [];
-  const cardIds = new Set(services.map((s) => s.id));
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-
-  // id узла → id узла L0: сервис-узел → карточка .sln; инфра/внешние → сам узел.
-  const toL0 = (n: SystemNode | undefined): string | null => {
-    if (!n) return null;
-    if (n.kind === 'service') {
-      const ns = namespaceOf(n.id);
-      return cardIds.has(ns) ? ns : n.id; // без карточки (нет код-линз) — оставляем узел-сервис как есть
-    }
-    return n.id;
-  };
-
-  const externalNodes = g.nodes.filter((n) => n.kind === 'external');
-  const infraNodes = g.nodes.filter((n) => n.kind === 'datastore' || n.kind === 'topic');
-
-  const posE = place(externalNodes.map((n) => n.id), TIER_Y.external, GAP.external);
-  const posS = place(services.map((s) => s.id), TIER_Y.service, GAP.service);
-  const posI = place(infraNodes.map((n) => n.id), TIER_Y.infra, GAP.infra);
-
-  const cardFlow: Node<ServiceCardData>[] = services.map((s) => ({
-    id: s.id,
-    type: 'serviceCard',
-    position: posS.get(s.id)!,
-    data: { summary: s, problems: [...problemsAt(g.problems, s.id), ...problemsUnder(g.problems, s.id)] },
-  }));
-  const infraFlow: Node<InfraNodeData>[] = [...externalNodes, ...infraNodes].map((n) => ({
+  const nodes: Node<SystemNodeData>[] = g.nodes.map((n) => ({
     id: n.id,
-    type: 'infra',
-    position: (posE.get(n.id) ?? posI.get(n.id))!,
+    type: 'sys', // единый рендерер L0; вид (сервис/инфра) — по node.kind внутри
+    position: { x: 0, y: 0 },
     data: { node: n, health: n.health ?? 'ok', problems: problemsAt(g.problems, n.id) },
   }));
 
-  // рёбра, свёрнутые на L0
   const edges = new Map<string, Edge>();
   for (const e of g.edges) {
-    const src = toL0(nodeById.get(e.source));
-    const tgt = toL0(nodeById.get(e.target));
-    if (!src || !tgt || src === tgt) continue; // петля внутри карточки — не рисуем
-    const key = `${src}|${tgt}|${e.kind}`;
+    if (e.source === e.target) continue;
+    const key = `${e.source}|${e.target}|${e.kind}`;
     const violation = e.violation ?? false;
     const prev = edges.get(key);
     if (prev) {
-      if (violation) prev.style = { ...prev.style, ...edgeStyle(e.kind, true) }; // нарушение важнее
+      if (violation) prev.style = { ...prev.style, ...edgeStyle(e.kind, true) };
       continue;
     }
     const style = edgeStyle(e.kind, violation);
     edges.set(key, {
       id: key,
-      source: src,
-      target: tgt,
+      source: e.source,
+      target: e.target,
       style,
       markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke },
     });
   }
 
-  return { nodes: [...cardFlow, ...infraFlow], edges: [...edges.values()] };
+  const edgeList = [...edges.values()];
+  return { nodes: layout(nodes, edgeList), edges: edgeList };
 }

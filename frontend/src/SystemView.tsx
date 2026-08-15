@@ -4,34 +4,24 @@ import '@xyflow/react/dist/style.css';
 import './system.css';
 
 import { fetchSystem, type SystemGraph } from './system';
-import { buildSystemFlow, type ServiceCardData, type InfraNodeData } from './systemFlow';
-import { ServiceCardNode } from './nodes/ServiceCardNode';
-import { InfraNode } from './nodes/InfraNode';
+import { buildSystemFlow, type SystemNodeData } from './systemFlow';
+import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
 
-const nodeTypes = { serviceCard: ServiceCardNode, infra: InfraNode };
+const nodeTypes = { sys: SystemNodeView };
 
-type NodeData = ServiceCardData | InfraNodeData;
-const isCard = (d: NodeData): d is ServiceCardData => 'summary' in d;
+const KIND_LABEL: Record<string, string> = {
+  service: 'сервис', datastore: 'хранилище', topic: 'шина', external: 'внешний',
+};
 
 function Inspector({ node, lens }: { node: Node; lens: Lens }) {
-  const data = node.data as NodeData;
-  const title = isCard(data) ? data.summary.name : data.node.name;
+  const data = node.data as SystemNodeData;
   const problems = problemsByLens(data.problems, lens);
 
   return (
     <div className="inspector">
-      <div className="inspector__name">{title}</div>
-      {isCard(data) && (
-        <ul className="inspector__layers">
-          {data.summary.layers.map((l) => (
-            <li key={l.name} className={`health-${l.health}`}>
-              <span>{l.name}</span>
-              {l.note && <em>{l.note}</em>}
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="inspector__name">{data.node.name}</div>
+      <div className="inspector__kind">{KIND_LABEL[data.node.kind] ?? data.node.kind}</div>
       <div className="inspector__sub">проблемы ({lens === 'architecture' ? 'реальные' : 'дрейф'})</div>
       {problems.length === 0 ? (
         <div className="panel__empty">нет</div>
