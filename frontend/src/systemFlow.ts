@@ -99,7 +99,7 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
     data: { node: n, health: n.health ?? 'ok', problems: problemsAt(g.problems, n.id) },
   }));
 
-  const edges = new Map<string, Edge>();
+  const edges = new Map<string, RoutedEdge>();
   for (const e of g.edges) {
     if (e.source === e.target) continue;
     const key = `${e.source}|${e.target}|${e.kind}`;
@@ -114,10 +114,32 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
       id: key,
       source: e.source,
       target: e.target,
+      type: 'smoothstep',                          // ортогональные линии (прямые углы)
+      pathOptions: { borderRadius: 10 },
       style,
       markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke },
     });
   }
 
-  return { nodes: layout(nodes), edges: [...edges.values()] };
+  return { nodes: layout(nodes), edges: laneOffsets([...edges.values()]) };
+}
+
+// pathOptions отсутствует в базовом Edge этой версии — добавляем для smoothstep-маршрутизации.
+type RoutedEdge = Edge & { pathOptions?: { borderRadius?: number; offset?: number } };
+
+// Разводка по дорожкам: рёбра, сходящиеся в ОДИН узел, смещаем по offset, чтобы не сливались в одну линию.
+function laneOffsets(edges: RoutedEdge[]): Edge[] {
+  const byTarget = new Map<string, RoutedEdge[]>();
+  for (const e of edges) {
+    const g = byTarget.get(e.target);
+    if (g) g.push(e); else byTarget.set(e.target, [e]);
+  }
+  for (const group of byTarget.values()) {
+    const n = group.length;
+    if (n < 2) continue;
+    group.forEach((e, i) => {
+      e.pathOptions = { borderRadius: 10, offset: (i - (n - 1) / 2) * 16 };
+    });
+  }
+  return edges;
 }
