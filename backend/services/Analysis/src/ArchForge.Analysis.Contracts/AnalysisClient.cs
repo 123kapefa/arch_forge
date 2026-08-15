@@ -29,4 +29,14 @@ public sealed class AnalysisClient(HttpClient http)
             return null;
         return await response.Content.ReadFromJsonAsync<ImportsDto>(ct);
     }
+
+    /// <summary>Собрать СИСТЕМНЫЙ граф (мульти-сервис, Фаза 1.5) по корню. null — если Analysis не смог.</summary>
+    public async Task<GraphDto?> GetSystemAsync(string path, CancellationToken ct = default)
+    {
+        string url = $"/api/system?path={Uri.EscapeDataString(path)}";
+        using HttpResponseMessage response = await http.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+        return await response.Content.ReadFromJsonAsync<GraphDto>(ct);
+    }
 }

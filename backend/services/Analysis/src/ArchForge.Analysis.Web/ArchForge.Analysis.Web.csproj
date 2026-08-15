@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ArchForge.Analysis.Core\ArchForge.Analysis.Core.csproj" />
     <ProjectReference Include="..\ArchForge.Analysis.Infrastructure.Roslyn\ArchForge.Analysis.Infrastructure.Roslyn.csproj" />
+    <ProjectReference Include="..\ArchForge.Analysis.Infrastructure.Manifests\ArchForge.Analysis.Infrastructure.Manifests.csproj" />
     <ProjectReference Include="..\..\..\..\shared\ArchForge.SharedKernel\ArchForge.SharedKernel.csproj" />
   </ItemGroup>
 

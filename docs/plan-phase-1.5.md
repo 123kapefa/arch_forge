@@ -118,8 +118,8 @@ P1.5-H  робастность мульти-сервиса — сквозной,
 ### P1.5-D — Config/DI/nginx → поведенческие рёбра (+ confidence, provenance)
 `rw-db` (строки подключения), `publishes/subscribes` (шина/события), `http-call` (base URL/`SmsMicroserviceProvider`/nginx). Каждое ребро — `Via`+`Confidence`. Порты/секреты `${KEY}` → внешний узел. **DoD**: на таргете `rw-db` и, где видно, `http-call`/`publishes`; неразрешённый target → внешний/`unknown`; тесты «видно/не видно».
 
-### P1.5-E — Сборка системного IR + Map-гейтвей
-`GET /api/system?path=`: ограниченно-параллельный разбор + мерж + инфра + рёбра + **дедуп «код > объявление»**, капы/отмена P1-H. Map: `GetSystemAsync`, `/api/map` авто system-vs-service, проекция `OnlyService`. **DoD**: system/service графы; отмена/таймаут на N сервисах; тесты шва Map↔Analysis.
+### P1.5-E — Сборка системного IR + Map-гейтвей — ✅
+`GET /api/system?path=` (Analysis): `SystemGraphMapper` (SystemGraph → аддитивный `GraphDto`), `GetSystemHandler` на `ISystemSource`; `AddManifests` регистрирует источник. Map: `AnalysisClient.GetSystemAsync` + прокси `GET /api/system`. End-to-end проверено вживую (реальный таргет: 83 узла/72 ребра/health=warning). Тесты: маппер + хендлер + шов `AnalysisClient` (стаб транспорта). **Перенесено**: ограниченно-параллельный разбор/капы (P1.5-H), `/api/map` авто system-vs-service + проекция `OnlyService` (P1.5-G, вместе с фронтом). **DoD (сужен)**: системный граф по `/api/system` ✔; отмена (`ct`) до источника ✔; тест шва ✔.
 
 ### P1.5-P — Детекция проблем + rollup здоровья (дифференциатор)
 `IProblemDetector` поверх собранного IR: поднять проблемы Фазы 1 (дрейф/слои/покрытие) на уровень системы + **системные анти-паттерны** — общая БД (несколько `rw-db` в чужой datastore), цикл сервисов (циклы в `http-call`), висячее событие (`topic` только publish/только subscribe). Rollup `Health`/счётчики по уровням; `ProblemDto` с `Fix`/`Via`/якорем. Пороги по `Confidence`. **Трогает**: `Analysis.Core` (детектор), контракт. **DoD**: на таргете найдены реальные проблемы с провенансом; ложные не рисуются (порог confidence); тесты на каждый класс анти-паттерна (фикстуры).
