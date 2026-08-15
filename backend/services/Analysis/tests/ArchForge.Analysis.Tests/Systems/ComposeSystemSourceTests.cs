@@ -59,6 +59,31 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Detects_service_cycle_through_pipeline()
+    {
+        // два сервиса зовут друг друга по HTTP → цикл (нет чёткого направления зависимостей).
+        // Проверяем, что детектор проведён сквозь весь конвейер Read, а не только юнит.
+        var f = WriteCompose("""
+            services:
+              svc-a:
+                image: ns/svc-a:1
+                environment: { SvcB__Url: "http://svc-b:8080" }
+              svc-b:
+                image: ns/svc-b:1
+                environment: { SvcA__Url: "http://svc-a:8080" }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "svc-a", "svc-b", "http-call"));
+            Assert.True(HasEdge(g, "svc-b", "svc-a", "http-call"));
+            Assert.Contains(g.Problems,
+                p => p is { Kind: "service-cycle", Severity: ProblemSeverity.Critical });
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
     public void Detects_shared_db_when_two_apps_write_one()
     {
         var f = WriteCompose("""

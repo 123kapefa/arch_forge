@@ -90,7 +90,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         var httpProblems = ResolveHttpCalls(nodes, edges, httpIntents, ct);
 
         var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), []);
-        var problems = SharedDbDetector.Detect(graph).Concat(httpProblems).ToList();
+        var problems = SystemProblemDetector.Detect(graph).Concat(httpProblems).ToList();
         return graph with { Problems = problems };
     }
 
