@@ -621,13 +621,9 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
         </aside>
       </div>
 
+      {/* раскрывающийся список проблем (над полосой «ПРОБЛЕМЫ ПРОЕКТА») */}
       {graph && problemsOpen && (
         <div className="problems-drawer">
-          <div className="pd__head">
-            <span className="pd__title">ПРОБЛЕМЫ ПРОЕКТА</span>
-            <span className="pd__sub">линза «{lens === 'architecture' ? 'реальные' : 'дрейф'}» · {lensProblems.length}</span>
-            <button className="pd__close" onClick={() => setProblemsOpen(false)} title="Свернуть"><Icon name="close" size={14} /></button>
-          </div>
           <div className="pd__list">
             {lensProblems.length === 0 ? (
               <div className="panel__empty">нет проблем в этой линзе</div>
@@ -642,14 +638,28 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
         </div>
       )}
 
+      {/* полоса-заголовок панели проблем — выше статус-бара, раскрывается */}
+      {graph && (
+        <button className="problems-bar" onClick={() => setProblemsOpen((o) => !o)}>
+          <span className="pb__title">ПРОБЛЕМЫ ПРОЕКТА</span>
+          <span className="pb-badge pb-badge--crit">⊖ {counts.critical}</span>
+          <span className="pb-badge pb-badge--warn">⚠ {counts.warning}</span>
+          <span className="pb-badge pb-badge--cov">○ {counts.coverage}</span>
+          <span className="pb__toggle">
+            {problemsOpen ? 'свернуть' : 'развернуть'}
+            <Icon name={problemsOpen ? 'chevronDown' : 'chevronUp'} size={13} />
+          </span>
+        </button>
+      )}
+
       <footer className="sysview__status">
         <span className={`status__health health-${graph?.health ?? 'none'}`}>{graph?.health ?? '—'}</span>
-        <button className="status__problems" onClick={() => setProblemsOpen((o) => !o)} title="Проблемы проекта">
-          ● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}
-        </button>
-        <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
-        <span className="status__lens">
-          линза «{lens === 'architecture' ? 'реальные проблемы' : 'дрейф'}»: {lensProblems.length}
+        {graph && <span className="status__proj">{graph.project}</span>}
+        {graph && <span className="status__ok">✓ анализ актуален</span>}
+        <span className="status__right">
+          <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}</span>
+          <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
+          <span>линза «{lens === 'architecture' ? 'реальные' : 'дрейф'}»: {lensProblems.length}</span>
         </span>
       </footer>
 
