@@ -13,6 +13,7 @@ import { buildSystemFlow, filterGraph, edgeKindsOf, edgeStyle, type SystemNodeDa
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
 import { FolderPicker } from './FolderPicker';
+import { Icon, type IconName } from './Icon';
 
 const nodeTypes = { sys: SystemNodeView };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
@@ -193,12 +194,12 @@ function ProjectMenu({ graph, path, recents, onClose, actions, onBrowse, onPick 
   onBrowse: () => void;
   onPick: (r: Recent) => void;
 }) {
-  const rows: { ic: string; label: string; sc?: string; run: () => void }[] = [
-    { ic: '⟳', label: 'Пере-анализировать', sc: '⌘R', run: actions.reanalyze },
-    { ic: '💾', label: 'Сохранить раскладку', sc: '⌘S', run: actions.save },
-    { ic: '↺', label: 'Сбросить раскладку', run: actions.reset },
-    { ic: '⬇', label: 'Экспорт: JSON', run: actions.exportJson },
-    { ic: '✕', label: 'Закрыть проект', run: actions.closeProject },
+  const rows: { icon: IconName; label: string; sc?: string; run: () => void }[] = [
+    { icon: 'refresh', label: 'Пере-анализировать', sc: '⌘R', run: actions.reanalyze },
+    { icon: 'save', label: 'Сохранить раскладку', sc: '⌘S', run: actions.save },
+    { icon: 'reset', label: 'Сбросить раскладку', run: actions.reset },
+    { icon: 'download', label: 'Экспорт: JSON', run: actions.exportJson },
+    { icon: 'close', label: 'Закрыть проект', run: actions.closeProject },
   ];
   return (
     <div className="pm" role="menu">
@@ -212,7 +213,7 @@ function ProjectMenu({ graph, path, recents, onClose, actions, onBrowse, onPick 
           <div className="pm__group">
             {rows.map((r) => (
               <button key={r.label} className="pm__row" onClick={() => { r.run(); onClose(); }}>
-                <span className="pm__ic">{r.ic}</span>
+                <span className="pm__ic"><Icon name={r.icon} /></span>
                 <span className="pm__rowlabel">{r.label}</span>
                 {r.sc && <span className="pm__sc">{r.sc}</span>}
               </button>
@@ -223,7 +224,7 @@ function ProjectMenu({ graph, path, recents, onClose, actions, onBrowse, onPick 
       <div className="pm__open">
         <div className="pm__section">{graph ? 'ОТКРЫТЬ ДРУГОЙ ПРОЕКТ' : 'ОТКРЫТЬ ПРОЕКТ'}</div>
         <button className="pm__row" onClick={() => { onBrowse(); onClose(); }}>
-          <span className="pm__ic">📂</span>
+          <span className="pm__ic"><Icon name="folder" /></span>
           <span className="pm__rowlabel">Выбрать папку…</span>
         </button>
       </div>
@@ -350,9 +351,9 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
             {graph ? (
               <><span className="crumb__dot" style={{ background: healthColor(graph.health) }} />{graph.project}</>
             ) : (
-              <>📂 Открыть проект</>
+              <><Icon name="folderOpen" /> Открыть проект</>
             )}
-            <span className="crumb__chev">{menuOpen ? '▴' : '▾'}</span>
+            <span className="crumb__chev"><Icon name={menuOpen ? 'chevronUp' : 'chevronDown'} size={14} /></span>
           </button>
           {menuOpen && (
             <>
@@ -456,7 +457,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               </ReactFlowProvider>
             ) : (
               <div className="sysview__empty">
-                {loading ? 'анализирую…' : <>Проект не открыт. Нажми <b>«📂 Открыть проект»</b> вверху слева.</>}
+                {loading ? 'анализирую…' : <>Проект не открыт. Нажми <b>«Открыть проект»</b> вверху слева.</>}
               </div>
             )}
           </div>

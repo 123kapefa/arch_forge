@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { browseFs, type FsListing } from './fs';
+import { Icon } from './Icon';
 
 /**
  * Пикер папки: навигация по диску сервера (через /api/fs) — как в HowToUseIt.
@@ -39,15 +40,17 @@ export function FolderPicker({ initial, onSelect, onClose }: {
       <div className="fp" onClick={(e) => e.stopPropagation()}>
         <div className="fp__head">
           <span className="fp__title">Выбрать папку проекта</span>
-          <button className="fp__x" onClick={onClose} title="Закрыть">✕</button>
+          <button className="fp__x" onClick={onClose} title="Закрыть"><Icon name="close" /></button>
         </div>
 
         <div className="fp__bar">
           <button
             className="fp__up" onClick={() => listing?.parent != null && void go(listing.parent)}
             disabled={listing?.parent == null || loading} title="На уровень выше"
-          >↑ вверх</button>
-          <button className="fp__up" onClick={() => void go('/')} disabled={loading} title="К списку дисков">💽 диски</button>
+          ><Icon name="arrowUp" /> вверх</button>
+          <button className="fp__up" onClick={() => void go('/')} disabled={loading} title="К списку дисков">
+            <Icon name="drive" /> диски
+          </button>
           <input
             className="fp__path" value={draft} spellCheck={false}
             onChange={(e) => setDraft(e.target.value)}
@@ -61,13 +64,13 @@ export function FolderPicker({ initial, onSelect, onClose }: {
           {loading && <div className="fp__muted">…</div>}
           {!loading && listing?.drives.map((d) => (
             <button key={d} className="fp__row" onClick={() => void go(d)} onDoubleClick={() => onSelect(d)} title={d}>
-              <span className="fp__ic">💽</span>
+              <span className="fp__ic"><Icon name="drive" /></span>
               <span className="fp__name">{d}</span>
             </button>
           ))}
           {!loading && listing?.entries.map((e) => (
             <button key={e.path} className="fp__row" onClick={() => void go(e.path)} onDoubleClick={() => onSelect(e.path)} title={e.path}>
-              <span className="fp__ic">📁</span>
+              <span className="fp__ic"><Icon name="folder" /></span>
               <span className="fp__name">{e.name}</span>
               {e.project && <span className="fp__badge">проект</span>}
             </button>

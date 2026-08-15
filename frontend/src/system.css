@@ -37,6 +37,9 @@
 .crumbs { color: var(--muted); }
 .crumbs b { color: var(--text); }
 
+/* --- иконки (SVG, наследуют цвет текста) --- */
+.icon { display: block; flex: none; }
+
 /* --- плашка проекта + выпадающее меню --- */
 .crumb-wrap { position: relative; display: inline-flex; }
 .crumb--project {
@@ -47,7 +50,7 @@
 }
 .crumb--project:hover { border-color: var(--accent); }
 .crumb__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.crumb__chev { color: var(--muted); font-size: 11px; }
+.crumb__chev { color: var(--muted); display: inline-flex; align-items: center; }
 
 .pm-backdrop { position: fixed; inset: 0; z-index: 40; }
 .pm {
@@ -84,10 +87,11 @@
 .fp__title { font-weight: 600; font-size: 15px; }
 .fp__x {
   margin-left: auto; background: transparent; border: none; color: var(--muted);
-  font-size: 15px; cursor: pointer;
+  cursor: pointer; display: inline-flex; align-items: center;
 }
 .fp__bar { display: flex; gap: 8px; padding: 10px 14px; }
 .fp__up {
+  display: inline-flex; align-items: center; gap: 6px;
   background: transparent; border: 1px solid var(--card-line); color: var(--text);
   border-radius: 6px; padding: 6px 10px; cursor: pointer; white-space: nowrap;
 }
@@ -106,7 +110,7 @@
   font-size: 13px; text-align: left; padding: 8px 8px; border-radius: 6px; cursor: pointer;
 }
 .fp__row:hover { background: rgba(108, 140, 255, 0.12); }
-.fp__ic { flex: none; }
+.fp__ic { display: inline-flex; align-items: center; color: var(--muted); flex: none; }
 .fp__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fp__badge {
   margin-left: auto; font-size: 11px; padding: 1px 7px; border-radius: 10px;
@@ -132,7 +136,7 @@
   font-size: 13px; text-align: left; padding: 8px 10px; border-radius: 6px; cursor: pointer;
 }
 .pm__row:hover { background: rgba(108, 140, 255, 0.12); }
-.pm__ic { width: 16px; text-align: center; color: var(--muted); flex: none; }
+.pm__ic { display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--muted); flex: none; }
 .pm__rowlabel { flex: 1; }
 .pm__sc { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
 .pm__recents { padding: 6px 0 2px; }
