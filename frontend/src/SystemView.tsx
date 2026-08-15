@@ -176,49 +176,71 @@ function healthColor(h?: string): string {
 
 interface ProjectActions {
   reanalyze: () => void; save: () => void; reset: () => void;
-  exportJson: () => void; openFolder: () => void; closeProject: () => void;
+  exportJson: () => void; closeProject: () => void;
 }
 
-/** Выпадающее меню проекта: шапка (имя/путь/сводка) + действия + недавние проекты. */
-function ProjectMenu({ graph, path, nodes, recents, onClose, actions, onPick }: {
-  graph: SystemGraph;
+/**
+ * Меню проекта — всегда доступно (даже без открытого проекта).
+ * Есть проект → шапка (имя/путь/сводка) + действия; всегда → поле «Открыть проект» + недавние.
+ */
+function ProjectMenu({ graph, path, recents, loading, onClose, actions, onOpenPath, onPick }: {
+  graph: SystemGraph | null;
   path: string;
-  nodes: number;
   recents: Recent[];
+  loading: boolean;
   onClose: () => void;
   actions: ProjectActions;
+  onOpenPath: (path: string) => void;
   onPick: (r: Recent) => void;
 }) {
+  const [draft, setDraft] = useState('');
+  const submit = () => { const p = draft.trim(); if (p) onOpenPath(p); };
   const rows: { ic: string; label: string; sc?: string; run: () => void }[] = [
     { ic: '⟳', label: 'Пере-анализировать', sc: '⌘R', run: actions.reanalyze },
     { ic: '💾', label: 'Сохранить раскладку', sc: '⌘S', run: actions.save },
     { ic: '↺', label: 'Сбросить раскладку', run: actions.reset },
     { ic: '⬇', label: 'Экспорт: JSON', run: actions.exportJson },
-    { ic: '📂', label: 'Открыть папку проекта…', sc: '⌘O', run: actions.openFolder },
-    { ic: '✕', label: 'Закрыть проект', sc: '⌘W', run: actions.closeProject },
+    { ic: '✕', label: 'Закрыть проект', run: actions.closeProject },
   ];
   return (
     <div className="pm" role="menu">
-      <div className="pm__head">
-        <div className="pm__title"><span className="pm__dot" style={{ background: healthColor(graph.health) }} />{graph.project}</div>
-        <div className="pm__path" title={path}>{path}</div>
-        <div className="pm__metaline">{nodes} узлов · health {graph.health ?? '—'}</div>
-      </div>
-      <div className="pm__group">
-        {rows.map((r) => (
-          <button key={r.label} className="pm__row" onClick={() => { r.run(); onClose(); }}>
-            <span className="pm__ic">{r.ic}</span>
-            <span className="pm__rowlabel">{r.label}</span>
-            {r.sc && <span className="pm__sc">{r.sc}</span>}
+      {graph && (
+        <>
+          <div className="pm__head">
+            <div className="pm__title"><span className="pm__dot" style={{ background: healthColor(graph.health) }} />{graph.project}</div>
+            <div className="pm__path" title={path}>{path}</div>
+            <div className="pm__metaline">{graph.nodes.length} узлов · health {graph.health ?? '—'}</div>
+          </div>
+          <div className="pm__group">
+            {rows.map((r) => (
+              <button key={r.label} className="pm__row" onClick={() => { r.run(); onClose(); }}>
+                <span className="pm__ic">{r.ic}</span>
+                <span className="pm__rowlabel">{r.label}</span>
+                {r.sc && <span className="pm__sc">{r.sc}</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      <div className="pm__open">
+        <div className="pm__section">{graph ? 'ОТКРЫТЬ ДРУГОЙ ПРОЕКТ' : 'ОТКРЫТЬ ПРОЕКТ'}</div>
+        <div className="pm__openrow">
+          <input
+            className="pm__input" value={draft} onChange={(e) => setDraft(e.target.value)}
+            placeholder="путь к корню системы (workspace)" spellCheck={false} autoFocus={!graph}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+          />
+          <button className="pm__openbtn" onClick={submit} disabled={loading || !draft.trim()}>
+            {loading ? '…' : 'Открыть'}
           </button>
-        ))}
+        </div>
       </div>
       {recents.length > 0 && (
         <div className="pm__recents">
           <div className="pm__section">НЕДАВНИЕ ПРОЕКТЫ</div>
           {recents.map((r) => (
             <button key={r.path} className="pm__recent" onClick={() => { onPick(r); onClose(); }}>
-              <span className="pm__dot" style={{ background: r.path === path ? healthColor(graph.health) : '#5e6a7d' }} />
+              <span className="pm__dot" style={{ background: r.path === path ? healthColor(graph?.health) : '#5e6a7d' }} />
               <span className="pm__rname">{r.name}</span>
               <span className="pm__rmeta">{r.nodes} узлов · {relTime(r.at)}</span>
             </button>
@@ -231,7 +253,6 @@ function ProjectMenu({ graph, path, nodes, recents, onClose, actions, onPick }: 
 
 /** L0 System Overview: карточки-сервисы + инфра + рёбра, панель «Вид», инспектор, статус-бар. */
 export function SystemView({ onExit }: { onExit?: () => void }) {
-  const [pathInput, setPathInput] = useState('');
   const [graph, setGraph] = useState<SystemGraph | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -246,7 +267,6 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);  // выпадающее меню проекта
   const [recents, setRecents] = useState<Recent[]>(() => loadRecents());
   const flowRef = useRef<FlowHandle>(null);
-  const pathInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async (rawPath: string) => {
     const path = rawPath.trim();
@@ -288,16 +308,12 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     URL.revokeObjectURL(url);
   }, [graph]);
 
-  const openFolder = useCallback(() => {
-    pathInputRef.current?.focus();
-    pathInputRef.current?.select();
-  }, []);
 
   // Восстановить последний открытый проект при старте.
   useEffect(() => {
     let lastPath = '';
     try { lastPath = localStorage.getItem('af_path') ?? ''; } catch { /* ignore */ }
-    if (lastPath) { setPathInput(lastPath); void load(lastPath); }
+    if (lastPath) void load(lastPath);
   }, [load]);
 
   // Клавиатура: ⌘S — сохранить раскладку; Esc — закрыть меню проекта.
@@ -337,33 +353,32 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     <div className="sysview">
       <header className="sysview__top">
         <div className="crumb-wrap">
-          {graph ? (
-            <button className="crumb crumb--project" onClick={() => setMenuOpen((o) => !o)}>
-              <span className="crumb__dot" style={{ background: healthColor(graph.health) }} />
-              {graph.project}
-              <span className="crumb__chev">{menuOpen ? '▴' : '▾'}</span>
-            </button>
-          ) : (
-            <span className="crumb crumb--root">система</span>
-          )}
-          {menuOpen && graph && (
+          <button className="crumb crumb--project" onClick={() => setMenuOpen((o) => !o)}>
+            {graph ? (
+              <><span className="crumb__dot" style={{ background: healthColor(graph.health) }} />{graph.project}</>
+            ) : (
+              <>📂 Открыть проект</>
+            )}
+            <span className="crumb__chev">{menuOpen ? '▴' : '▾'}</span>
+          </button>
+          {menuOpen && (
             <>
               <div className="pm-backdrop" onClick={() => setMenuOpen(false)} />
               <ProjectMenu
                 graph={graph}
                 path={loadedPath}
-                nodes={graph.nodes.length}
                 recents={recents}
+                loading={loading}
                 onClose={() => setMenuOpen(false)}
                 actions={{
                   reanalyze: () => void load(loadedPath),
                   save: () => flowRef.current?.save(),
                   reset: () => flowRef.current?.reset(),
                   exportJson,
-                  openFolder,
                   closeProject,
                 }}
-                onPick={(r) => { setPathInput(r.path); void load(r.path); }}
+                onOpenPath={(p) => { setMenuOpen(false); void load(p); }}
+                onPick={(r) => void load(r.path)}
               />
             </>
           )}
@@ -433,29 +448,25 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
         </aside>
 
         <main className="sysview__board">
-          <form className="sysview__load" onSubmit={(e) => { e.preventDefault(); void load(pathInput); }}>
-            <input
-              ref={pathInputRef}
-              value={pathInput}
-              onChange={(e) => setPathInput(e.target.value)}
-              placeholder="путь к корню системы (workspace)"
-              spellCheck={false}
-            />
-            <button type="submit" disabled={loading}>{loading ? '…' : 'система'}</button>
-          </form>
           {error && <div className="sysview__error">{error}</div>}
           <div className="sysview__flow">
-            <ReactFlowProvider>
-              <Flow
-                ref={flowRef}
-                flow={flow}
-                magnet={magnet}
-                storageKey={storageKey}
-                onDirty={setSaved}
-                onSelect={setSelected}
-                onClear={() => setSelected(null)}
-              />
-            </ReactFlowProvider>
+            {graph ? (
+              <ReactFlowProvider>
+                <Flow
+                  ref={flowRef}
+                  flow={flow}
+                  magnet={magnet}
+                  storageKey={storageKey}
+                  onDirty={setSaved}
+                  onSelect={setSelected}
+                  onClear={() => setSelected(null)}
+                />
+              </ReactFlowProvider>
+            ) : (
+              <div className="sysview__empty">
+                {loading ? 'анализирую…' : <>Проект не открыт. Нажми <b>«📂 Открыть проект»</b> вверху слева.</>}
+              </div>
+            )}
           </div>
         </main>
 
