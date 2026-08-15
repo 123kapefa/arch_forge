@@ -12,6 +12,7 @@ import { fetchSystem, type SystemGraph } from './system';
 import { buildSystemFlow, filterGraph, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { problemsByLens, severityCounts, type Lens } from './systemModel';
+import { FolderPicker } from './FolderPicker';
 
 const nodeTypes = { sys: SystemNodeView };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
@@ -183,18 +184,15 @@ interface ProjectActions {
  * Меню проекта — всегда доступно (даже без открытого проекта).
  * Есть проект → шапка (имя/путь/сводка) + действия; всегда → поле «Открыть проект» + недавние.
  */
-function ProjectMenu({ graph, path, recents, loading, onClose, actions, onOpenPath, onPick }: {
+function ProjectMenu({ graph, path, recents, onClose, actions, onBrowse, onPick }: {
   graph: SystemGraph | null;
   path: string;
   recents: Recent[];
-  loading: boolean;
   onClose: () => void;
   actions: ProjectActions;
-  onOpenPath: (path: string) => void;
+  onBrowse: () => void;
   onPick: (r: Recent) => void;
 }) {
-  const [draft, setDraft] = useState('');
-  const submit = () => { const p = draft.trim(); if (p) onOpenPath(p); };
   const rows: { ic: string; label: string; sc?: string; run: () => void }[] = [
     { ic: '⟳', label: 'Пере-анализировать', sc: '⌘R', run: actions.reanalyze },
     { ic: '💾', label: 'Сохранить раскладку', sc: '⌘S', run: actions.save },
@@ -224,16 +222,10 @@ function ProjectMenu({ graph, path, recents, loading, onClose, actions, onOpenPa
       )}
       <div className="pm__open">
         <div className="pm__section">{graph ? 'ОТКРЫТЬ ДРУГОЙ ПРОЕКТ' : 'ОТКРЫТЬ ПРОЕКТ'}</div>
-        <div className="pm__openrow">
-          <input
-            className="pm__input" value={draft} onChange={(e) => setDraft(e.target.value)}
-            placeholder="путь к корню системы (workspace)" spellCheck={false} autoFocus={!graph}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
-          />
-          <button className="pm__openbtn" onClick={submit} disabled={loading || !draft.trim()}>
-            {loading ? '…' : 'Открыть'}
-          </button>
-        </div>
+        <button className="pm__row" onClick={() => { onBrowse(); onClose(); }}>
+          <span className="pm__ic">📂</span>
+          <span className="pm__rowlabel">Выбрать папку…</span>
+        </button>
       </div>
       {recents.length > 0 && (
         <div className="pm__recents">
@@ -265,6 +257,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [loadedPath, setLoadedPath] = useState(''); // путь загруженного проекта — ключ раскладки
   const [saved, setSaved] = useState(true);         // раскладка совпадает с сохранённой
   const [menuOpen, setMenuOpen] = useState(false);  // выпадающее меню проекта
+  const [pickerOpen, setPickerOpen] = useState(false); // модалка выбора папки
   const [recents, setRecents] = useState<Recent[]>(() => loadRecents());
   const flowRef = useRef<FlowHandle>(null);
 
@@ -368,7 +361,6 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
                 graph={graph}
                 path={loadedPath}
                 recents={recents}
-                loading={loading}
                 onClose={() => setMenuOpen(false)}
                 actions={{
                   reanalyze: () => void load(loadedPath),
@@ -377,7 +369,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
                   exportJson,
                   closeProject,
                 }}
-                onOpenPath={(p) => { setMenuOpen(false); void load(p); }}
+                onBrowse={() => setPickerOpen(true)}
                 onPick={(r) => void load(r.path)}
               />
             </>
@@ -484,6 +476,14 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           линза «{lens === 'architecture' ? 'реальные проблемы' : 'дрейф'}»: {lensProblems.length}
         </span>
       </footer>
+
+      {pickerOpen && (
+        <FolderPicker
+          initial={loadedPath || undefined}
+          onSelect={(p) => { setPickerOpen(false); void load(p); }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }
