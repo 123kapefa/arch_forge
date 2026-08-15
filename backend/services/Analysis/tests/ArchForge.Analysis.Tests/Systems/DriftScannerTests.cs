@@ -27,7 +27,7 @@ public class DriftScannerTests
         new(name, Path.Combine(root, name), "docker-compose.yml");
 
     private static DriftScanner Scanner(IReadOnlyList<DiscoveredService> svcs, Func<string, IReadOnlyList<RawType>> read) =>
-        new(new StubDiscovery(svcs), new StubTypes(read), new TypeClassifier(ConventionPack.Default()));
+        new(new ServiceAnalyzer(new StubDiscovery(svcs), new StubTypes(read), new TypeClassifier(ConventionPack.Default())));
 
     private static string TempRoot() =>
         Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "archforge_drift_" + Guid.NewGuid().ToString("N"))).FullName;

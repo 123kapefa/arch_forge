@@ -54,9 +54,9 @@ public class AnalysisClientTests
         Assert.Null(g);
     }
 
-    // Ревью #22 High #1: линза «дрейф» достижима через Map — флаг доходит до Analysis query-string.
+    // Код-линзы (дрейф/слои) достижимы фронту через Map — флаги доходят до Analysis query-string.
     [Fact]
-    public async Task GetSystemAsync_passes_drift_flag()
+    public async Task GetSystemAsync_passes_code_lens_flags()
     {
         var cap = new CapturingHandler();
         var client = new AnalysisClient(new HttpClient(cap) { BaseAddress = new Uri("http://analysis") });
@@ -64,7 +64,11 @@ public class AnalysisClientTests
         await client.GetSystemAsync("/root", drift: true);
         Assert.Contains("drift=true", cap.LastUrl);
 
-        await client.GetSystemAsync("/root", drift: false);
-        Assert.DoesNotContain("drift", cap.LastUrl!); // по умолчанию — лёгкий скан, без флага
+        await client.GetSystemAsync("/root", layers: true);
+        Assert.Contains("layers=true", cap.LastUrl);
+
+        await client.GetSystemAsync("/root");
+        Assert.DoesNotContain("drift", cap.LastUrl!);   // по умолчанию — лёгкий скан, без флагов
+        Assert.DoesNotContain("layers", cap.LastUrl!);
     }
 }
