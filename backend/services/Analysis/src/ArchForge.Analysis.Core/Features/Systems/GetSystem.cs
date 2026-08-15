@@ -28,10 +28,14 @@ public sealed class GetSystemHandler(ISystemSource source)
 {
     public GraphDto? Handle(GetSystemQuery query, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(query.Path) || !Directory.Exists(query.Path)) return null;
+        // ISystemSource принимает и корень-папку, и путь к самому compose (как его тесты) — не сужаем.
+        if (string.IsNullOrWhiteSpace(query.Path) ||
+            !(Directory.Exists(query.Path) || File.Exists(query.Path))) return null;
 
         SystemGraph graph = source.Read(query.Path, ct);
-        string project = new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
+        string project = File.Exists(query.Path)
+            ? Path.GetFileName(Path.GetDirectoryName(query.Path)) ?? "system"
+            : new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
         return SystemGraphMapper.ToDto(graph, project);
     }
 }

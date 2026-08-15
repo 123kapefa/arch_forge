@@ -30,6 +30,8 @@ public static class SystemGraphMapper
             : g.Problems.Any(p => p.Severity == ProblemSeverity.Warning) ? "warning"
             : "ok";
 
+        // TODO(P1.5-G): системное покрытие — заглушка (total=узлы). Настоящая агрегация per-service —
+        // когда per-service тип-графы вольются в системный IR (иначе фронт-виджет покажет 0% marker).
         return new GraphDto(project, nodes, edges,
             new CoverageDto(0, 0, 0, nodes.Count), Drift: [],
             Health: health,

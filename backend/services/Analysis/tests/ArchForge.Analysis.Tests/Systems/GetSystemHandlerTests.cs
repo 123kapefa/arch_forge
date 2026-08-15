@@ -1,5 +1,6 @@
 using ArchForge.Analysis.Core.Features.Systems;
 using ArchForge.Analysis.Core.Systems;
+using ArchForge.Analysis.Infrastructure.Manifests;
 
 namespace ArchForge.Analysis.Tests.Systems;
 
@@ -30,6 +31,23 @@ public class GetSystemHandlerTests
 
             Assert.NotNull(dto);
             Assert.Contains(dto!.Nodes, n => n.Kind == "service" && n.Name == "api");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // Ревью #19 M1: эндпоинт/хендлер должен принимать и путь-к-файлу compose (источник его поддерживает).
+    [Fact]
+    public void Accepts_compose_file_path()
+    {
+        var dir = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "archforge_sysf_" + Guid.NewGuid().ToString("N"))).FullName;
+        var f = Path.Combine(dir, "docker-compose.yml");
+        File.WriteAllText(f, "services:\n  api: { image: api:1 }\n");
+        try
+        {
+            var dto = new GetSystemHandler(new ComposeSystemSource()).Handle(new GetSystemQuery(f));
+            Assert.NotNull(dto);
+            Assert.Contains(dto!.Nodes, n => n.Name == "api");
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

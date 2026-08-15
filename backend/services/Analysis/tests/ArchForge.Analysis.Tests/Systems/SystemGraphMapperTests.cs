@@ -42,4 +42,32 @@ public class SystemGraphMapperTests
         Assert.Equal("ok", dto.Health);
         Assert.Null(dto.Problems); // пусто → null (не пишется в JSON)
     }
+
+    [Fact]
+    public void Warning_problem_maps_to_warning_health()
+    {
+        var g = new SystemGraph(
+            [new SystemNode("s/cache", "cache", SystemNodeKind.Datastore, "redis:7")], [],
+            [new SystemProblem(ProblemSeverity.Warning, "shared-store", "общий redis", "s/cache")]);
+
+        var dto = SystemGraphMapper.ToDto(g, "sys");
+
+        Assert.Equal("warning", dto.Health);
+        Assert.Contains(dto.Nodes, n => n.Id == "s/cache" && n.Health == "warning");
+        Assert.Contains(dto.Problems!, p => p is { Severity: "warning", Kind: "shared-store" });
+    }
+
+    [Fact]
+    public void Coverage_problem_does_not_color_node_or_graph()
+    {
+        var g = new SystemGraph(
+            [new SystemNode("s/web", "web", SystemNodeKind.Service, "web:1")], [],
+            [new SystemProblem(ProblemSeverity.Coverage, "ambiguous-target", "неоднозначно", "s/web")]);
+
+        var dto = SystemGraphMapper.ToDto(g, "sys");
+
+        Assert.Contains(dto.Nodes, n => n.Id == "s/web" && n.Health == "ok"); // coverage не красит узел
+        Assert.Equal("ok", dto.Health);                                       // и не поднимает health графа
+        Assert.Contains(dto.Problems!, p => p.Severity == "coverage");
+    }
 }
