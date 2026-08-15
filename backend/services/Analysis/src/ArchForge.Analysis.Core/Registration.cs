@@ -11,6 +11,7 @@ public static class Registration
         services.AddSingleton<TypeClassifier>();
         services.AddTransient<Features.Analysis.AnalyzeSolutionHandler>();
         services.AddTransient<Features.Imports.GetImportsHandler>();
+        services.AddTransient<Features.Systems.GetSystemHandler>();
         services.AddEndpoints(typeof(Registration).Assembly);
         return services;
     }
