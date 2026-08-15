@@ -260,7 +260,7 @@
 /* имя проекта — пилюля, цвет = здоровье (амбер/красный/зелёный), вместо слова WARNING */
 .status__proj {
   display: inline-flex; align-items: center; gap: 6px; font-weight: 600;
-  padding: 2px 10px; border-radius: 6px;
+  padding: 2px 9px; border-radius: 6px; margin-left: -6px; /* подтянуть к левому краю */
 }
 .status__proj.health-ok { color: var(--ok); background: rgba(111, 207, 119, 0.15); }
 .status__proj.health-warning { color: var(--warn); background: rgba(224, 178, 74, 0.15); }
