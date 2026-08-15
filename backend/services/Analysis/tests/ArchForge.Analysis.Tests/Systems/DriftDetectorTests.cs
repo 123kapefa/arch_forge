@@ -47,4 +47,13 @@ public class DriftDetectorTests
         var problems = DriftDetector.Detect([Ok("a", Drifting), Ok("b", Drifting)]);
         Assert.Equal(new[] { "a", "b" }, problems.Select(p => p.Location));
     }
+
+    [Fact]
+    public void Mixed_batch_reports_failure_and_drift()
+    {
+        // сбой и дрейф в одном батче обрабатываются независимо (per-service)
+        var problems = DriftDetector.Detect([Failed("bad"), Ok("good", Drifting)]);
+        Assert.Contains(problems, p => p is { Kind: "drift-scan-failed", Location: "bad" });
+        Assert.Contains(problems, p => p is { Kind: "drift", Location: "good" });
+    }
 }
