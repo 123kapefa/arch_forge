@@ -338,6 +338,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lens, setLens] = useState<Lens>('architecture');
+  const [runLayers, setRunLayers] = useState(true); // анализ кода: нарушения слоёв (architecture)
+  const [runDrift, setRunDrift] = useState(true);   // анализ кода: дрейф от свода (convention)
   const [selected, setSelected] = useState<Node | null>(null);
   const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
   const [minConfidence, setMinConfidence] = useState(0);
@@ -353,6 +355,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [pickerOpen, setPickerOpen] = useState(false); // модалка выбора папки
   const [recents, setRecents] = useState<Recent[]>(() => loadRecents());
   const flowRef = useRef<FlowHandle>(null);
+  const flagsRef = useRef({ layers: true, drift: true }); // текущие флаги анализа (для стабильного load)
+  flagsRef.current = { layers: runLayers, drift: runDrift };
 
   const load = useCallback(async (rawPath: string) => {
     const path = rawPath.trim();
@@ -361,8 +365,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setError(null);
     setSelected(null);
     try {
-      // код-линзы включены: нужны проблемы слоёв/дрейфа + сводка сервисов (для drill)
-      const g = await fetchSystem({ path, drift: true, layers: true });
+      // какие код-анализы гнать — выбор пользователя (флаги drift/layers)
+      const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers });
       setGraph(g);
       setLoadedPath(path);
       setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
@@ -375,6 +379,14 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       setLoading(false);
     }
   }, []);
+
+  // Выбрать, какие код-анализы гнать → пере-анализировать текущий проект с новыми флагами.
+  const setAnalysis = useCallback((layers: boolean, drift: boolean) => {
+    setRunLayers(layers);
+    setRunDrift(drift);
+    flagsRef.current = { layers, drift };
+    if (loadedPath) void load(loadedPath);
+  }, [loadedPath, load]);
 
   const closeProject = useCallback(() => {
     setGraph(null);
@@ -523,6 +535,20 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               <input type="radio" name="lens" checked={lens === 'convention'} onChange={() => setLens('convention')} />
               дрейф от свода
             </label>
+          </div>
+          <div className="panel__group">
+            <div className="panel__label">АНАЛИЗ КОДА</div>
+            <label className="opt">
+              <input type="checkbox" checked={runLayers} disabled={loading}
+                onChange={(e) => setAnalysis(e.target.checked, runDrift)} />
+              нарушения слоёв
+            </label>
+            <label className="opt">
+              <input type="checkbox" checked={runDrift} disabled={loading}
+                onChange={(e) => setAnalysis(runLayers, e.target.checked)} />
+              дрейф от свода
+            </label>
+            <div className="panel__hint">{loading ? 'анализирую…' : 'по отдельности или вместе; структурный анализ идёт всегда'}</div>
           </div>
           <div className="panel__group">
             <div className="panel__label">РЁБРА</div>
