@@ -8,9 +8,10 @@ namespace ArchForge.Analysis.Infrastructure.Manifests;
 // P1.5-D — поведенческие рёбра:
 //  • http-call: значения-URL в compose-env (CatalogService__Url: http://catalog-api:8080) → целевой сервис
 //    резолвим глобально по имени; не разрешили → честный внешний узел.
-//  • publishes/subscribes: на реальном таргете шины нет (Loyalty.Communication = HTTP-клиент) — честно отсутствуют.
-// Известные ограничения (backlog): http-call из appsettings.json (напр. auth→sms) — следующий срез;
-//  publish/subscribe появится при наличии шины (MassTransit/rabbit/kafka).
+//  • uses-bus: подключение к шине (ConnectionStrings__Bus, RabbitMQ__Host, Kafka__BootstrapServers…) →
+//    НЕОРИЕНТИРОВАННОЕ ребро к Topic. Направление (publish vs subscribe) из compose НЕ достаётся —
+//    честно не выдаём его (adr/0008); publishes/subscribes появятся из разбора кода (backlog).
+// Известные ограничения (backlog): http-call/bus-host из appsettings.json — следующий срез.
 public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = null) : ISystemSource
 {
     private readonly IServiceDiscoverySource _discovery = discovery ?? new FolderDiscoverySource();
@@ -19,6 +20,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     private const double HttpConfident = 0.8; // цель в ТОМ ЖЕ compose — DNS-сеть compose достоверна
     private const double HttpInferred = 0.5;  // цель в ДРУГОМ compose — разрешима лишь при общей внешней сети (не верифицируем)
     private const double HttpExternal = 0.4;  // хост вне скана — честный внешний узел
+    private const double BusConf = 0.7;       // uses-bus: подключение к шине есть, но направление pub/sub неизвестно
 
     // Инфра по БАЗЕ образа (последний сегмент пути без тега) — точным совпадением, а не подстрокой.
     private static readonly Dictionary<string, SystemNodeKind> InfraByBaseImage = new(StringComparer.OrdinalIgnoreCase)
@@ -59,7 +61,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
                 foreach (var (key, value) in svc.Environment)
                 {
-                    // rw-db / publishes из строк подключения
+                    // rw-db / uses-bus из строк подключения
                     if (key.StartsWith("ConnectionStrings__", StringComparison.Ordinal) &&
                         ConnectionString.ExtractHost(value) is { } host)
                     {
@@ -71,11 +73,18 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                         else if (local.TryGetValue(host, out var target) &&
                                  target.Kind is SystemNodeKind.Datastore or SystemNodeKind.Topic)
                         {
-                            // топик — publishes (направление producer/consumer не верифицируем → ниже conf); БД — rw-db
-                            var (kind, conf) = target.Kind == SystemNodeKind.Topic ? ("publishes", 0.7) : ("rw-db", 0.9);
+                            // топик — uses-bus (направление pub/sub из compose не достаётся); БД — rw-db
+                            var (kind, conf) = target.Kind == SystemNodeKind.Topic ? ("uses-bus", BusConf) : ("rw-db", 0.9);
                             edges.Add(new SystemEdge(sourceId, target.Id, kind, EdgeVia.Config, conf));
                         }
                     }
+
+                    // uses-bus из config-ключей вне connection strings (RabbitMQ__Host, Kafka__BootstrapServers…) —
+                    // резолвим в локальный Topic (фильтр: только шина того же compose), направление неизвестно.
+                    if (IsBusHostKey(key) && BusHost(value) is { } busHost &&
+                        local.TryGetValue(busHost, out var bus) && bus.Kind == SystemNodeKind.Topic &&
+                        !edges.Any(e => e.Source == sourceId && e.Target == bus.Id && e.Kind == "uses-bus"))
+                        edges.Add(new SystemEdge(sourceId, bus.Id, "uses-bus", EdgeVia.Config, BusConf));
 
                     // http-call: URL-ключ (*Url/*Uri/*BaseAddress) со значением-URL на другой сервис —
                     // резолвим глобально после разбора всех (ключ-фильтр убирает telemetry/health-URL из шума).
@@ -153,6 +162,39 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         key.Contains("url", StringComparison.OrdinalIgnoreCase) ||
         key.Contains("uri", StringComparison.OrdinalIgnoreCase) ||
         key.Contains("baseaddress", StringComparison.OrdinalIgnoreCase);
+
+    // Известные шины как СЕГМЕНТ config-ключа (RabbitMQ__Host, MassTransit__RabbitMq__Host, Kafka__BootstrapServers).
+    private static readonly string[] BusKeyTokens =
+        { "rabbitmq", "rabbit", "kafka", "redpanda", "nats", "amqp", "servicebus", "eventbus", "messagebus", "masstransit" };
+
+    // Ключ указывает на ХОСТ шины: первый сегмент — известная шина, последний — host/broker-подобное поле.
+    // Ложные срабатывания отсекает финальный фильтр «резолвится в локальный Topic» на месте вызова.
+    private static bool IsBusHostKey(string key)
+    {
+        var segs = key.Split("__", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segs.Length == 0 || !BusKeyTokens.Contains(segs[0].ToLowerInvariant())) return false;
+        return segs[^1].ToLowerInvariant() is "host" or "hostname" or "bootstrapservers" or "brokers"
+            or "server" or "servers" or "endpoint" or "url" or "uri" or "connection" or "connectionstring";
+    }
+
+    // Хост шины из значения: «amqp://user:pass@rabbitmq:5672» / «kafka1:9092,kafka2:9092» / «rabbitmq» → «rabbitmq».
+    private static string? BusHost(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var v = value.Trim();
+        var scheme = v.IndexOf("://", StringComparison.Ordinal);
+        if (scheme >= 0) v = v[(scheme + 3)..];   // отрезаем amqp:// / kafka://
+        v = v.Split(',')[0];                       // несколько брокеров → первый
+        var at = v.LastIndexOf('@');
+        if (at >= 0) v = v[(at + 1)..];            // userinfo
+        v = v.Split('/', '?')[0];
+        if (v.StartsWith("[", StringComparison.Ordinal)) return null; // IPv6-литерал
+        var host = v.Split(':')[0];                // отрезаем порт
+        if (host.Length == 0 || host.Contains("${", StringComparison.Ordinal)) return null;
+        if (System.Net.IPAddress.TryParse(host, out _)) return null;
+        host = host.Split('.')[0];                 // DNS-хвост
+        return host is "localhost" or "+" or "*" ? null : host;
+    }
 
     // Известные публичные домены (точным суффиксом, а не голым TLD — иначе внутренние зоны .io/.dev терялись бы).
     private static readonly string[] PublicDomains =
