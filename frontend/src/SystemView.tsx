@@ -13,7 +13,8 @@ import { buildSystemFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeDat
 import { gridLayout } from './gridLayout';
 import { RoutedEdge } from './RoutedEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
-import { problemsByLens, severityCounts, type Lens } from './systemModel';
+import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
+import { repoColor } from './theme';
 import { FolderPicker } from './FolderPicker';
 import { Icon, type IconName } from './Icon';
 
@@ -24,7 +25,7 @@ const GRID = 20; // шаг сетки: точки фона + шаг магнит
 // Низкий порог = магнит только при явно медленном, «прицельном» движении, а не при обычном перетаскивании.
 const MAGNET_SPEED = 0.05;
 
-export type FlowHandle = { save: () => void; reset: () => void };
+export type FlowHandle = { save: () => void; reset: () => void; focus: (id: string) => void };
 
 /**
  * Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре.
@@ -86,6 +87,7 @@ const Flow = forwardRef<FlowHandle, {
       onDirty(true);
       setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
     },
+    focus(id) { rf.fitView({ nodes: [{ id }], duration: 400, maxZoom: 1.15, padding: 0.45 }); },
   }), [persist, storageKey, flow, setNodes, rf, onDirty]);
 
   // Перетаскивание узла → раскладка расходится с сохранённой.
@@ -152,25 +154,82 @@ const KIND_LABEL: Record<string, string> = {
   service: 'сервис', datastore: 'хранилище', topic: 'шина', external: 'внешний',
 };
 
-function Inspector({ node, lens }: { node: Node; lens: Lens }) {
-  const data = node.data as SystemNodeData;
-  const problems = problemsByLens(data.problems, lens);
+function Inspector({ node, graph, lens, onFocus }: {
+  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void;
+}) {
+  const n = (node.data as SystemNodeData).node;
+  const problems = problemsByLens((node.data as SystemNodeData).problems, lens);
+  const nameById = useMemo(() => new Map(graph.nodes.map((x) => [x.id, x.name])), [graph]);
+  const { out, inc } = useMemo(() => {
+    const seen = new Set<string>();
+    const o: typeof graph.edges = [], i: typeof graph.edges = [];
+    for (const e of graph.edges) {
+      const key = `${e.source}|${e.target}|${e.kind}`;
+      if (seen.has(key)) continue; seen.add(key);
+      if (e.source === n.id) o.push(e);
+      else if (e.target === n.id) i.push(e);
+    }
+    return { out: o, inc: i };
+  }, [graph, n.id]);
 
   return (
     <div className="inspector">
-      <div className="inspector__name">{data.node.name}</div>
-      <div className="inspector__kind">{KIND_LABEL[data.node.kind] ?? data.node.kind}</div>
-      <div className="inspector__sub">проблемы ({lens === 'architecture' ? 'реальные' : 'дрейф'})</div>
-      {problems.length === 0 ? (
-        <div className="panel__empty">нет</div>
-      ) : (
-        <ul className="inspector__problems">
-          {problems.map((p) => (
-            <li key={p.id} className={`sev-${p.severity}`}>
-              <b>{p.kind}</b> {p.title}
-            </li>
-          ))}
-        </ul>
+      <div className="inspector__head">
+        <span className="inspector__dot" style={{ background: healthColor(n.health) }} />
+        <span className="inspector__name">{n.name}</span>
+      </div>
+      <div className="inspector__kind">
+        {KIND_LABEL[n.kind] ?? n.kind}{n.health ? ` · ${n.health}` : ''}
+      </div>
+
+      {n.layers && n.layers.length > 0 && (
+        <div className="inspector__block">
+          <div className="inspector__sub">СЛОИ</div>
+          <ul className="inspector__layers">
+            {n.layers.map((l) => (
+              <li key={l.name} className={`ilayer health-${l.health}`}>
+                <span className="ilayer__name">{l.name}</span>
+                <span className="ilayer__types">{l.types} тип.</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="inspector__block">
+        <div className="inspector__sub">проблемы ({lens === 'architecture' ? 'реальные' : 'дрейф'})</div>
+        {problems.length === 0 ? (
+          <div className="panel__empty">нет</div>
+        ) : (
+          <ul className="inspector__problems">
+            {problems.map((p) => (
+              <li key={p.id} className={`sev-${p.severity}`}>
+                <div><b>{p.kind}</b> {p.title}</div>
+                {p.fix && <div className="inspector__fix">→ {p.fix}</div>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {(out.length > 0 || inc.length > 0) && (
+        <div className="inspector__block">
+          <div className="inspector__sub">СВЯЗИ</div>
+          <ul className="inspector__edges">
+            {out.map((e) => (
+              <li key={`o-${e.target}-${e.kind}`} className={e.violation ? 'iedge--bad' : ''}>
+                <button onClick={() => onFocus(e.target)}>→ {nameById.get(e.target) ?? e.target}</button>
+                <span className="iedge__kind">{e.kind}</span>
+              </li>
+            ))}
+            {inc.map((e) => (
+              <li key={`i-${e.source}-${e.kind}`} className={e.violation ? 'iedge--bad' : ''}>
+                <button onClick={() => onFocus(e.source)}>← {nameById.get(e.source) ?? e.source}</button>
+                <span className="iedge__kind">{e.kind}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
@@ -280,6 +339,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
   const [minConfidence, setMinConfidence] = useState(0);
   const [hideIsolated, setHideIsolated] = useState(false);
+  const [hideTests, setHideTests] = useState(false);
+  const [problemsOpen, setProblemsOpen] = useState(false); // нижняя панель «Проблемы проекта»
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
   const [loadedPath, setLoadedPath] = useState(''); // путь загруженного проекта — ключ раскладки
   const [saved, setSaved] = useState(true);         // раскладка совпадает с сохранённой
@@ -359,10 +420,24 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
 
   // Фильтр вида поверх готовой раскладки — мгновенно, без перераскладки.
   const flow = useMemo(
-    () => filterFlow(laid, { edgeKinds, minConfidence, hideIsolated }),
-    [laid, edgeKinds, minConfidence, hideIsolated],
+    () => filterFlow(laid, { edgeKinds, minConfidence, hideIsolated, hideTests }),
+    [laid, edgeKinds, minConfidence, hideIsolated, hideTests],
   );
   const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
+
+  // Клик по проблеме/связи → выбрать узел и навести на него.
+  const focusNode = useCallback((id: string) => {
+    const node = laid.nodes.find((x) => x.id === id);
+    if (node) setSelected(node);
+    flowRef.current?.focus(id);
+  }, [laid]);
+  const nameById = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.id, n.name])), [graph]);
+  // Легенда «цвет плашки»: репозитории (namespace) сервис-узлов → цвет.
+  const repos = useMemo(() => {
+    const set = new Set<string>();
+    for (const n of graph?.nodes ?? []) if (n.kind === 'service') set.add(namespaceOf(n.id));
+    return [...set].sort();
+  }, [graph]);
   const toggleEdgeKind = (k: string) =>
     setEdgeKinds((prev) => {
       const next = new Set(prev);
@@ -464,11 +539,26 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               без одиночек
             </label>
             <label className="opt">
+              <input type="checkbox" checked={hideTests} onChange={(e) => setHideTests(e.target.checked)} />
+              без tests
+            </label>
+            <label className="opt">
               <input type="checkbox" checked={magnet} onChange={(e) => setMagnet(e.target.checked)} />
               магнит к сетке
             </label>
             <div className="panel__hint">медленно тянешь — притягивает к точкам, быстро — свободно</div>
           </div>
+          {repos.length > 0 && (
+            <div className="panel__group">
+              <div className="panel__label">ЦВЕТ ПЛАШКИ = РЕПО</div>
+              {repos.map((ns) => (
+                <div key={ns} className="legend">
+                  <span className="legend__dot" style={{ background: repoColor(ns) }} />
+                  {ns || '—'}
+                </div>
+              ))}
+            </div>
+          )}
         </aside>
 
         <main className="sysview__board">
@@ -497,13 +587,38 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
 
         <aside className="panel panel--inspector">
           <div className="panel__title">ИНСПЕКТОР</div>
-          {selected ? <Inspector node={selected} lens={lens} /> : <div className="panel__empty">кликните узел</div>}
+          {selected && graph
+            ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />
+            : <div className="panel__empty">кликните узел</div>}
         </aside>
       </div>
 
+      {graph && problemsOpen && (
+        <div className="problems-drawer">
+          <div className="pd__head">
+            <span className="pd__title">ПРОБЛЕМЫ ПРОЕКТА</span>
+            <span className="pd__sub">линза «{lens === 'architecture' ? 'реальные' : 'дрейф'}» · {lensProblems.length}</span>
+            <button className="pd__close" onClick={() => setProblemsOpen(false)} title="Свернуть"><Icon name="close" size={14} /></button>
+          </div>
+          <div className="pd__list">
+            {lensProblems.length === 0 ? (
+              <div className="panel__empty">нет проблем в этой линзе</div>
+            ) : lensProblems.map((p) => (
+              <button key={p.id} className={`pd-row sev-${p.severity}`} onClick={() => focusNode(p.location)}>
+                <span className="pd-row__kind">{p.kind}</span>
+                <span className="pd-row__title">{p.title}</span>
+                <span className="pd-row__loc">{nameById.get(p.location) ?? p.location}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <footer className="sysview__status">
         <span className={`status__health health-${graph?.health ?? 'none'}`}>{graph?.health ?? '—'}</span>
-        <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}</span>
+        <button className="status__problems" onClick={() => setProblemsOpen((o) => !o)} title="Проблемы проекта">
+          ● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}
+        </button>
         <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
         <span className="status__lens">
           линза «{lens === 'architecture' ? 'реальные проблемы' : 'дрейф'}»: {lensProblems.length}

@@ -36,6 +36,7 @@ export interface SystemFilters {
   edgeKinds: ReadonlySet<string>; // какие виды рёбер показывать
   minConfidence: number;          // порог уверенности 0..1 (прячем слабые/эвристические связи)
   hideIsolated: boolean;          // спрятать узлы без связей
+  hideTests?: boolean;            // спрятать узлы с «test» в имени
 }
 
 /** Клиентская фильтрация вида — мгновенно, без запроса: прореживает «клубок» рёбер и одиночек. */
@@ -137,16 +138,25 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
   return { nodes: layout(nodes), edges: [...edges.values()] };
 }
 
-/** Фильтр вида поверх готовой раскладки (сохраняет позиции): прячет рёбра по виду/уверенности и одиночек. */
+/** Фильтр вида поверх готовой раскладки (сохраняет позиции): прячет рёбра по виду/уверенности, tests и одиночек. */
 export function filterFlow(
   flow: { nodes: Node[]; edges: Edge[] },
   f: SystemFilters,
 ): { nodes: Node[]; edges: Edge[] } {
+  let nodes = flow.nodes;
+  const dropped = new Set<string>();
+  if (f.hideTests) {
+    nodes = nodes.filter((n) => {
+      const drop = /test/i.test((n.data as SystemNodeData).node.name);
+      if (drop) dropped.add(n.id);
+      return !drop;
+    });
+  }
   const edges = flow.edges.filter((e) => {
     const d = e.data as EdgeData;
-    return f.edgeKinds.has(d.kind) && d.confidence >= f.minConfidence;
+    return f.edgeKinds.has(d.kind) && d.confidence >= f.minConfidence
+      && !dropped.has(e.source) && !dropped.has(e.target);
   });
-  let nodes = flow.nodes;
   if (f.hideIsolated) {
     const linked = new Set<string>();
     for (const e of edges) { linked.add(e.source); linked.add(e.target); }

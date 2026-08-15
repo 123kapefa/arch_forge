@@ -262,3 +262,61 @@
 .inspector__problems b { color: var(--accent); margin-right: 4px; }
 .sev-critical b { color: var(--crit); }
 .sev-warning b { color: var(--warn); }
+
+/* --- инспектор (обогащённый) --- */
+.inspector__head { display: flex; align-items: center; gap: 8px; }
+.inspector__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.inspector__block { margin-top: 14px; }
+.inspector__layers { list-style: none; margin: 0; padding: 0; }
+.ilayer { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+.ilayer__name { flex: 1; }
+.ilayer__types { color: var(--muted); font-size: 11px; }
+.ilayer.health-warning .ilayer__name { color: var(--warn); }
+.ilayer.health-critical .ilayer__name { color: var(--crit); }
+.ilayer.health-ok .ilayer__name { color: var(--ok); }
+.inspector__fix { color: var(--muted); font-size: 11px; margin: 2px 0 2px 4px; }
+.inspector__edges { list-style: none; margin: 0; padding: 0; }
+.inspector__edges li { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+.inspector__edges button {
+  background: none; border: none; color: var(--text); cursor: pointer; padding: 0;
+  text-align: left; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.inspector__edges button:hover { color: var(--accent); }
+.inspector__edges .iedge__kind { color: var(--muted); font-size: 10px; flex: none; }
+.inspector__edges .iedge--bad button { color: var(--crit); }
+.legend__dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+/* --- панель «Проблемы проекта» (нижний ящик) --- */
+.status__problems {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font: inherit; padding: 2px 6px; border-radius: 5px;
+}
+.status__problems:hover { background: rgba(108, 140, 255, 0.12); color: var(--text); }
+.problems-drawer {
+  border-top: 1px solid var(--card-line); background: var(--panel);
+  max-height: 34vh; display: flex; flex-direction: column;
+}
+.pd__head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; border-bottom: 1px solid var(--card-line);
+}
+.pd__title { font-size: 11px; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.pd__sub { font-size: 11px; color: var(--muted); }
+.pd__close {
+  margin-left: auto; background: none; border: none; color: var(--muted);
+  cursor: pointer; display: inline-flex; align-items: center;
+}
+.pd__list { overflow-y: auto; padding: 4px 0; }
+.pd-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  background: none; border: none; color: var(--text); text-align: left;
+  padding: 6px 14px; cursor: pointer; font-size: 12px; border-left: 2px solid transparent;
+}
+.pd-row:hover { background: rgba(108, 140, 255, 0.1); }
+.pd-row.sev-critical { border-left-color: var(--crit); }
+.pd-row.sev-warning { border-left-color: var(--warn); }
+.pd-row.sev-coverage { border-left-color: var(--cover); }
+.pd-row.sev-info { border-left-color: var(--accent); }
+.pd-row__kind { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); flex: none; min-width: 120px; }
+.pd-row__title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-row__loc { color: var(--muted); font-size: 11px; flex: none; }
