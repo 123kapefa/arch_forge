@@ -148,6 +148,87 @@ function Inspector({ node, lens }: { node: Node; lens: Lens }) {
   );
 }
 
+// --- Меню проекта (по образцу прототипа): недавние + действия ---
+type Recent = { path: string; name: string; nodes: number; at: number };
+const RECENTS_KEY = 'af_recents';
+
+function loadRecents(): Recent[] {
+  try { return JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]') as Recent[]; } catch { return []; }
+}
+function pushRecent(list: Recent[], r: Recent): Recent[] {
+  const next = [r, ...list.filter((x) => x.path !== r.path)].slice(0, 8);
+  try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)); } catch { /* quota */ }
+  return next;
+}
+function relTime(at: number): string {
+  const s = (Date.now() - at) / 1000;
+  if (s < 60) return 'сейчас';
+  if (s < 3600) return `${Math.floor(s / 60)} мин назад`;
+  if (s < 86400) return `${Math.floor(s / 3600)} ч назад`;
+  const d = Math.floor(s / 86400);
+  if (d === 1) return 'вчера';
+  if (d < 7) return `${d} дн. назад`;
+  return 'нед. назад';
+}
+function healthColor(h?: string): string {
+  return h === 'critical' ? '#e5484d' : h === 'warning' ? '#e0b24a' : h === 'ok' ? '#6fcf77' : '#5e6a7d';
+}
+
+interface ProjectActions {
+  reanalyze: () => void; save: () => void; reset: () => void;
+  exportJson: () => void; openFolder: () => void; closeProject: () => void;
+}
+
+/** Выпадающее меню проекта: шапка (имя/путь/сводка) + действия + недавние проекты. */
+function ProjectMenu({ graph, path, nodes, recents, onClose, actions, onPick }: {
+  graph: SystemGraph;
+  path: string;
+  nodes: number;
+  recents: Recent[];
+  onClose: () => void;
+  actions: ProjectActions;
+  onPick: (r: Recent) => void;
+}) {
+  const rows: { ic: string; label: string; sc?: string; run: () => void }[] = [
+    { ic: '⟳', label: 'Пере-анализировать', sc: '⌘R', run: actions.reanalyze },
+    { ic: '💾', label: 'Сохранить раскладку', sc: '⌘S', run: actions.save },
+    { ic: '↺', label: 'Сбросить раскладку', run: actions.reset },
+    { ic: '⬇', label: 'Экспорт: JSON', run: actions.exportJson },
+    { ic: '📂', label: 'Открыть папку проекта…', sc: '⌘O', run: actions.openFolder },
+    { ic: '✕', label: 'Закрыть проект', sc: '⌘W', run: actions.closeProject },
+  ];
+  return (
+    <div className="pm" role="menu">
+      <div className="pm__head">
+        <div className="pm__title"><span className="pm__dot" style={{ background: healthColor(graph.health) }} />{graph.project}</div>
+        <div className="pm__path" title={path}>{path}</div>
+        <div className="pm__metaline">{nodes} узлов · health {graph.health ?? '—'}</div>
+      </div>
+      <div className="pm__group">
+        {rows.map((r) => (
+          <button key={r.label} className="pm__row" onClick={() => { r.run(); onClose(); }}>
+            <span className="pm__ic">{r.ic}</span>
+            <span className="pm__rowlabel">{r.label}</span>
+            {r.sc && <span className="pm__sc">{r.sc}</span>}
+          </button>
+        ))}
+      </div>
+      {recents.length > 0 && (
+        <div className="pm__recents">
+          <div className="pm__section">НЕДАВНИЕ ПРОЕКТЫ</div>
+          {recents.map((r) => (
+            <button key={r.path} className="pm__recent" onClick={() => { onPick(r); onClose(); }}>
+              <span className="pm__dot" style={{ background: r.path === path ? healthColor(graph.health) : '#5e6a7d' }} />
+              <span className="pm__rname">{r.name}</span>
+              <span className="pm__rmeta">{r.nodes} узлов · {relTime(r.at)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** L0 System Overview: карточки-сервисы + инфра + рёбра, панель «Вид», инспектор, статус-бар. */
 export function SystemView({ onExit }: { onExit?: () => void }) {
   const [pathInput, setPathInput] = useState('');
@@ -162,7 +243,10 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
   const [loadedPath, setLoadedPath] = useState(''); // путь загруженного проекта — ключ раскладки
   const [saved, setSaved] = useState(true);         // раскладка совпадает с сохранённой
+  const [menuOpen, setMenuOpen] = useState(false);  // выпадающее меню проекта
+  const [recents, setRecents] = useState<Recent[]>(() => loadRecents());
   const flowRef = useRef<FlowHandle>(null);
+  const pathInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async (rawPath: string) => {
     const path = rawPath.trim();
@@ -176,6 +260,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       setGraph(g);
       setLoadedPath(path);
       setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
+      setRecents((prev) => pushRecent(prev, { path, name: g.project, nodes: g.nodes.length, at: Date.now() }));
       try { localStorage.setItem('af_path', path); } catch { /* quota */ }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -185,6 +270,29 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     }
   }, []);
 
+  const closeProject = useCallback(() => {
+    setGraph(null);
+    setLoadedPath('');
+    setSelected(null);
+    try { localStorage.removeItem('af_path'); } catch { /* ignore */ }
+  }, []);
+
+  const exportJson = useCallback(() => {
+    if (!graph) return;
+    const blob = new Blob([JSON.stringify(graph, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${graph.project || 'system'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [graph]);
+
+  const openFolder = useCallback(() => {
+    pathInputRef.current?.focus();
+    pathInputRef.current?.select();
+  }, []);
+
   // Восстановить последний открытый проект при старте.
   useEffect(() => {
     let lastPath = '';
@@ -192,12 +300,14 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     if (lastPath) { setPathInput(lastPath); void load(lastPath); }
   }, [load]);
 
-  // ⌘S / Ctrl+S — сохранить раскладку.
+  // Клавиатура: ⌘S — сохранить раскладку; Esc — закрыть меню проекта.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         flowRef.current?.save();
+      } else if (e.key === 'Escape') {
+        setMenuOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -226,21 +336,44 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   return (
     <div className="sysview">
       <header className="sysview__top">
-        <span className="crumb crumb--root">{graph?.project ?? 'система'}</span>
+        <div className="crumb-wrap">
+          {graph ? (
+            <button className="crumb crumb--project" onClick={() => setMenuOpen((o) => !o)}>
+              <span className="crumb__dot" style={{ background: healthColor(graph.health) }} />
+              {graph.project}
+              <span className="crumb__chev">{menuOpen ? '▴' : '▾'}</span>
+            </button>
+          ) : (
+            <span className="crumb crumb--root">система</span>
+          )}
+          {menuOpen && graph && (
+            <>
+              <div className="pm-backdrop" onClick={() => setMenuOpen(false)} />
+              <ProjectMenu
+                graph={graph}
+                path={loadedPath}
+                nodes={graph.nodes.length}
+                recents={recents}
+                onClose={() => setMenuOpen(false)}
+                actions={{
+                  reanalyze: () => void load(loadedPath),
+                  save: () => flowRef.current?.save(),
+                  reset: () => flowRef.current?.reset(),
+                  exportJson,
+                  openFolder,
+                  closeProject,
+                }}
+                onPick={(r) => { setPathInput(r.path); void load(r.path); }}
+              />
+            </>
+          )}
+        </div>
         <nav className="crumbs"><b>System</b> ▸ Service ▸ Layer ▸ Type ▸ Member</nav>
         <div className="sysview__right">
           {graph && (
-            <>
-              <span className={`saved ${saved ? 'saved--ok' : 'saved--dirty'}`}>
-                {saved ? '✓ сохранено' : '● есть изменения'}
-              </span>
-              <button className="sysview__btn" onClick={() => flowRef.current?.save()} title="Сохранить раскладку (⌘S)">
-                💾 Сохранить
-              </button>
-              <button className="sysview__btn" onClick={() => flowRef.current?.reset()} title="Сбросить раскладку">
-                ↺ Сброс
-              </button>
-            </>
+            <span className={`saved ${saved ? 'saved--ok' : 'saved--dirty'}`}>
+              {saved ? '✓ сохранено' : '● есть изменения'}
+            </span>
           )}
           {onExit && <button className="sysview__exit" onClick={onExit}>← тип-граф (Ф1)</button>}
         </div>
@@ -302,6 +435,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
         <main className="sysview__board">
           <form className="sysview__load" onSubmit={(e) => { e.preventDefault(); void load(pathInput); }}>
             <input
+              ref={pathInputRef}
               value={pathInput}
               onChange={(e) => setPathInput(e.target.value)}
               placeholder="путь к корню системы (workspace)"
