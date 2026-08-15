@@ -72,10 +72,10 @@ public class GetSystemHandlerTests
         try
         {
             var source = new FakeSource(new SystemGraph([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []));
-            var scanner = new DriftScanner(
+            var scanner = new DriftScanner(new ServiceAnalyzer(
                 new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
                 new FakeTypes([new RawType("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs")]),
-                new TypeClassifier(ConventionPack.Default()));
+                new TypeClassifier(ConventionPack.Default())));
             var handler = new GetSystemHandler(source, scanner);
 
             var off = handler.Handle(new GetSystemQuery(dir, Drift: false));
@@ -83,6 +83,64 @@ public class GetSystemHandlerTests
 
             var on = handler.Handle(new GetSystemQuery(dir, Drift: true));
             Assert.Contains(on!.Problems!, p => p is { Category: ProblemCategory.Convention, Severity: "info", Kind: "drift" });
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // Линза «слои»: флаг layers включает architecture-проблемы layer-violation; по умолчанию их нет.
+    [Fact]
+    public void Layers_flag_toggles_architecture_lens()
+    {
+        var dir = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "archforge_sysl_" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var source = new FakeSource(new SystemGraph([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []));
+            var analyzer = new ServiceAnalyzer(
+                new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
+                new FakeTypes(
+                [
+                    new RawType("Order", "class", [], "(PaymentGateway g)", "Domain", "Order.cs"),
+                    new RawType("PaymentGateway", "class", [], "()", "Infrastructure", "PaymentGateway.cs"),
+                ]),
+                new TypeClassifier(ConventionPack.Default()));
+            var handler = new GetSystemHandler(source, layers: new LayerViolationScanner(analyzer));
+
+            var off = handler.Handle(new GetSystemQuery(dir, Layers: false));
+            Assert.True(off!.Problems is null || off.Problems.All(p => p.Kind != "layer-violation"));
+
+            var on = handler.Handle(new GetSystemQuery(dir, Layers: true));
+            Assert.Contains(on!.Problems!, p => p is { Kind: "layer-violation", Severity: "warning",
+                Category: ProblemCategory.Architecture });
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // Обе код-линзы одновременно: drift=true&layers=true мержит и convention, и architecture проблемы.
+    [Fact]
+    public void Drift_and_layers_together_add_both_lenses()
+    {
+        var dir = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "archforge_sysdl_" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            RawType[] raw =
+            [
+                new("Order", "class", [], "(PaymentGateway g)", "Domain", "Order.cs"),        // нарушение слоёв
+                new("PaymentGateway", "class", [], "()", "Infrastructure", "PaymentGateway.cs"),
+                new("RegisterHandler", "class", [], "(Dep d)", "Application", "RegisterHandler.cs"), // дрейф
+            ];
+            var source = new FakeSource(new SystemGraph([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []));
+            var discovery = new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]);
+            var classifier = new TypeClassifier(ConventionPack.Default());
+            var handler = new GetSystemHandler(source,
+                new DriftScanner(new ServiceAnalyzer(discovery, new FakeTypes(raw), classifier)),
+                new LayerViolationScanner(new ServiceAnalyzer(discovery, new FakeTypes(raw), classifier)));
+
+            var dto = handler.Handle(new GetSystemQuery(dir, Drift: true, Layers: true));
+
+            Assert.Contains(dto!.Problems!, p => p is { Kind: "drift", Category: ProblemCategory.Convention });
+            Assert.Contains(dto.Problems!, p => p is { Kind: "layer-violation", Category: ProblemCategory.Architecture });
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
@@ -98,10 +156,10 @@ public class GetSystemHandlerTests
         try
         {
             // сканер с дрейфующим сервисом: для пути-к-ФАЙЛУ линза дрейфа не включается → convention-проблем нет
-            var scanner = new DriftScanner(
+            var scanner = new DriftScanner(new ServiceAnalyzer(
                 new FakeDiscovery([new DiscoveredService("X", Path.Combine(dir, "x"), "docker-compose.yml")]),
                 new FakeTypes([new RawType("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs")]),
-                new TypeClassifier(ConventionPack.Default()));
+                new TypeClassifier(ConventionPack.Default())));
             var dto = new GetSystemHandler(new ComposeSystemSource(), scanner).Handle(new GetSystemQuery(f, Drift: true));
 
             Assert.NotNull(dto);

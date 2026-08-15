@@ -10,22 +10,23 @@ namespace ArchForge.Analysis.Core.Features.Systems;
 // Вертикальный срез: разобрать КОРЕНЬ СИСТЕМЫ (мульти-сервис) → системный граф-контракт (Фаза 1.5).
 // Один сервис на пути → тоже валидный системный граф (discovery найдёт 1).
 
-// drift=true включает линзу «дрейф от свода» — доп. проблемы категории convention (тяжелее: разбор кода per-service).
-public sealed record GetSystemQuery(string Path, bool Drift = false);
+// Линзы, требующие КОДА (тяжелее: разбор per-service): drift — «дрейф от свода» (convention);
+// layers — «нарушение направления слоёв» (architecture). Обе opt-in, независимы (фронт включает нужную линзе).
+public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false);
 
 public sealed class GetSystemEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapGet("/api/system", (string path, bool? drift, GetSystemHandler handler, CancellationToken ct) =>
+        app.MapGet("/api/system", (string path, bool? drift, bool? layers, GetSystemHandler handler, CancellationToken ct) =>
         {
-            GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false), ct);
+            GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false), ct);
             return graph is null
                 ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
                 : Results.Ok(graph);
         });
 }
 
-public sealed class GetSystemHandler(ISystemSource source, DriftScanner? drift = null)
+public sealed class GetSystemHandler(ISystemSource source, DriftScanner? drift = null, LayerViolationScanner? layers = null)
 {
     public GraphDto? Handle(GetSystemQuery query, CancellationToken ct = default)
     {
@@ -35,11 +36,13 @@ public sealed class GetSystemHandler(ISystemSource source, DriftScanner? drift =
 
         SystemGraph graph = source.Read(query.Path, ct);
 
-        // Линза «дрейф» — только по запросу и только если сканер доступен (в тестах может быть null).
-        if (query.Drift && drift is not null && Directory.Exists(query.Path))
+        // Код-линзы — только по запросу, только для пути-папки и если сканер доступен (в тестах может быть null).
+        if (Directory.Exists(query.Path))
         {
-            var convention = drift.Scan(query.Path, ct);
-            if (convention.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. convention] };
+            var extra = new List<SystemProblem>();
+            if (query.Drift && drift is not null) extra.AddRange(drift.Scan(query.Path, ct));
+            if (query.Layers && layers is not null) extra.AddRange(layers.Scan(query.Path, ct));
+            if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
         }
 
         string project = File.Exists(query.Path)
