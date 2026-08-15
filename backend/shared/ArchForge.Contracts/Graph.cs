@@ -22,6 +22,8 @@ public sealed record GraphDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<ProblemDto>? Problems = null,            // проблемы этого scope (сортируются по важности)
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<ServiceSummaryDto>? Services = null,     // L0-сводка по найденным сервисам (.sln) со слоями; при код-линзах
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<EnvironmentDto>? Environments = null);   // зарезервировано под P1.5; в Фазе 1.5 не заполняется
 
 public sealed record NodeDto(
@@ -89,3 +91,18 @@ public sealed record ProblemDto(
 
 /// <summary>Контур окружения. Зарезервировано под P1.5 (топология/инстанс/профиль); в Фазе 1.5 не заполняется.</summary>
 public sealed record EnvironmentDto(string Id, string Name, string Kind); // topology | instance | profile
+
+/// <summary>Слой сервиса в L0-сводке: имя, здоровье, краткая заметка, число типов (превью L1).</summary>
+public sealed record LayerSummaryDto(
+    string Name,       // API | Application | Domain | Infrastructure | Contracts
+    string Health,     // ok | warning | critical
+    int Types,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Note = null);   // напр. «Domain → Infrastructure · нарушение слоя»
+
+/// <summary>L0-сводка найденного сервиса (.sln): карточка со слоями. Id совпадает с namespace-префиксом его узлов.</summary>
+public sealed record ServiceSummaryDto(
+    string Id,         // namespace ({system})
+    string Name,       // имя решения/сервиса
+    string Health,     // ok | warning | critical (worst слоёв)
+    IReadOnlyList<LayerSummaryDto> Layers);

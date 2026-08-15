@@ -68,6 +68,22 @@ export interface SystemCoverage {
   total: number;
 }
 
+/** Слой сервиса в L0-сводке: имя, здоровье, число типов, краткая заметка (превью L1). */
+export interface LayerSummary {
+  name: string;          // API | Application | Domain | Infrastructure | Contracts
+  health: string;        // ok | warning | critical
+  types: number;
+  note?: string;         // напр. «Application → Infrastructure · нарушение слоя»
+}
+
+/** L0-карточка найденного сервиса (.sln): id = namespace-префикс его узлов. */
+export interface ServiceSummary {
+  id: string;
+  name: string;
+  health: string;        // ok | warning | critical (worst слоёв)
+  layers: LayerSummary[];
+}
+
 /** Контур окружения (topology | instance | profile) — зарезервировано; бэкенд Фазы 1.5 пока не заполняет. */
 export interface EnvironmentDto {
   id: string;
@@ -83,6 +99,7 @@ export interface SystemGraph {
   drift: string[];
   health?: string;       // ok | warning | critical (rollup системы)
   problems?: Problem[];
+  services?: ServiceSummary[];  // L0-карточки сервисов со слоями (приходят при код-линзах)
   environments?: EnvironmentDto[];
 }
 

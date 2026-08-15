@@ -37,7 +37,8 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         SystemGraph graph = source.Read(query.Path, ct);
 
         // Код-линзы (дрейф/слои) — по запросу, только для пути-папки, если анализатор доступен (в тестах может быть null).
-        // Общий per-service разбор ОДИН раз → чистые детекторы по флагам (без двойного Roslyn при обеих линзах).
+        // Общий per-service разбор ОДИН раз → чистые детекторы по флагам + L0-сводка слоёв (без двойного Roslyn).
+        IReadOnlyList<ServiceSummaryDto> services = [];
         if ((query.Drift || query.Layers) && analyzer is not null && Directory.Exists(query.Path))
         {
             var analyses = analyzer.Analyze(query.Path, ct);
@@ -45,11 +46,13 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
             if (query.Layers) extra.AddRange(LayerViolationDetector.Detect(analyses));
             if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
+            services = ServiceSummaryBuilder.Build(analyses); // карточки L0 со слоями
         }
 
         string project = File.Exists(query.Path)
             ? Path.GetFileName(Path.GetDirectoryName(query.Path)) ?? "system"
             : new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
-        return SystemGraphMapper.ToDto(graph, project);
+        var dto = SystemGraphMapper.ToDto(graph, project);
+        return services.Count > 0 ? dto with { Services = services } : dto;
     }
 }
