@@ -146,6 +146,7 @@ const Flow = forwardRef<FlowHandle, {
       edgeTypes={edgeTypes}
       minZoom={0.08}
       proOptions={{ hideAttribution: true }}
+      nodesConnectable={false}
       elevateEdgesOnSelect
       snapToGrid={magnet && snapNow}
       snapGrid={[GRID, GRID]}

@@ -369,6 +369,8 @@
 .sysview .react-flow__controls-button svg { fill: currentColor; }
 .sysview .react-flow__minimap { background: var(--card); border: 1px solid var(--card-line); border-radius: 10px; margin: 8px; }
 .sysview .react-flow__attribution { background: transparent; color: var(--muted); opacity: 0.4; }
+/* точки-хендлы не показываем — соединения строить нельзя (связи считает анализатор) */
+.sysview .react-flow__handle { opacity: 0; pointer-events: none; }
 
 /* --- статус-бар --- */
 /* полоса «ПРОБЛЕМЫ ПРОЕКТА» — выше статус-бара, целиком кнопка раскрытия */
