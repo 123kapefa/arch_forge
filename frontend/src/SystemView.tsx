@@ -1,5 +1,6 @@
 import {
   forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import {
   ReactFlow, ReactFlowProvider, useReactFlow, useNodesState, useEdgesState,
@@ -378,6 +379,15 @@ function healthColor(h?: string): string {
   return h === 'critical' ? '#e5484d' : h === 'warning' ? '#e0b24a' : h === 'ok' ? '#6fcf77' : '#5e6a7d';
 }
 
+// Ширина инспектора — до перезапуска приложения (sessionStorage, не localStorage).
+const RIGHT_MIN = 240;
+function readRightW(): number {
+  try { const v = Number(sessionStorage.getItem('af_rightW')); return v >= RIGHT_MIN ? v : 320; } catch { return 320; }
+}
+function readRightFull(): boolean {
+  try { return sessionStorage.getItem('af_rightFull') === '1'; } catch { return false; }
+}
+
 interface ProjectActions {
   reanalyze: () => void; save: () => void; reset: () => void;
   exportJson: () => void; closeProject: () => void;
@@ -467,6 +477,10 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(new Set()); // скрытые слои (секция СЛОИ)
   const [leftOpen, setLeftOpen] = useState(true);   // панель ВИД
   const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
+  // ширина инспектора: перетаскивание границы + «на всю ширину». Держим до перезапуска (sessionStorage).
+  const [rightW, setRightW] = useState(readRightW);
+  const [rightFull, setRightFull] = useState(readRightFull);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
   const [loadedPath, setLoadedPath] = useState(''); // путь загруженного проекта — ключ раскладки
   const [branch, setBranch] = useState<string | null>(null); // git-ветка открытого проекта
@@ -531,6 +545,33 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     a.click();
     URL.revokeObjectURL(url);
   }, [graph]);
+
+  // Ширина инспектора живёт до перезапуска приложения (sessionStorage).
+  useEffect(() => { try { sessionStorage.setItem('af_rightW', String(rightW)); } catch { /* ignore */ } }, [rightW]);
+  useEffect(() => { try { sessionStorage.setItem('af_rightFull', rightFull ? '1' : '0'); } catch { /* ignore */ } }, [rightFull]);
+
+  const toggleRightFull = useCallback(() => setRightFull((f) => !f), []);
+  // Перетаскивание левой границы инспектора → ширина (снимает режим «на всю ширину»).
+  const startRightResize = useCallback((e: ReactMouseEvent) => {
+    e.preventDefault();
+    const body = bodyRef.current;
+    if (!body) return;
+    const rect = body.getBoundingClientRect();
+    const leftW = leftOpen ? 210 : 40;
+    const max = Math.max(RIGHT_MIN, rect.width - leftW - 60);
+    const onMove = (ev: MouseEvent) => {
+      setRightFull(false);
+      setRightW(Math.min(max, Math.max(RIGHT_MIN, rect.right - ev.clientX)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+    };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [leftOpen]);
 
 
   // Восстановить последний открытый проект при старте.
@@ -719,7 +760,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
         </div>
       </header>
 
-      <div className="sysview__body">
+      <div className="sysview__body" ref={bodyRef}>
         <aside className={`panel panel--view ${leftOpen ? '' : 'is-collapsed'}`}>
           {!leftOpen ? (
             <button className="panel__collapsed" onClick={() => setLeftOpen(true)} title="Показать ВИД">
@@ -853,7 +894,10 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           </div>
         </main>
 
-        <aside className={`panel panel--inspector ${rightOpen ? '' : 'is-collapsed'}`}>
+        <aside
+          className={`panel panel--inspector ${rightOpen ? '' : 'is-collapsed'}`}
+          style={rightOpen ? { width: rightFull ? `calc(100% - ${leftOpen ? 210 : 40}px - 6px)` : rightW } : undefined}
+        >
           {!rightOpen ? (
             <button className="panel__collapsed" onClick={() => setRightOpen(true)} title="Показать инспектор">
               <Icon name="chevronLeft" size={16} />
@@ -861,9 +905,20 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
             </button>
           ) : (
             <>
-              <button className="panel__header" onClick={() => setRightOpen(false)}>
-                ИНСПЕКТОР<Icon name="chevronRight" size={15} />
-              </button>
+              <div className="panel__resize" onMouseDown={startRightResize} title="Потянуть — изменить ширину" />
+              <div className="panel__header panel__header--tools">
+                <span className="panel__htitle">ИНСПЕКТОР</span>
+                <button
+                  className="panel__tool"
+                  onClick={toggleRightFull}
+                  title={rightFull ? 'Вернуть ширину' : 'На всю ширину'}
+                >
+                  <Icon name={rightFull ? 'shrinkRight' : 'expandLeft'} size={15} />
+                </button>
+                <button className="panel__tool" onClick={() => setRightOpen(false)} title="Свернуть">
+                  <Icon name="chevronRight" size={15} />
+                </button>
+              </div>
               <div className="panel__body">
                 {selected && graph
                   ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />

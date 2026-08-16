@@ -18,6 +18,10 @@ const PATHS = {
   chevronRight: 'M9 18l6-6-6-6',
   arrowUp: 'M12 19V5 M5 12l7-7 7 7',
   branch: 'M6 3v12 M15 6a3 3 0 1 0 6 0a3 3 0 1 0-6 0 M3 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0 M18 9a9 9 0 0 1-9 9',
+  // расширить панель влево (на всю ширину): двунаправленная стрелка с упором справа
+  expandLeft: 'M20 4v16 M16 12H4 M8 8l-4 4 4 4',
+  // вернуть ширину: стрелка внутрь к правому упору
+  shrinkRight: 'M20 4v16 M5 12h11 M12 8l4 4-4 4',
 } as const;
 
 export type IconName = keyof typeof PATHS;
