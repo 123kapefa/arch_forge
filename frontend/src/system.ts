@@ -93,11 +93,14 @@ export interface EnvironmentDto {
   kind: string;
 }
 
-/** Применённый свод конвенций: источник (встроенный / файл) + счётчики правил. */
+/** Применённый свод конвенций: источник + сам пак (для просмотра в UI). */
+export interface ConvEntry { name: string; role: string }
+export interface ConvRule { suffix: string; marker: string; role: string }
 export interface Conventions {
-  source: string;   // «встроенный свод» | «файл: <имя>» | «ошибка … → встроенный»
-  markers: number;  // число маркеров
-  rules: number;    // число правил ожидания (expect)
+  source: string;          // «встроенный свод» | «файл: <имя>» | «ошибка … → встроенный»
+  markers: ConvEntry[];    // маркеры (база → роль)
+  fallback: ConvEntry[];   // fallback (база → роль)
+  rules: ConvRule[];       // ожидания (суффикс → маркер/роль)
 }
 
 export interface SystemGraph {

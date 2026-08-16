@@ -98,8 +98,15 @@ public sealed record ProblemDto(
 /// <summary>Контур окружения. Зарезервировано под P1.5 (топология/инстанс/профиль); в Фазе 1.5 не заполняется.</summary>
 public sealed record EnvironmentDto(string Id, string Name, string Kind); // topology | instance | profile
 
-/// <summary>Свод конвенций, применённый при анализе: источник (встроенный / файл) и счётчики правил.</summary>
-public sealed record ConventionsDto(string Source, int Markers, int Rules);
+/// <summary>Свод конвенций, применённый при анализе: источник + сам пак (маркеры/fallback/правила) для просмотра.</summary>
+public sealed record ConventionsDto(
+    string Source,
+    IReadOnlyList<ConvEntryDto> Markers,   // маркер (база → роль), уверенно
+    IReadOnlyList<ConvEntryDto> Fallback,  // fallback (база → роль), эвристика
+    IReadOnlyList<ConvRuleDto> Rules);     // ожидание: суффикс имени → маркер/роль (дрейф, если не выполнено)
+
+public sealed record ConvEntryDto(string Name, string Role);
+public sealed record ConvRuleDto(string Suffix, string Marker, string Role);
 
 /// <summary>Слой сервиса в L0-сводке: имя, здоровье, краткая заметка, число типов (превью L1).</summary>
 public sealed record LayerSummaryDto(

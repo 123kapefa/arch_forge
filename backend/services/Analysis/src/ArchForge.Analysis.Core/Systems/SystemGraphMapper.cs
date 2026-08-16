@@ -42,7 +42,11 @@ public static class SystemGraphMapper
 
         // TODO(P1.5-G): системное покрытие — заглушка (total=узлы). Настоящая агрегация per-service —
         // когда per-service тип-графы вольются в системный IR (иначе фронт-виджет покажет 0% marker).
-        var conventions = pack is null ? null : new ConventionsDto(pack.Source, pack.Markers.Count, pack.Expect.Count);
+        var conventions = pack is null ? null : new ConventionsDto(
+            pack.Source,
+            pack.Markers.Select(m => new ConvEntryDto(m.Key, m.Value)).OrderBy(e => e.Name, StringComparer.Ordinal).ToList(),
+            pack.Fallback.Select(m => new ConvEntryDto(m.Key, m.Value)).OrderBy(e => e.Name, StringComparer.Ordinal).ToList(),
+            pack.Expect.Select(r => new ConvRuleDto(r.Suffix, r.Marker, r.Role)).ToList());
         return new GraphDto(project, nodes, edges,
             new CoverageDto(0, 0, 0, nodes.Count), Drift: [],
             Health: health,

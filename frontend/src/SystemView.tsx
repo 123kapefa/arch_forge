@@ -13,6 +13,7 @@ import './system.css';
 import { fetchSystem, type SystemGraph } from './system';
 import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto } from './api';
 import { ImportsScreen } from './ImportsScreen';
+import { ConventionsView } from './ConventionsView';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
 import { gridLayout } from './gridLayout';
@@ -21,7 +22,7 @@ import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
 import { type TypeNodeData } from './nodes/TypeNode';
 import { TypeCard } from './nodes/TypeCard';
-import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
+import { problemsByLens, severityCounts, categoryOf, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
 import { FolderPicker } from './FolderPicker';
@@ -521,6 +522,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [importsOpen, setImportsOpen] = useState(false); // экран «Импорты» вместо карты
   const [imports, setImports] = useState<ImportsDto | null>(null); // прямые пакеты (ленивая загрузка)
   const [importsLoading, setImportsLoading] = useState(false);
+  const [convOpen, setConvOpen] = useState(false); // модалка просмотра свода
   const flowRef = useRef<FlowHandle>(null);
   const flagsRef = useRef({ layers: true, drift: true }); // текущие флаги анализа (для стабильного load)
   flagsRef.current = { layers: runLayers, drift: runDrift };
@@ -742,6 +744,11 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     });
   const counts = useMemo(() => severityCounts(graph?.problems), [graph]);
   const lensProblems = useMemo(() => problemsByLens(graph?.problems, lens), [graph, lens]);
+  // Нижний список — ВСЕ проблемы (обе линзы), с тегом категории: линза красит граф, а не прячет список.
+  const allProblems = useMemo(() => {
+    const ord: Record<string, number> = { critical: 0, warning: 1, coverage: 2, info: 3 };
+    return [...(graph?.problems ?? [])].sort((a, b) => (ord[a.severity] ?? 9) - (ord[b.severity] ?? 9));
+  }, [graph]);
   // v3: игнорируем прежние авто-сохранённые раскладки — при открытии всегда свежая ELK-раскладка.
   const storageKey = loadedPath ? `af_layout3:${loadedPath}` : '';
 
@@ -860,10 +867,13 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               дрейф от свода
             </label>
             {graph?.conventions && (
-              <div className="panel__conv" title="archforge.conventions.json в корне проекта переопределяет/дополняет свод">
+              <button className="panel__conv" onClick={() => setConvOpen(true)}
+                title="archforge.conventions.json в корне проекта переопределяет/дополняет свод. Клик — посмотреть содержимое.">
                 <span className="panel__conv-src">свод: {graph.conventions.source}</span>
-                <span className="panel__conv-cnt">{graph.conventions.markers} маркер(ов) · {graph.conventions.rules} правил(о)</span>
-              </div>
+                <span className="panel__conv-cnt">
+                  {graph.conventions.markers.length + graph.conventions.fallback.length} маркер(ов) · {graph.conventions.rules.length} правил(о) · смотреть →
+                </span>
+              </button>
             )}
             <div className="panel__hint">{loading ? 'анализирую…' : 'по отдельности или вместе; структурный анализ идёт всегда'}</div>
           </div>
@@ -1004,10 +1014,11 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       {graph && problemsOpen && (
         <div className="problems-drawer">
           <div className="pd__list">
-            {lensProblems.length === 0 ? (
-              <div className="panel__empty">нет проблем в этой линзе</div>
-            ) : lensProblems.map((p) => (
+            {allProblems.length === 0 ? (
+              <div className="panel__empty">проблем не найдено</div>
+            ) : allProblems.map((p) => (
               <button key={p.id} className={`pd-row sev-${p.severity}`} onClick={() => focusNode(p.location)}>
+                <span className={`pd-row__cat cat-${categoryOf(p)}`}>{categoryOf(p) === 'convention' ? 'свод' : 'арх'}</span>
                 <span className="pd-row__kind">{p.kind}</span>
                 <span className="pd-row__title">{p.title}</span>
                 <span className="pd-row__loc">{nameById.get(p.location) ?? p.location}</span>
@@ -1024,6 +1035,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           <span className="pb-badge pb-badge--crit">⊖ {counts.critical}</span>
           <span className="pb-badge pb-badge--warn">⚠ {counts.warning}</span>
           <span className="pb-badge pb-badge--cov">○ {counts.coverage}</span>
+          <span className="pb-badge pb-badge--drift">≈ {counts.info} дрейф</span>
           <span className="pb__toggle">
             {problemsOpen ? 'свернуть' : 'развернуть'}
             <Icon name={problemsOpen ? 'chevronDown' : 'chevronUp'} size={13} />
@@ -1048,6 +1060,9 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           onSelect={(p) => { setPickerOpen(false); void load(p); }}
           onClose={() => setPickerOpen(false)}
         />
+      )}
+      {convOpen && graph?.conventions && (
+        <ConventionsView conventions={graph.conventions} onClose={() => setConvOpen(false)} />
       )}
     </div>
   );

@@ -313,10 +313,34 @@
 .panel__label { font-size: 10px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
 .panel__empty { color: var(--muted); font-style: italic; }
 .panel__hint { font-size: 10px; color: var(--muted); margin-top: 5px; }
-/* индикатор источника свода (встроенный / файл) */
-.panel__conv { margin: 7px 0 2px; padding: 6px 8px; background: var(--card); border: 1px solid var(--card-line); border-radius: 7px; }
+/* индикатор источника свода (встроенный / файл) — кнопка, открывает просмотрщик */
+.panel__conv { display: block; width: 100%; text-align: left; cursor: pointer; margin: 7px 0 2px; padding: 6px 8px; background: var(--card); border: 1px solid var(--card-line); border-radius: 7px; font: inherit; }
+.panel__conv:hover { border-color: var(--accent); }
 .panel__conv-src { display: block; font-size: 11px; color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel__conv-cnt { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+/* --- модалка «Свод конвенций» --- */
+.cv-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(6, 10, 16, 0.6); display: flex; align-items: center; justify-content: center; }
+.cv { width: 560px; max-width: 92vw; max-height: 86vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--card-line); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.55); }
+.cv__head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--card-line); }
+.cv__title { display: flex; align-items: center; gap: 9px; font-weight: 600; color: var(--text); }
+.cv__close { background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 4px; border-radius: 6px; }
+.cv__close:hover { background: rgba(108,140,255,0.12); color: var(--text); }
+.cv__src { padding: 8px 16px; color: var(--accent); font-size: 12px; border-bottom: 1px solid var(--card-line); }
+.cv__body { overflow-y: auto; padding: 12px 16px 16px; }
+.cv__hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin-bottom: 12px; }
+.cv__hint code { color: var(--text); font-family: ui-monospace, monospace; }
+.cv__section { margin-top: 14px; }
+.cv__sec-head { display: flex; align-items: center; gap: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; }
+.cv__sec-head span { text-transform: none; letter-spacing: 0; font-size: 11px; opacity: 0.8; }
+.cv__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.cv__entry, .cv__rule { font-size: 12px; color: var(--text); }
+.cv__entry code, .cv__rule code { font-family: ui-monospace, monospace; color: var(--accent); }
+.cv__role { color: var(--muted); }
+.cv__empty { color: var(--muted); font-style: italic; }
+.cv__copy { margin-left: auto; background: transparent; border: 1px solid var(--card-line); color: var(--muted); border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.cv__copy:hover { border-color: var(--accent); color: var(--text); }
+.cv__sample { background: var(--card); border: 1px solid var(--card-line); border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--text); overflow-x: auto; margin: 0; }
 .opt { display: flex; align-items: center; gap: 10px; padding: 6px 8px; margin: 0 -8px; border-radius: 7px; cursor: pointer; }
 .opt:hover { background: rgba(108, 140, 255, 0.08); }
 /* невыбранные строки — приглушены (как в референсе) */
@@ -402,6 +426,7 @@
 .pb-badge--crit { color: var(--crit); background: rgba(229, 72, 77, 0.14); }
 .pb-badge--warn { color: var(--warn); background: rgba(224, 178, 74, 0.14); }
 .pb-badge--cov { color: var(--cover); background: rgba(138, 148, 166, 0.14); }
+.pb-badge--drift { color: var(--warn); background: rgba(224, 178, 74, 0.10); }
 .pb__toggle {
   margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
   font-size: 12px; color: var(--muted);
@@ -535,6 +560,9 @@
 .pd-row.sev-warning { border-left-color: var(--warn); }
 .pd-row.sev-coverage { border-left-color: var(--cover); }
 .pd-row.sev-info { border-left-color: var(--accent); }
+.pd-row__cat { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 8px; flex: none; min-width: 34px; text-align: center; }
+.pd-row__cat.cat-architecture { color: var(--accent); background: rgba(108, 140, 255, 0.14); }
+.pd-row__cat.cat-convention { color: var(--warn); background: rgba(224, 178, 74, 0.14); }
 .pd-row__kind { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); flex: none; min-width: 120px; }
 .pd-row__title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-row__loc { color: var(--muted); font-size: 11px; flex: none; }

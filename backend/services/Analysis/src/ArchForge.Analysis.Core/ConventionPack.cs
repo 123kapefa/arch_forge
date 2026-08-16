@@ -50,11 +50,19 @@ public sealed class ConventionPack(
     // Имена свод-файла в корне проекта (первый найденный — используется).
     private static readonly string[] FileNames = { "archforge.conventions.json", Path.Combine(".archforge", "conventions.json") };
 
-    /// <summary>Свод из файла проекта (мерж поверх дефолта: пользователь добавляет/переопределяет);
+    /// <summary>Свод из файла проекта (мерж поверх дефолта: пользователь добавляет/переопределяет).
+    /// Файл ищем от пути анализа ВВЕРХ по дереву (drill в подпапку сервиса тоже видит свод в корне);
     /// файла нет → дефолт; ошибка чтения → дефолт с пометкой в Source.</summary>
-    public static ConventionPack Load(string root)
+    public static ConventionPack Load(string startPath)
     {
-        var file = FileNames.Select(n => Path.Combine(root, n)).FirstOrDefault(File.Exists);
+        string? file = null;
+        var dir = startPath;
+        for (var depth = 0; depth < 12 && !string.IsNullOrEmpty(dir); depth++)
+        {
+            file = FileNames.Select(n => Path.Combine(dir, n)).FirstOrDefault(File.Exists);
+            if (file is not null) break;
+            dir = Path.GetDirectoryName(dir.TrimEnd('/', '\\'));
+        }
         if (file is null) return Default();
         try
         {
