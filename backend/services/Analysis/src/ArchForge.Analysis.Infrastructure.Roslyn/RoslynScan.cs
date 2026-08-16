@@ -40,13 +40,15 @@ internal static class RoslynScan
     public static string Layer(string path)
     {
         var p = path.Replace('\\', '/');
-        if (p.Contains("Test")) return "tests";
-        if (p.Contains(".Domain")) return "Domain";
-        if (p.Contains(".Application") || p.Contains(".Core")) return "Application";
-        if (p.Contains(".Infrastructure") || p.Contains(".Persistence")) return "Infrastructure";
-        if (p.Contains(".Contracts")) return "Contracts";
-        if (p.Contains(".Migrator")) return "Tooling";
-        if (p.Contains(".Api") || p.Contains(".Web") || p.Contains(".Host")) return "Api";
+        // Сегменты проектов сравниваем без учёта регистра: «Catalog.API» ≡ «.Api» (иначе весь API-проект → unknown).
+        bool Has(string s) => p.Contains(s, StringComparison.OrdinalIgnoreCase);
+        if (Has("Test")) return "tests";
+        if (Has(".Domain")) return "Domain";
+        if (Has(".Application") || Has(".Core")) return "Application";
+        if (Has(".Infrastructure") || Has(".Persistence")) return "Infrastructure";
+        if (Has(".Contracts")) return "Contracts";
+        if (Has(".Migrator")) return "Tooling";
+        if (Has(".Api") || Has(".Web") || Has(".Host")) return "Api";
         return "unknown";
     }
 }

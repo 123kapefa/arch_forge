@@ -14,7 +14,11 @@ public static class GraphMapper
         {
             var id = $"{t.Layer}:{t.Name}";
             idByName.TryAdd(t.Name, id);
-            nodes.Add(new NodeDto(id, t.Name, t.Kind, t.Layer, t.Role, t.Via, t.File, t.Drift));
+            var members = t.Members.Count > 0
+                ? t.Members.Select(m => new MemberDto(
+                    $"{id}#{m.Name}", m.Name, m.Kind, m.Signature, m.HttpMethod, m.Route, t.File, m.Line)).ToList()
+                : null;
+            nodes.Add(new NodeDto(id, t.Name, t.Kind, t.Layer, t.Role, t.Via, t.File, t.Drift, Members: members));
         }
 
         var edges = new List<EdgeDto>();

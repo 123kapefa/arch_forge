@@ -58,7 +58,10 @@ public sealed class TypeClassifier(ConventionPack pack)
             else unknown++;
 
             if (td.Count > 0) drift.Add($"{r.Name} ({r.Layer}): {string.Join("; ", td)}");
-            types.Add(new TypeInfo(r.Name, r.Kind, r.Layer, role, via, r.Bases, r.File, td));
+            var members = r.Members
+                .Select(m => new MemberInfo(m.Name, m.Kind, m.Signature, m.HttpMethod, m.Route, m.Line))
+                .ToList();
+            types.Add(new TypeInfo(r.Name, r.Kind, r.Layer, role, via, r.Bases, r.File, td, members));
         }
 
         return new AnalysisResult(types, BuildEdges(raw), new Coverage(marker, heuristic, unknown), drift);
