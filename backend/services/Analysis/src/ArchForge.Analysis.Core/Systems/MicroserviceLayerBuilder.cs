@@ -8,13 +8,13 @@ namespace ArchForge.Analysis.Core.Systems;
 // Совпадение с compose-узлом — по namespace + нормализованному имени (catalog-api ↔ Catalog).
 public static class MicroserviceLayerBuilder
 {
-    public sealed record Entry(string Health, IReadOnlyList<LayerSummaryDto> Layers);
+    public sealed record Entry(string Health, string? Root, IReadOnlyList<LayerSummaryDto> Layers);
 
     /// <summary>ключ: "{namespace}::{нормализованное имя микросервиса}" → сводка слоёв.</summary>
     public static IReadOnlyDictionary<string, Entry> Build(IReadOnlyList<ServiceAnalysis> analyses)
     {
         var byKey = new Dictionary<string, Entry>(StringComparer.Ordinal);
-        foreach (var (_, location, analysis) in analyses)
+        foreach (var (svc, location, analysis) in analyses)
         {
             if (analysis is null) continue;
             var groups = analysis.Types.GroupBy(t => MicroserviceOf(t.File) ?? Last(location), StringComparer.OrdinalIgnoreCase);
@@ -24,10 +24,23 @@ public static class MicroserviceLayerBuilder
                 var edges = analysis.Edges.Where(e => names.Contains(e.From) && names.Contains(e.To)).ToList();
                 var layers = ServiceSummaryBuilder.Layers(g.ToList(), edges);
                 if (layers.Count == 0) continue;
-                byKey[$"{location}::{Normalize(g.Key)}"] = new Entry(ServiceSummaryBuilder.WorstHealth(layers), layers);
+                // корень папки микросервиса (для drill L1: /api/map по нему) — .../Services/<Name> или корень .sln
+                var root = g.Select(t => ServiceRootOf(t.File)).FirstOrDefault(r => r is not null) ?? svc.Root;
+                byKey[$"{location}::{Normalize(g.Key)}"] = new Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers);
             }
         }
         return byKey;
+    }
+
+    // Корень папки микросервиса из пути файла: «.../src/Services/Catalog/...» → «.../src/Services/Catalog».
+    private static string? ServiceRootOf(string file)
+    {
+        var p = file.Replace('\\', '/');
+        var i = p.IndexOf("/Services/", StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return null;
+        var after = i + "/Services/".Length;
+        var slash = p.IndexOf('/', after);
+        return slash > after ? p[..slash] : null;
     }
 
     /// <summary>Ключ compose-узла для сопоставления со сводкой: namespace-префикс id + норм. имя.</summary>

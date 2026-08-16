@@ -23,7 +23,7 @@ public static class SystemGraphMapper
             var health = layers is null ? problemHealth : Worse(problemHealth, layers.Health);
             return new NodeDto(
                 n.Id, n.Name, KindString(n.Kind), Layer: "", Role: "", Via: "", File: "", Drift: [],
-                Level: LevelOf(n.Kind), Health: health, Layers: layers?.Layers);
+                Level: LevelOf(n.Kind), Health: health, Layers: layers?.Layers, Root: layers?.Root);
         }).ToList();
 
         var edges = g.Edges.Select(e => new EdgeDto(

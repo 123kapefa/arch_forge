@@ -47,7 +47,9 @@ public sealed record NodeDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<MemberDto>? Members = null,              // члены type-узла (эндпоинты контроллера и т.п.)
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<LayerSummaryDto>? Layers = null);       // слои сервиса-узла (L0: «внутри сервиса — слои»)
+    IReadOnlyList<LayerSummaryDto>? Layers = null,        // слои сервиса-узла (L0: «внутри сервиса — слои»)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Root = null);                                  // папка микросервиса (drill L1: /api/map по нему)
 
 public sealed record EdgeDto(
     string Id,
