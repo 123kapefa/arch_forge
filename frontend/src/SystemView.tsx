@@ -553,11 +553,14 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     }
     return buildLayerFlow(node);
   }, [drill, l1Map]);
-  // L2: слой раскрыт в свои типы (плашки Фазы 1 + внутрислойные связи).
-  const typeFlow = useMemo(
-    () => (drill2 && l1Map ? buildTypeFlow(l1Map, drill2) : { nodes: [] as Node[], edges: [] as Edge[] }),
-    [drill2, l1Map],
-  );
+  // L2: слой раскрыт в свои типы (плашки Фазы 1 + внутрислойные связи). Раскладка ELK — асинхронная.
+  const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] });
+  useEffect(() => {
+    if (!drill2 || !l1Map) { setTypeFlow({ nodes: [], edges: [] }); return; }
+    let alive = true;
+    void buildTypeFlow(l1Map, drill2).then((f) => { if (alive) setTypeFlow(f); });
+    return () => { alive = false; };
+  }, [drill2, l1Map]);
   const activeFlow = drill2 ? typeFlow : drill ? drilledFlow : flow;
   const onDoubleClick = useCallback((n: Node) => {
     if (drill2) return; // L2 → L3 (члены) — backlog
