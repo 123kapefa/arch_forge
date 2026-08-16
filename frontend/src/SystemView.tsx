@@ -3,9 +3,10 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import {
-  ReactFlow, ReactFlowProvider, useReactFlow, useNodesState, useEdgesState,
+  ReactFlow, ReactFlowProvider, useReactFlow, useStoreApi, useNodesState, useEdgesState,
   Background, Controls, MiniMap, type Edge, type Node, type NodeChange,
 } from '@xyflow/react';
+import { routeAll, type Rect, type XY } from './orthoRouter';
 import '@xyflow/react/dist/style.css';
 import './system.css';
 
@@ -22,7 +23,6 @@ import { TypeCard } from './nodes/TypeCard';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
-import { LayoutVersionContext } from './layoutVersion';
 import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
@@ -55,11 +55,26 @@ const Flow = forwardRef<FlowHandle, {
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
   const [version, setVersion] = useState(0); // версия раскладки: растёт при новой раскладке и drag-stop
+  const [routes, setRoutes] = useState<Map<string, XY[]>>(new Map()); // предрассчитанные маршруты (с развязкой)
   const [hoverId, setHoverId] = useState<string | null>(null); // узел под курсором — подсветка связей
   const last = useRef<{ x: number; y: number; t: number } | null>(null);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   const rf = useReactFlow();
+  const storeApi = useStoreApi();
+
+  // Централизованная маршрутизация всех рёбер + пучковая развязка — при новой раскладке и после drag-stop
+  // (version), по измеренным позициям из nodeLookup. Наведение/выбор её не трогают.
+  useEffect(() => {
+    const { nodeLookup } = storeApi.getState();
+    if (nodeLookup.size === 0) { setRoutes(new Map()); return; }
+    const rects = new Map<string, Rect>();
+    for (const n of nodeLookup.values()) {
+      const p = n.internals.positionAbsolute;
+      rects.set(n.id, { x: p.x, y: p.y, w: n.measured?.width ?? 200, h: n.measured?.height ?? 100 });
+    }
+    setRoutes(routeAll(rects, flow.edges.map((e) => ({ id: e.id, source: e.source, target: e.target }))));
+  }, [version, flow.edges, storeApi]);
 
   // Наложить сохранённые позиции на вычисленную раскладку (по id узла).
   const applySaved = useCallback((ns: Node[]): Node[] => {
@@ -84,10 +99,10 @@ const Flow = forwardRef<FlowHandle, {
   useEffect(() => {
     setNodes(applySaved(flow.nodes));
     setEdges(flow.edges);
-    setVersion((v) => v + 1); // новая раскладка → рёбра переобходят
     onDirty(true); // после загрузки/восстановления раскладка считается сохранённой
-    if (flow.nodes.length === 0) return;
-    const t = setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
+    if (flow.nodes.length === 0) { setVersion((v) => v + 1); return; }
+    // версию (→ пересчёт маршрутов) поднимаем после измерения узлов и fitView
+    const t = setTimeout(() => { rf.fitView({ padding: 0.2 }); setVersion((v) => v + 1); }, 70);
     return () => clearTimeout(t);
   }, [flow, applySaved, setNodes, setEdges, rf, onDirty]);
 
@@ -126,20 +141,18 @@ const Flow = forwardRef<FlowHandle, {
 
   // Подсветка связей: наведение (или выбор) узла → его рёбра ярче и над блоками, остальные приглушены.
   const highlightId = hoverId ?? selectedId;
-  const displayEdges = useMemo(() => {
-    if (!highlightId) return edges;
-    return edges.map((e) => {
-      const on = e.source === highlightId || e.target === highlightId;
-      return {
-        ...e,
-        zIndex: on ? 1000 : 0,
-        style: { ...e.style, opacity: on ? 1 : 0.08, strokeWidth: on ? 3 : e.style?.strokeWidth },
-      };
-    });
-  }, [edges, highlightId]);
+  const displayEdges = useMemo(() => edges.map((e) => {
+    const route = routes.get(e.id);                    // предрассчитанный маршрут с развязкой
+    const on = highlightId != null && (e.source === highlightId || e.target === highlightId);
+    return {
+      ...e,
+      data: { ...e.data, route },
+      zIndex: on ? 1000 : 0,
+      style: { ...e.style, opacity: on ? 1 : highlightId ? 0.08 : 1, strokeWidth: on ? 3 : e.style?.strokeWidth },
+    };
+  }), [edges, routes, highlightId]);
 
   return (
-    <LayoutVersionContext.Provider value={version}>
     <ReactFlow
       nodes={nodes}
       edges={displayEdges}
@@ -166,7 +179,6 @@ const Flow = forwardRef<FlowHandle, {
       <Controls />
       <MiniMap pannable zoomable nodeColor="#3a4658" maskColor="rgba(11,15,23,0.6)" style={{ width: 210, height: 168 }} />
     </ReactFlow>
-    </LayoutVersionContext.Provider>
   );
 });
 
