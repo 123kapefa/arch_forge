@@ -14,7 +14,6 @@ import { fetchMap, type GraphDto, type MemberDto } from './api';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
 import { gridLayout } from './gridLayout';
-import { RoutedEdge } from './RoutedEdge';
 import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
@@ -23,13 +22,13 @@ import { TypeCard } from './nodes/TypeCard';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
-import { LayoutDirtyContext } from './layoutDirty';
+import { LayoutVersionContext } from './layoutVersion';
 import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
 
 const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeCard };
-const edgeTypes = { routed: RoutedEdge, ortho: OrthoEdge };
+const edgeTypes = { ortho: OrthoEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
 // Низкий порог = магнит только при явно медленном, «прицельном» движении, а не при обычном перетаскивании.
@@ -55,7 +54,7 @@ const Flow = forwardRef<FlowHandle, {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
-  const [moved, setMoved] = useState(false); // узлы двигали → рёбра на живой обход (LayoutDirtyContext)
+  const [version, setVersion] = useState(0); // версия раскладки: растёт при новой раскладке и drag-stop
   const [hoverId, setHoverId] = useState<string | null>(null); // узел под курсором — подсветка связей
   const last = useRef<{ x: number; y: number; t: number } | null>(null);
   const nodesRef = useRef(nodes);
@@ -85,7 +84,7 @@ const Flow = forwardRef<FlowHandle, {
   useEffect(() => {
     setNodes(applySaved(flow.nodes));
     setEdges(flow.edges);
-    setMoved(false); // новая раскладка → рёбра снова по маршрутам ELK
+    setVersion((v) => v + 1); // новая раскладка → рёбра переобходят
     onDirty(true); // после загрузки/восстановления раскладка считается сохранённой
     if (flow.nodes.length === 0) return;
     const t = setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
@@ -109,7 +108,7 @@ const Flow = forwardRef<FlowHandle, {
   // Перетаскивание узла → раскладка расходится с сохранённой.
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
     onNodesChange(changes);
-    if (changes.some((c) => c.type === 'position' && c.dragging)) { onDirty(false); setMoved(true); }
+    if (changes.some((c) => c.type === 'position' && c.dragging)) onDirty(false);
   }, [onNodesChange, onDirty]);
 
   // Скорость указателя за кадр → включаем/выключаем притяжение к сетке во время перетаскивания.
@@ -140,7 +139,7 @@ const Flow = forwardRef<FlowHandle, {
   }, [edges, highlightId]);
 
   return (
-    <LayoutDirtyContext.Provider value={moved}>
+    <LayoutVersionContext.Provider value={version}>
     <ReactFlow
       nodes={nodes}
       edges={displayEdges}
@@ -156,7 +155,7 @@ const Flow = forwardRef<FlowHandle, {
       snapGrid={[GRID, GRID]}
       onNodeDragStart={() => { last.current = null; }}
       onNodeDrag={onNodeDrag}
-      onNodeDragStop={() => { last.current = null; setSnapNow(false); }}
+      onNodeDragStop={() => { last.current = null; setSnapNow(false); setVersion((v) => v + 1); }}
       onNodeMouseEnter={(_, n) => setHoverId(n.id)}
       onNodeMouseLeave={() => setHoverId(null)}
       onNodeClick={(_, n) => onSelect(n)}
@@ -167,7 +166,7 @@ const Flow = forwardRef<FlowHandle, {
       <Controls />
       <MiniMap pannable zoomable nodeColor="#3a4658" maskColor="rgba(11,15,23,0.6)" style={{ width: 210, height: 168 }} />
     </ReactFlow>
-    </LayoutDirtyContext.Provider>
+    </LayoutVersionContext.Provider>
   );
 });
 

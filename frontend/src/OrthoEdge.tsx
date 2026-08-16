@@ -1,21 +1,10 @@
-import { useContext } from 'react';
+import { useContext, useMemo } from 'react';
 import { BaseEdge, useInternalNode, useStoreApi, type EdgeProps, type InternalNode } from '@xyflow/react';
 import type { XY } from './layerFlow';
-import { LayoutDirtyContext } from './layoutDirty';
+import { LayoutVersionContext } from './layoutVersion';
 import { routeOrtho, type Rect } from './orthoRouter';
 
 type Side = 'T' | 'B' | 'L' | 'R';
-
-// Ортогонализация маршрута ELK: косой сегмент a→b → H→V→H (для статичного пути по точкам ELK).
-function orthoPoints(pts: XY[]): XY[] {
-  const out: XY[] = [pts[0]];
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1], b = pts[i];
-    if (Math.abs(a.x - b.x) < 0.5 || Math.abs(a.y - b.y) < 0.5) out.push(b);
-    else { const midX = (a.x + b.x) / 2; out.push({ x: midX, y: a.y }, { x: midX, y: b.y }, b); }
-  }
-  return out;
-}
 
 // Путь-ломаная со скруглением углов (радиус r). Точки уже ортогональны и в координатах потока.
 function roundedPath(pts: XY[], r = 8): string {
@@ -40,10 +29,6 @@ function rectOf(n: InternalNode): Rect {
   const p = n.internals.positionAbsolute;
   return { x: p.x, y: p.y, w: n.measured?.width ?? 200, h: n.measured?.height ?? 100 };
 }
-const nodeMoved = (a: XY, b: unknown): boolean => {
-  const p = b as XY | undefined;
-  return !p || Math.hypot(a.x - p.x, a.y - p.y) > 1.5;
-};
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 // Сторона узла me, обращённая к other (по доминирующему направлению между центрами).
@@ -94,26 +79,24 @@ function outPoint(p: XY, side: Side, d = 18): XY {
 }
 
 /**
- * Ребро L1/L2: узлы на местах раскладки — маршрут ELK. Узел двигали — ортогональный маршрут по Hanan-сетке
- * (routeOrtho): огибает блоки, минимум поворотов; порты распределены, сторона с одним ребром выровнена (прямая).
+ * Ребро L0/L1/L2: ортогональный маршрут по Hanan-сетке (routeOrtho) по текущим позициям узлов — огибает
+ * блоки, минимум поворотов, порты распределены, сторона с одним ребром выровнена (прямая). Так рисуются
+ * ВСЕ линии (и дефолтная расстановка, и после перетаскивания). Маршрут мемоизирован: пересчёт только при
+ * смене позиций своих узлов или версии раскладки (после drag-stop), поэтому наведение/выбор — без пересчёта.
  */
-export function OrthoEdge({ id, source, target, data, style, markerEnd, sourceX, sourceY, targetX, targetY }: EdgeProps) {
+export function OrthoEdge({ id, source, target, style, markerEnd, sourceX, sourceY, targetX, targetY }: EdgeProps) {
   const src = useInternalNode(source);
   const tgt = useInternalNode(target);
   const store = useStoreApi();
-  const layoutDirty = useContext(LayoutDirtyContext);
-  const pts = (data as { points?: XY[] } | undefined)?.points;
+  const version = useContext(LayoutVersionContext);
+  const sPos = src?.internals.positionAbsolute;
+  const tPos = tgt?.internals.positionAbsolute;
 
-  const dragged = layoutDirty || !src || !tgt
-    || nodeMoved(src.internals.positionAbsolute, src.data?.elkPos)
-    || nodeMoved(tgt.internals.positionAbsolute, tgt.data?.elkPos);
-
-  if (pts && pts.length >= 2 && !dragged) {
-    return <BaseEdge id={id} path={roundedPath(orthoPoints(pts))} style={style} markerEnd={markerEnd} />;
-  }
-  if (src && tgt) {
+  const path = useMemo(() => {
     const { edges, nodeLookup } = store.getState();
-    const sR = rectOf(src), tR = rectOf(tgt);
+    const sN = nodeLookup.get(source), tN = nodeLookup.get(target);
+    if (!sN || !tN) return null;
+    const sR = rectOf(sN), tR = rectOf(tN);
     const sSide = sideFacing(sR, tR), tSide = sideFacing(tR, sR);
     const ss = slot(source, id, sSide, edges, nodeLookup), ts = slot(target, id, tSide, edges, nodeLookup);
     let sPort = portPoint(sR, sSide, ss.i, ss.n);
@@ -122,8 +105,11 @@ export function OrthoEdge({ id, source, target, data, style, markerEnd, sourceX,
     else if (ts.n === 1 && ss.n > 1) tPort = alignPort(tR, tSide, sPort);
     const obstacles: Rect[] = [];
     for (const n of nodeLookup.values()) if (n.id !== source && n.id !== target) obstacles.push(rectOf(n));
-    const path = routeOrtho(sPort, outPoint(sPort, sSide), tPort, outPoint(tPort, tSide), obstacles);
-    return <BaseEdge id={id} path={roundedPath(path)} style={style} markerEnd={markerEnd} />;
-  }
-  return <BaseEdge id={id} path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`} style={style} markerEnd={markerEnd} />;
+    return roundedPath(routeOrtho(sPort, outPoint(sPort, sSide), tPort, outPoint(tPort, tSide), obstacles));
+    // позиции узлов и версия раскладки — достаточный ключ; edges/nodeLookup читаем свежими из store
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, source, target, sPos?.x, sPos?.y, tPos?.x, tPos?.y, version, store]);
+
+  if (!path) return <BaseEdge id={id} path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`} style={style} markerEnd={markerEnd} />;
+  return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
 }

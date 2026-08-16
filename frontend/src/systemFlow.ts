@@ -128,7 +128,7 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
       id: key,
       source: e.source,
       target: e.target,
-      type: 'routed',                              // кастомное ребро: маршрут ELK с обходом плашек
+      type: 'ortho',                               // единый ортогональный роутер (обход плашек + порты)
       style,
       markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke },
       data: { kind: e.kind, confidence: conf, violation } satisfies EdgeData,
