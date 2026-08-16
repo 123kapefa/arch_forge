@@ -1,15 +1,14 @@
-import { BaseEdge, getSmoothStepPath, Position, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, getSmoothStepPath, useInternalNode, type EdgeProps } from '@xyflow/react';
+import { getEdgeParams } from './floating';
 import type { XY } from './layerFlow';
 
-// Ортогонализация маршрута dagre: точки dagre — контрольные точки сплайна (диагонали). Каждый косой
-// сегмент a→b заменяем на H→V→H с вертикалью посередине (в канале между рангами) — линия выходит из
-// источника и входит в цель горизонтально, повороты прямые. Соседние сегменты стыкуются горизонталью.
+// Ортогонализация маршрута ELK/dagre: косой сегмент a→b → H→V→H с вертикалью посередине.
 function orthoPoints(pts: XY[]): XY[] {
   const out: XY[] = [pts[0]];
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], b = pts[i];
     if (Math.abs(a.x - b.x) < 0.5 || Math.abs(a.y - b.y) < 0.5) {
-      out.push(b); // сегмент уже ортогонален
+      out.push(b);
     } else {
       const midX = (a.x + b.x) / 2;
       out.push({ x: midX, y: a.y }, { x: midX, y: b.y }, b);
@@ -18,7 +17,7 @@ function orthoPoints(pts: XY[]): XY[] {
   return out;
 }
 
-// Путь-ломаная со скруглением углов (радиус r). Точки уже в координатах потока и ортогональны.
+// Путь-ломаная со скруглением углов (радиус r). Точки уже ортогональны и в координатах потока.
 function roundedPath(pts: XY[], r = 6): string {
   const p = pts.filter((pt, i) => i === 0 || Math.abs(pt.x - pts[i - 1].x) > 0.5 || Math.abs(pt.y - pts[i - 1].y) > 0.5);
   if (p.length < 2) return '';
@@ -37,18 +36,36 @@ function roundedPath(pts: XY[], r = 6): string {
   return d;
 }
 
+const moved = (a: XY | undefined, b: unknown): boolean => {
+  const pos = b as XY | undefined;
+  return !a || !pos || Math.hypot(a.x - pos.x, a.y - pos.y) > 1.5;
+};
+
 /**
- * Ребро L2: путь по маршруту dagre (обходит узлы по каналам между рангами), но ортогонализированный —
- * прямые углы, как на L0. Нет точек (fallback) → стандартный smoothstep source→target.
+ * Ребро L1/L2: пока узлы стоят на местах раскладки — путь по маршруту ELK (обход карточек, прямые углы).
+ * Если узел ПЕРЕТАЩИЛИ — рисуем живой floating-smoothstep по текущим позициям, чтобы линия шла за блоком.
  */
-export function OrthoEdge({ id, data, style, markerEnd, sourceX, sourceY, targetX, targetY }: EdgeProps) {
+export function OrthoEdge({ id, source, target, data, style, markerEnd, sourceX, sourceY, targetX, targetY }: EdgeProps) {
+  const src = useInternalNode(source);
+  const tgt = useInternalNode(target);
   const pts = (data as { points?: XY[] } | undefined)?.points;
-  if (pts && pts.length >= 2) {
+
+  // сдвинули ли хоть один узел от позиции раскладки (elkPos)
+  const dragged = !src || !tgt
+    || moved(src.internals.positionAbsolute, src.data?.elkPos)
+    || moved(tgt.internals.positionAbsolute, tgt.data?.elkPos);
+
+  if (pts && pts.length >= 2 && !dragged) {
     return <BaseEdge id={id} path={roundedPath(orthoPoints(pts))} style={style} markerEnd={markerEnd} />;
   }
-  const [path] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition: Position.Right,
-    targetX, targetY, targetPosition: Position.Left, borderRadius: 6,
-  });
+  if (src && tgt) {
+    const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(src, tgt);
+    const [path] = getSmoothStepPath({
+      sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
+      targetX: tx, targetY: ty, targetPosition: targetPos, borderRadius: 8,
+    });
+    return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
+  }
+  const [path] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, borderRadius: 8 });
   return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
 }
