@@ -635,15 +635,17 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     return () => { alive = false; };
   }, [drill]);
 
-  // L1: сервис раскрыт в слои. Есть тип-граф → богатые карточки (типы + зависимости); иначе — по L0-сводке.
-  const drilledFlow = useMemo(() => {
-    if (!drill) return { nodes: [] as Node[], edges: [] as Edge[] };
+  // L1: сервис раскрыт в слои. Есть тип-граф → богатые карточки (ELK-раскладка, async); иначе — по L0-сводке.
+  const [drilledFlow, setDrilledFlow] = useState<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] });
+  useEffect(() => {
+    if (!drill) { setDrilledFlow({ nodes: [], edges: [] }); return; }
     const node = (drill.data as SystemNodeData).node;
-    if (l1Map) {
-      const rich = buildLayerFlowRich(node, l1Map);
-      if (rich.nodes.length > 0) return rich;
-    }
-    return buildLayerFlow(node);
+    if (!l1Map) { setDrilledFlow(buildLayerFlow(node)); return; } // карта ещё грузится → простые карточки
+    let alive = true;
+    void buildLayerFlowRich(node, l1Map).then((rich) => {
+      if (alive) setDrilledFlow(rich.nodes.length > 0 ? rich : buildLayerFlow(node));
+    });
+    return () => { alive = false; };
   }, [drill, l1Map]);
   // L2: слой раскрыт в свои типы (плашки Фазы 1 + внутрислойные связи). Раскладка ELK — асинхронная.
   const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] });
