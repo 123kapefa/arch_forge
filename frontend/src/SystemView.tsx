@@ -10,7 +10,7 @@ import { routeAll, type Rect, type XY } from './orthoRouter';
 import '@xyflow/react/dist/style.css';
 import './system.css';
 
-import { fetchSystem, type SystemGraph } from './system';
+import { fetchSystem, type SystemGraph, type ProblemItem } from './system';
 import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto } from './api';
 import { ImportsScreen } from './ImportsScreen';
 import { ConventionsView } from './ConventionsView';
@@ -410,6 +410,37 @@ function healthColor(h?: string): string {
   return h === 'critical' ? '#e5484d' : h === 'warning' ? '#e0b24a' : h === 'ok' ? '#6fcf77' : '#5e6a7d';
 }
 
+// Раскрытый список отдельных фактов агрегированной проблемы (дрейф/нарушения слоёв).
+// Фильтр — чтобы найти конкретный тип среди сотен (кейс 144 дрейфа): «где именно эта проблема».
+function ProblemItems({ items }: { items: ProblemItem[] }) {
+  const [q, setQ] = useState('');
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return items;
+    return items.filter((it) =>
+      it.name.toLowerCase().includes(s) || it.layer.toLowerCase().includes(s) || it.note.toLowerCase().includes(s));
+  }, [items, q]);
+  return (
+    <div className="pd-items">
+      {items.length > 8 && (
+        <input className="pd-items__search" value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder={`фильтр среди ${items.length}…`} />
+      )}
+      <ul className="pd-items__list">
+        {filtered.length === 0 ? (
+          <li className="pd-items__empty">ничего не найдено</li>
+        ) : filtered.map((it, i) => (
+          <li key={`${it.name}-${i}`} className="pd-item-row">
+            <span className="pd-item-row__name">{it.name}</span>
+            {it.layer && <span className="pd-item-row__layer">{it.layer}</span>}
+            {it.note && <span className="pd-item-row__note">{it.note}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // Ширина инспектора — до перезапуска приложения (sessionStorage, не localStorage).
 const RIGHT_MIN = 240;
 function readRightW(): number {
@@ -505,6 +536,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [hideIsolated, setHideIsolated] = useState(false);
   const [hideTests, setHideTests] = useState(false);
   const [problemsOpen, setProblemsOpen] = useState(false); // нижняя панель «Проблемы проекта»
+  const [expandedProblem, setExpandedProblem] = useState<string | null>(null); // раскрытая проблема (список фактов)
   const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(new Set()); // скрытые слои (секция СЛОИ)
   const [leftOpen, setLeftOpen] = useState(true);   // панель ВИД
   const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
@@ -1016,14 +1048,24 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           <div className="pd__list">
             {allProblems.length === 0 ? (
               <div className="panel__empty">проблем не найдено</div>
-            ) : allProblems.map((p) => (
-              <button key={p.id} className={`pd-row sev-${p.severity}`} onClick={() => focusNode(p.location)}>
-                <span className={`pd-row__cat cat-${categoryOf(p)}`}>{categoryOf(p) === 'convention' ? 'свод' : 'арх'}</span>
-                <span className="pd-row__kind">{p.kind}</span>
-                <span className="pd-row__title">{p.title}</span>
-                <span className="pd-row__loc">{nameById.get(p.location) ?? p.location}</span>
-              </button>
-            ))}
+            ) : allProblems.map((p) => {
+              const hasItems = (p.items?.length ?? 0) > 0;
+              const open = expandedProblem === p.id;
+              return (
+                <div key={p.id} className="pd-item">
+                  <button className={`pd-row sev-${p.severity}`}
+                    onClick={() => (hasItems ? setExpandedProblem(open ? null : p.id) : focusNode(p.location))}
+                    title={hasItems ? 'показать все факты' : 'навести на узел'}>
+                    <span className="pd-row__chev">{hasItems ? <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} /> : null}</span>
+                    <span className={`pd-row__cat cat-${categoryOf(p)}`}>{categoryOf(p) === 'convention' ? 'свод' : 'арх'}</span>
+                    <span className="pd-row__kind">{p.kind}</span>
+                    <span className="pd-row__title">{p.title}</span>
+                    <span className="pd-row__loc">{nameById.get(p.location) ?? p.location}</span>
+                  </button>
+                  {open && hasItems && <ProblemItems items={p.items!} />}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

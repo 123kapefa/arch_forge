@@ -26,11 +26,12 @@ public static class LayerViolationDetector
                 .ToList();
             if (violations.Count == 0) continue;
 
-            var examples = string.Join("; ", violations.Take(3)
-                .Select(v => $"{v.From} ({layerOf[v.From]}) → {v.To} ({layerOf[v.To]})"));
+            var items = violations
+                .Select(v => new ProblemItem($"{v.From} → {v.To}", $"{layerOf[v.From]} → {layerOf[v.To]}", "зависимость наружу"))
+                .ToList();
             problems.Add(new SystemProblem(ProblemSeverity.Warning, "layer-violation",
-                $"«{svc.Name}»: {violations.Count} нарушений направления слоёв. Напр.: {examples}",
-                location, ProblemCategory.Architecture));
+                $"«{svc.Name}»: {violations.Count} нарушений направления слоёв",
+                location, ProblemCategory.Architecture, items));
         }
         return problems;
     }

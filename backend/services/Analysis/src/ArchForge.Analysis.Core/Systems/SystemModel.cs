@@ -36,7 +36,11 @@ public sealed record SystemEdge(
 /// <summary>Обнаруженная проблема с провенансом, местом и линзой (по умолчанию — арх-проблема).</summary>
 public sealed record SystemProblem(
     ProblemSeverity Severity, string Kind, string Title, string Location,
-    string Category = ProblemCategory.Architecture);
+    string Category = ProblemCategory.Architecture,
+    IReadOnlyList<ProblemItem>? Items = null); // отдельные факты (типы дрейфа / пары нарушений) для раскрытия
+
+// Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка.
+public sealed record ProblemItem(string Name, string Layer, string Note);
 
 public sealed record SystemGraph(
     IReadOnlyList<SystemNode> Nodes,

@@ -52,6 +52,9 @@ export interface SystemEdge {
   problem?: string;      // id проблемы (навигация клик-по-ребру → проблема)
 }
 
+/** Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка. */
+export interface ProblemItem { name: string; layer: string; note: string }
+
 export interface Problem {
   id: string;
   severity: string;      // critical | warning | coverage | info
@@ -61,6 +64,7 @@ export interface Problem {
   via?: string;
   fix?: string;
   category?: string;     // architecture (реальные проблемы) | convention (дрейф) — линза; null → architecture
+  items?: ProblemItem[]; // отдельные факты (типы дрейфа / пары нарушений) — раскрываются списком
 }
 
 export interface SystemCoverage {

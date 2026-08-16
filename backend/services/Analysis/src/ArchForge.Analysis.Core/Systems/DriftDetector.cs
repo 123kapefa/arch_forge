@@ -20,12 +20,22 @@ public static class DriftDetector
 
             var total = result.Coverage.Marker + result.Coverage.Heuristic + result.Coverage.Unknown;
             var markerPct = total > 0 ? result.Coverage.Marker * 100 / total : 0;
-            var examples = string.Join("; ", result.Drift.Take(3));
+            var items = result.Drift.Select(ParseItem).ToList();
             problems.Add(new SystemProblem(
                 ProblemSeverity.Info, "drift",
-                $"«{svc.Name}»: {result.Drift.Count} расхождений со сводом (маркеров {markerPct}%). Напр.: {examples}",
-                location, ProblemCategory.Convention));
+                $"«{svc.Name}»: {result.Drift.Count} расхождений со сводом (маркеров {markerPct}%)",
+                location, ProblemCategory.Convention, items));
         }
         return problems;
+    }
+
+    // «Name (Layer): note» → структурный факт (для раскрытия списком на фронте).
+    private static ProblemItem ParseItem(string s)
+    {
+        var open = s.LastIndexOf(" (", StringComparison.Ordinal);
+        var close = open >= 0 ? s.IndexOf("): ", open, StringComparison.Ordinal) : -1;
+        return open > 0 && close > open
+            ? new ProblemItem(s[..open], s[(open + 2)..close], s[(close + 3)..])
+            : new ProblemItem(s, "", "");
     }
 }
