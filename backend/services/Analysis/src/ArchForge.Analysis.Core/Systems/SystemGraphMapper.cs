@@ -7,7 +7,8 @@ namespace ArchForge.Analysis.Core.Systems;
 public static class SystemGraphMapper
 {
     public static GraphDto ToDto(SystemGraph g, string project,
-        IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null)
+        IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null,
+        ConventionPack? pack = null)
     {
         // здоровье узла — по самой суровой проблеме, где он location (Critical=0 < Warning=1 < Coverage=2)
         var worstByLocation = g.Problems
@@ -41,10 +42,12 @@ public static class SystemGraphMapper
 
         // TODO(P1.5-G): системное покрытие — заглушка (total=узлы). Настоящая агрегация per-service —
         // когда per-service тип-графы вольются в системный IR (иначе фронт-виджет покажет 0% marker).
+        var conventions = pack is null ? null : new ConventionsDto(pack.Source, pack.Markers.Count, pack.Expect.Count);
         return new GraphDto(project, nodes, edges,
             new CoverageDto(0, 0, 0, nodes.Count), Drift: [],
             Health: health,
-            Problems: problems.Count > 0 ? problems : null);
+            Problems: problems.Count > 0 ? problems : null,
+            Conventions: conventions);
     }
 
     private static string KindString(SystemNodeKind k) => k switch

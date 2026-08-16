@@ -93,6 +93,13 @@ export interface EnvironmentDto {
   kind: string;
 }
 
+/** Применённый свод конвенций: источник (встроенный / файл) + счётчики правил. */
+export interface Conventions {
+  source: string;   // «встроенный свод» | «файл: <имя>» | «ошибка … → встроенный»
+  markers: number;  // число маркеров
+  rules: number;    // число правил ожидания (expect)
+}
+
 export interface SystemGraph {
   project: string;
   nodes: SystemNode[];
@@ -103,6 +110,7 @@ export interface SystemGraph {
   problems?: Problem[];
   services?: ServiceSummary[];  // L0-карточки сервисов со слоями (приходят при код-линзах)
   environments?: EnvironmentDto[];
+  conventions?: Conventions;    // источник свода (для индикатора в ВИД)
 }
 
 export interface SystemQuery {

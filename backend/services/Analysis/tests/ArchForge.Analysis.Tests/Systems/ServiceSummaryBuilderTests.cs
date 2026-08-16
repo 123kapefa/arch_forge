@@ -5,10 +5,10 @@ namespace ArchForge.Analysis.Tests.Systems;
 
 public class ServiceSummaryBuilderTests
 {
-    private static readonly TypeClassifier Classifier = new(ConventionPack.Default());
+    private static readonly TypeClassifier Classifier = new();
 
     private static ServiceAnalysis Svc(string loc, RawType[] raw) =>
-        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw));
+        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw, ConventionPack.Default()));
     private static ServiceAnalysis Failed(string loc) =>
         new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, null);
 

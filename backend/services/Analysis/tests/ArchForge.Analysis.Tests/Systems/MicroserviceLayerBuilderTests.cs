@@ -5,10 +5,10 @@ namespace ArchForge.Analysis.Tests.Systems;
 
 public class MicroserviceLayerBuilderTests
 {
-    private static readonly TypeClassifier Classifier = new(ConventionPack.Default());
+    private static readonly TypeClassifier Classifier = new();
 
     private static ServiceAnalysis Svc(string ns, RawType[] raw) =>
-        new(new DiscoveredService("Sln", "/" + ns, "compose.yml"), ns, Classifier.Classify(raw));
+        new(new DiscoveredService("Sln", "/" + ns, "compose.yml"), ns, Classifier.Classify(raw, ConventionPack.Default()));
 
     [Fact]
     public void Partitions_types_by_microservice_folder()

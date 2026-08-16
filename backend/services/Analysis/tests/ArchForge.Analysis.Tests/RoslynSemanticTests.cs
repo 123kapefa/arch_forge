@@ -58,8 +58,8 @@ public class RoslynSemanticTests
     public void Semantic_pack_leaves_no_unknown_on_auth_service()
     {
         Skip.IfNot(Directory.Exists(Target), $"нет собранного таргета auth_service ({Target})");
-        var res = new TypeClassifier(ConventionPack.Default())
-            .Classify(new RoslynSemanticTypeSource(new RoslynTypeSource()).Read(Target));
+        var res = new TypeClassifier()
+            .Classify(new RoslynSemanticTypeSource(new RoslynTypeSource()).Read(Target), ConventionPack.Default());
         Assert.Equal(0, res.Coverage.Unknown); // было 3 unknown: 2 теста → Test, RegisterAccountResult → Result
     }
 
@@ -71,8 +71,8 @@ public class RoslynSemanticTests
         var syntactic = new RawType("AppDb", "class", new[] { "MyBaseContext" }, "", "Infrastructure", "x.cs");
         var semantic = new RawType("AppDb", "class", new[] { "MyBaseContext", "DbContext" }, "", "Infrastructure", "x.cs");
 
-        var syn = new TypeClassifier(pack).Classify(new[] { syntactic }).Types[0];
-        var sem = new TypeClassifier(pack).Classify(new[] { semantic }).Types[0];
+        var syn = new TypeClassifier().Classify(new[] { syntactic }, pack).Types[0];
+        var sem = new TypeClassifier().Classify(new[] { semantic }, pack).Types[0];
 
         Assert.Equal("unknown", syn.Via);    // синтаксис видит только непосредственную базу → промах
         Assert.Equal("DbContext", sem.Role);  // семантика тянет цепочку до канонической базы → классификация
@@ -84,8 +84,8 @@ public class RoslynSemanticTests
         Skip.IfNot(Directory.Exists(Target), $"нет собранного таргета auth_service ({Target})");
 
         var pack = ConventionPack.Default();
-        var semantic = new TypeClassifier(pack).Classify(new RoslynSemanticTypeSource(new RoslynTypeSource()).Read(Target));
-        var syntactic = new TypeClassifier(pack).Classify(new RoslynTypeSource().Read(Target));
+        var semantic = new TypeClassifier().Classify(new RoslynSemanticTypeSource(new RoslynTypeSource()).Read(Target), pack);
+        var syntactic = new TypeClassifier().Classify(new RoslynTypeSource().Read(Target), pack);
 
         // Семантика видит поля/свойства/параметры методов, а не только текст первичного ctor → рёбер строго больше.
         Assert.True(semantic.Edges.Count > syntactic.Edges.Count,

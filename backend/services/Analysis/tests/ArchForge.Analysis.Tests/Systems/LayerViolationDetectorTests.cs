@@ -5,7 +5,7 @@ namespace ArchForge.Analysis.Tests.Systems;
 
 public class LayerViolationDetectorTests
 {
-    private static readonly TypeClassifier Classifier = new(ConventionPack.Default());
+    private static readonly TypeClassifier Classifier = new();
 
     // Order (Domain) с ctor-параметром PaymentGateway (Infrastructure) → ребро Order→PaymentGateway = нарушение.
     private static readonly RawType[] Violating =
@@ -21,7 +21,7 @@ public class LayerViolationDetectorTests
     ];
 
     private static ServiceAnalysis Ok(string loc, RawType[] raw) =>
-        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw));
+        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw, ConventionPack.Default()));
     private static ServiceAnalysis Failed(string loc) =>
         new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, null);
 

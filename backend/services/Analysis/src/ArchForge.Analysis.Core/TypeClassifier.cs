@@ -4,10 +4,11 @@ using ArchForge.Analysis.Domain;
 namespace ArchForge.Analysis.Core;
 
 // Классификатор ролей по convention-pack + линт дрейфа + покрытие + рёбра тип-графа.
-// Перенос из C#-спайка; чистый (работает на RawType, без Roslyn).
-public sealed class TypeClassifier(ConventionPack pack)
+// Перенос из C#-спайка; чистый (работает на RawType, без Roslyn). Пак передаётся в Classify — он свой у
+// каждого проекта (грузится из файла), поэтому классификатор без состояния.
+public sealed class TypeClassifier
 {
-    public AnalysisResult Classify(IReadOnlyList<RawType> raw)
+    public AnalysisResult Classify(IReadOnlyList<RawType> raw, ConventionPack pack)
     {
         var types = new List<TypeInfo>();
         var drift = new List<string>();

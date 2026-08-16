@@ -859,6 +859,12 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
                 onChange={(e) => setAnalysis(runLayers, e.target.checked)} />
               дрейф от свода
             </label>
+            {graph?.conventions && (
+              <div className="panel__conv" title="archforge.conventions.json в корне проекта переопределяет/дополняет свод">
+                <span className="panel__conv-src">свод: {graph.conventions.source}</span>
+                <span className="panel__conv-cnt">{graph.conventions.markers} маркер(ов) · {graph.conventions.rules} правил(о)</span>
+              </div>
+            )}
             <div className="panel__hint">{loading ? 'анализирую…' : 'по отдельности или вместе; структурный анализ идёт всегда'}</div>
           </div>
           {allLayers.length > 0 && (

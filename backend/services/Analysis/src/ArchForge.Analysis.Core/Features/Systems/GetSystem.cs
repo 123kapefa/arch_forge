@@ -36,13 +36,16 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
 
         SystemGraph graph = source.Read(query.Path, ct);
 
+        // Свод: из файла проекта (если есть), иначе встроенный. Нужен и для линз, и чтобы показать источник во фронте.
+        var pack = Directory.Exists(query.Path) ? ConventionPack.Load(query.Path) : ConventionPack.Default();
+
         // Код-линзы (дрейф/слои) — по запросу, только для пути-папки, если анализатор доступен (в тестах может быть null).
         // Общий per-service разбор ОДИН раз → чистые детекторы по флагам + L0-сводка слоёв (без двойного Roslyn).
         IReadOnlyList<ServiceSummaryDto> services = [];
         IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null;
         if ((query.Drift || query.Layers) && analyzer is not null && Directory.Exists(query.Path))
         {
-            var analyses = analyzer.Analyze(query.Path, ct);
+            var analyses = analyzer.Analyze(query.Path, pack, ct);
             var extra = new List<SystemProblem>();
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
             if (query.Layers) extra.AddRange(LayerViolationDetector.Detect(analyses));
@@ -54,7 +57,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         string project = File.Exists(query.Path)
             ? Path.GetFileName(Path.GetDirectoryName(query.Path)) ?? "system"
             : new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
-        var dto = SystemGraphMapper.ToDto(graph, project, nodeLayers);
+        var dto = SystemGraphMapper.ToDto(graph, project, nodeLayers, pack);
         return services.Count > 0 ? dto with { Services = services } : dto;
     }
 }

@@ -22,7 +22,7 @@ public class ServiceAnalyzerTests
         new(name, Path.Combine(root, name), "docker-compose.yml");
 
     private static ServiceAnalyzer Analyzer(IReadOnlyList<DiscoveredService> svcs, Func<string, IReadOnlyList<RawType>> read) =>
-        new(new StubDiscovery(svcs), new StubTypes(read), new TypeClassifier(ConventionPack.Default()));
+        new(new StubDiscovery(svcs), new StubTypes(read), new TypeClassifier());
 
     private static string TempRoot() =>
         Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "archforge_sa_" + Guid.NewGuid().ToString("N"))).FullName;
@@ -33,7 +33,7 @@ public class ServiceAnalyzerTests
         var root = TempRoot();
         try
         {
-            var res = Analyzer([Svc(root, "a"), Svc(root, "b")], _ => Some).Analyze(root);
+            var res = Analyzer([Svc(root, "a"), Svc(root, "b")], _ => Some).Analyze(root, ConventionPack.Default());
             Assert.Equal(new[] { "a", "b" }, res.Select(r => r.Location)); // порядок discovery, location = Rel(root, svc.Root)
             Assert.All(res, r => Assert.NotNull(r.Result));
         }
@@ -47,7 +47,7 @@ public class ServiceAnalyzerTests
         try
         {
             var svcs = new[] { new DiscoveredService("Lib", Path.Combine(root, "lib"), null) };
-            Assert.Empty(Analyzer(svcs, _ => Some).Analyze(root)); // «голый» .sln → нет узлов → пропуск
+            Assert.Empty(Analyzer(svcs, _ => Some).Analyze(root, ConventionPack.Default())); // «голый» .sln → нет узлов → пропуск
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -58,7 +58,7 @@ public class ServiceAnalyzerTests
         var root = TempRoot();
         try
         {
-            var one = Assert.Single(Analyzer([Svc(root, "bad")], _ => throw new IOException("boom")).Analyze(root));
+            var one = Assert.Single(Analyzer([Svc(root, "bad")], _ => throw new IOException("boom")).Analyze(root, ConventionPack.Default()));
             Assert.Null(one.Result); // изоляция ошибок: сбой → null (линза поднимет Coverage), а не исключение
         }
         finally { Directory.Delete(root, recursive: true); }
@@ -72,12 +72,12 @@ public class ServiceAnalyzerTests
         {
             using var cts = new CancellationTokenSource();
             cts.Cancel();
-            Assert.Throws<OperationCanceledException>(() => Analyzer([Svc(root, "a")], _ => Some).Analyze(root, cts.Token));
+            Assert.Throws<OperationCanceledException>(() => Analyzer([Svc(root, "a")], _ => Some).Analyze(root, ConventionPack.Default(), cts.Token));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
 
     [Fact]
     public void Missing_root_yields_empty() =>
-        Assert.Empty(Analyzer([Svc("/x", "a")], _ => Some).Analyze("/no/such/root/archforge-xyz"));
+        Assert.Empty(Analyzer([Svc("/x", "a")], _ => Some).Analyze("/no/such/root/archforge-xyz", ConventionPack.Default()));
 }

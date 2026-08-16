@@ -32,7 +32,7 @@ public class GetSystemHandlerTests
     // ServiceAnalyzer с одним сервисом (svc-a) поверх заданных типов.
     private static ServiceAnalyzer Analyzer(string dir, params RawType[] raw) =>
         new(new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
-            new FakeTypes(raw), new TypeClassifier(ConventionPack.Default()));
+            new FakeTypes(raw), new TypeClassifier());
 
     private static SystemGraph OneService() =>
         new([new SystemNode("svc-a/app", "app", SystemNodeKind.Service)], [], []);
@@ -168,7 +168,7 @@ public class GetSystemHandlerTests
             var types = new CountingTypes([Drift, .. Layer]);
             var analyzer = new ServiceAnalyzer(
                 new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
-                types, new TypeClassifier(ConventionPack.Default()));
+                types, new TypeClassifier());
 
             new GetSystemHandler(new FakeSource(OneService()), analyzer)
                 .Handle(new GetSystemQuery(dir, Drift: true, Layers: true));

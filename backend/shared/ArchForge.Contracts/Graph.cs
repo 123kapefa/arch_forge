@@ -24,7 +24,9 @@ public sealed record GraphDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<ServiceSummaryDto>? Services = null,     // L0-сводка по найденным сервисам (.sln) со слоями; при код-линзах
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<EnvironmentDto>? Environments = null);   // зарезервировано под P1.5; в Фазе 1.5 не заполняется
+    IReadOnlyList<EnvironmentDto>? Environments = null,    // зарезервировано под P1.5; в Фазе 1.5 не заполняется
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    ConventionsDto? Conventions = null);                   // источник свода (встроенный / файл) + счётчики
 
 public sealed record NodeDto(
     string Id,
@@ -95,6 +97,9 @@ public sealed record ProblemDto(
 
 /// <summary>Контур окружения. Зарезервировано под P1.5 (топология/инстанс/профиль); в Фазе 1.5 не заполняется.</summary>
 public sealed record EnvironmentDto(string Id, string Name, string Kind); // topology | instance | profile
+
+/// <summary>Свод конвенций, применённый при анализе: источник (встроенный / файл) и счётчики правил.</summary>
+public sealed record ConventionsDto(string Source, int Markers, int Rules);
 
 /// <summary>Слой сервиса в L0-сводке: имя, здоровье, краткая заметка, число типов (превью L1).</summary>
 public sealed record LayerSummaryDto(
