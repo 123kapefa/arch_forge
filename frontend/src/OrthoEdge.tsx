@@ -2,8 +2,8 @@ import { useContext } from 'react';
 import { BaseEdge, useInternalNode, useStoreApi, type EdgeProps, type InternalNode } from '@xyflow/react';
 import type { XY } from './layerFlow';
 import { LayoutDirtyContext } from './layoutDirty';
+import { routeOrtho, type Rect } from './orthoRouter';
 
-type Rect = { x: number; y: number; w: number; h: number };
 type Side = 'T' | 'B' | 'L' | 'R';
 
 // Ортогонализация маршрута ELK: косой сегмент a→b → H→V→H (для статичного пути по точкам ELK).
@@ -79,6 +79,13 @@ function portPoint(r: Rect, side: Side, i: number, n: number): XY {
   if (side === 'L') return { x: r.x, y: clamp(r.y + r.h / 2 + off, r.y + 12, r.y + r.h - 12) };
   return { x: r.x + r.w, y: clamp(r.y + r.h / 2 + off, r.y + 12, r.y + r.h - 12) };
 }
+// Порт стороны выровнять по партнёру (сторона с ОДНИМ ребром → прямая линия вместо загиба).
+function alignPort(r: Rect, side: Side, partner: XY): XY {
+  if (side === 'T') return { x: clamp(partner.x, r.x + 12, r.x + r.w - 12), y: r.y };
+  if (side === 'B') return { x: clamp(partner.x, r.x + 12, r.x + r.w - 12), y: r.y + r.h };
+  if (side === 'L') return { x: r.x, y: clamp(partner.y, r.y + 12, r.y + r.h - 12) };
+  return { x: r.x + r.w, y: clamp(partner.y, r.y + 12, r.y + r.h - 12) };
+}
 function outPoint(p: XY, side: Side, d = 18): XY {
   if (side === 'T') return { x: p.x, y: p.y - d };
   if (side === 'B') return { x: p.x, y: p.y + d };
@@ -86,47 +93,9 @@ function outPoint(p: XY, side: Side, d = 18): XY {
   return { x: p.x + d, y: p.y };
 }
 
-function segHitsRect(a: XY, b: XY, r: Rect, pad = 6): boolean {
-  const minx = Math.min(a.x, b.x) - pad, maxx = Math.max(a.x, b.x) + pad;
-  const miny = Math.min(a.y, b.y) - pad, maxy = Math.max(a.y, b.y) + pad;
-  return maxx > r.x && minx < r.x + r.w && maxy > r.y && miny < r.y + r.h;
-}
-function clearPath(pts: XY[], obstacles: Rect[]): boolean {
-  for (let i = 1; i < pts.length; i++)
-    for (const r of obstacles)
-      if (segHitsRect(pts[i - 1], pts[i], r)) return false;
-  return true;
-}
-
 /**
- * Обходной ортогональный маршрут (перетащенный узел): выход из точки-порта (разнесены по слоту, не
- * сходятся в одну точку), «стаб» наружу, затем прямой S-путь; задевает блок — обход канала сбоку/сверху
- * за габариты препятствий. Возвращает ортогональную ломаную.
- */
-function orthoAvoid(s: XY, sSide: Side, t: XY, tSide: Side, src: Rect, tgt: Rect, obstacles: Rect[]): XY[] {
-  const OUT = 28;
-  const s1 = outPoint(s, sSide), t1 = outPoint(t, tSide);
-  const vertical = sSide === 'T' || sSide === 'B';
-  const cands: XY[][] = [];
-  if (vertical) {
-    const midY = (s1.y + t1.y) / 2;
-    cands.push([s, s1, { x: s1.x, y: midY }, { x: t1.x, y: midY }, t1, t]); // прямой S
-    const rx = Math.max(src.x + src.w, tgt.x + tgt.w, ...obstacles.map((o) => o.x + o.w)) + OUT;
-    const lx = Math.min(src.x, tgt.x, ...obstacles.map((o) => o.x)) - OUT;
-    for (const cx of [rx, lx]) cands.push([s, s1, { x: cx, y: s1.y }, { x: cx, y: t1.y }, t1, t]);
-  } else {
-    const midX = (s1.x + t1.x) / 2;
-    cands.push([s, s1, { x: midX, y: s1.y }, { x: midX, y: t1.y }, t1, t]);
-    const by = Math.max(src.y + src.h, tgt.y + tgt.h, ...obstacles.map((o) => o.y + o.h)) + OUT;
-    const ty = Math.min(src.y, tgt.y, ...obstacles.map((o) => o.y)) - OUT;
-    for (const cy of [by, ty]) cands.push([s, s1, { x: s1.x, y: cy }, { x: t1.x, y: cy }, t1, t]);
-  }
-  return cands.find((c) => clearPath(c, obstacles)) ?? cands[0];
-}
-
-/**
- * Ребро L1/L2: узлы на местах раскладки — маршрут ELK. Узел двигали — обходной ортогональный маршрут
- * по текущим позициям с распределением портов (обходит блоки, симметричен, не сходится в одну точку).
+ * Ребро L1/L2: узлы на местах раскладки — маршрут ELK. Узел двигали — ортогональный маршрут по Hanan-сетке
+ * (routeOrtho): огибает блоки, минимум поворотов; порты распределены, сторона с одним ребром выровнена (прямая).
  */
 export function OrthoEdge({ id, source, target, data, style, markerEnd, sourceX, sourceY, targetX, targetY }: EdgeProps) {
   const src = useInternalNode(source);
@@ -147,10 +116,14 @@ export function OrthoEdge({ id, source, target, data, style, markerEnd, sourceX,
     const sR = rectOf(src), tR = rectOf(tgt);
     const sSide = sideFacing(sR, tR), tSide = sideFacing(tR, sR);
     const ss = slot(source, id, sSide, edges, nodeLookup), ts = slot(target, id, tSide, edges, nodeLookup);
-    const sPort = portPoint(sR, sSide, ss.i, ss.n), tPort = portPoint(tR, tSide, ts.i, ts.n);
+    let sPort = portPoint(sR, sSide, ss.i, ss.n);
+    let tPort = portPoint(tR, tSide, ts.i, ts.n);
+    if (ss.n === 1 && ts.n > 1) sPort = alignPort(sR, sSide, tPort);      // сторона с одним ребром → прямая
+    else if (ts.n === 1 && ss.n > 1) tPort = alignPort(tR, tSide, sPort);
     const obstacles: Rect[] = [];
     for (const n of nodeLookup.values()) if (n.id !== source && n.id !== target) obstacles.push(rectOf(n));
-    return <BaseEdge id={id} path={roundedPath(orthoAvoid(sPort, sSide, tPort, tSide, sR, tR, obstacles))} style={style} markerEnd={markerEnd} />;
+    const path = routeOrtho(sPort, outPoint(sPort, sSide), tPort, outPoint(tPort, tSide), obstacles);
+    return <BaseEdge id={id} path={roundedPath(path)} style={style} markerEnd={markerEnd} />;
   }
   return <BaseEdge id={id} path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`} style={style} markerEnd={markerEnd} />;
 }
