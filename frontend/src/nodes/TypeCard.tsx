@@ -1,7 +1,7 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import { layerColor } from '../theme';
 import type { MemberDto } from '../api';
-import { TYPE_CARD_W, TYPE_PREVIEW_MAX } from './typeCardMetrics';
+import { TYPE_PREVIEW_MAX, typeCardWidth } from './typeCardMetrics';
 
 export interface TypeCardData {
   name: string;
@@ -33,9 +33,10 @@ export function TypeCard({ data, selected }: NodeProps<TypeCardType>) {
   const hidden = members.length - preview.length;
   const health = (data.drift?.length ?? 0) > 0 ? 'warning' : 'ok';
   const roleTail = data.role && data.role !== 'unknown' ? ` · ${data.role}` : '';
+  const width = typeCardWidth(data.name, members);
 
   return (
-    <div className={`tcard health-${health}${selected ? ' is-selected' : ''}`} style={{ width: TYPE_CARD_W }}>
+    <div className={`tcard health-${health}${selected ? ' is-selected' : ''}`} style={{ width }}>
       <Handle type="target" position={Position.Left} />
       <div className="tcard__head">
         <span className="tcard__icon" style={{ background: `${color}26`, color }}>
