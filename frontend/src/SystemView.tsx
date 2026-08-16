@@ -14,6 +14,7 @@ import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, ty
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
 import { gridLayout } from './gridLayout';
 import { RoutedEdge } from './RoutedEdge';
+import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
@@ -25,7 +26,7 @@ import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
 
 const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeNode };
-const edgeTypes = { routed: RoutedEdge };
+const edgeTypes = { routed: RoutedEdge, ortho: OrthoEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
 // Низкий порог = магнит только при явно медленном, «прицельном» движении, а не при обычном перетаскивании.
