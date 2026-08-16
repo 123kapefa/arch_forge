@@ -11,11 +11,12 @@ import './system.css';
 import { fetchSystem, type SystemGraph } from './system';
 import { fetchMap, type GraphDto } from './api';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
-import { buildLayerFlowRich } from './layerFlow';
+import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
 import { gridLayout } from './gridLayout';
 import { RoutedEdge } from './RoutedEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
+import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
@@ -23,7 +24,7 @@ import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
 
-const nodeTypes = { sys: SystemNodeView, layer: LayerCard };
+const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeNode };
 const edgeTypes = { routed: RoutedEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
@@ -165,7 +166,73 @@ const KIND_LABEL: Record<string, string> = {
   service: 'сервис', datastore: 'хранилище', topic: 'шина', external: 'внешний',
 };
 
+/** Инспектор для выбранного узла — диспетчер по уровню: системный узел (L0) / слой (L1) / тип (L2). */
 function Inspector({ node, graph, lens, onFocus }: {
+  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void;
+}) {
+  const d = node.data as Record<string, unknown>;
+  if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} />;
+  if ('role' in d && 'via' in d) return <TypeInspector data={node.data as unknown as TypeNodeData} />;
+  if ('count' in d) return <LayerInspector data={node.data as unknown as LayerCardData} />;
+  return null;
+}
+
+/** L2: инспектор типа — стереотип, слой, способ классификации, дрейф. */
+function TypeInspector({ data }: { data: TypeNodeData }) {
+  return (
+    <div className="inspector">
+      <div className="inspector__head">
+        <span className="inspector__dot" style={{ background: layerColor(data.layer) }} />
+        <span className="inspector__name">{data.name}</span>
+      </div>
+      <div className="inspector__kind">{data.kind} · {data.layer}</div>
+      <div className="inspector__block">
+        <div className="inspector__sub">СТЕРЕОТИП</div>
+        <div>{data.role || '—'} <span className="iedge__kind">{data.via}</span></div>
+      </div>
+      {data.drift && data.drift.length > 0 && (
+        <div className="inspector__block">
+          <div className="inspector__sub">дрейф от свода</div>
+          <ul className="inspector__problems">
+            {data.drift.map((x) => <li key={x} className="sev-info">{x}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** L1: инспектор слоя — число типов, нарушения (красное) и заметки (дрейф/покрытие). */
+function LayerInspector({ data }: { data: LayerCardData }) {
+  return (
+    <div className="inspector">
+      <div className="inspector__head">
+        <span className="inspector__dot" style={{ background: layerColor(data.name) }} />
+        <span className="inspector__name">{data.name}</span>
+      </div>
+      <div className="inspector__kind">слой · {data.count} тип(ов){data.health ? ` · ${data.health}` : ''}</div>
+      {data.warnings && data.warnings.length > 0 && (
+        <div className="inspector__block">
+          <div className="inspector__sub">нарушения свода</div>
+          <ul className="inspector__problems">
+            {data.warnings.map((w) => <li key={w} className="sev-critical">{w}</li>)}
+          </ul>
+        </div>
+      )}
+      {data.notes && data.notes.length > 0 && (
+        <div className="inspector__block">
+          <div className="inspector__sub">заметки</div>
+          <ul className="inspector__problems">
+            {data.notes.map((n) => <li key={n} className="sev-coverage">{n}</li>)}
+          </ul>
+        </div>
+      )}
+      <div className="inspector__block panel__empty">двойной клик по слою → его типы (L2)</div>
+    </div>
+  );
+}
+
+function SystemInspector({ node, graph, lens, onFocus }: {
   node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void;
 }) {
   const n = (node.data as SystemNodeData).node;
@@ -350,6 +417,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [runDrift, setRunDrift] = useState(true);   // анализ кода: дрейф от свода (convention)
   const [selected, setSelected] = useState<Node | null>(null);
   const [drill, setDrill] = useState<Node | null>(null); // сервис, раскрытый в слои (L1); null → L0
+  const [drill2, setDrill2] = useState<string | null>(null); // слой, раскрытый в типы (L2); null → L1
   const [l1Map, setL1Map] = useState<GraphDto | null>(null); // тип-граф раскрытого сервиса (богатый L1)
   const [l1Loading, setL1Loading] = useState(false);
   const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
@@ -378,6 +446,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setError(null);
     setSelected(null);
     setDrill(null);
+    setDrill2(null);
     try {
       // какие код-анализы гнать — выбор пользователя (флаги drift/layers)
       const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers });
@@ -409,6 +478,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setBranch(null);
     setSelected(null);
     setDrill(null);
+    setDrill2(null);
     try { localStorage.removeItem('af_path'); } catch { /* ignore */ }
   }, []);
 
@@ -482,12 +552,22 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     }
     return buildLayerFlow(node);
   }, [drill, l1Map]);
-  const activeFlow = drill ? drilledFlow : flow;
+  // L2: слой раскрыт в свои типы (плашки Фазы 1 + внутрислойные связи).
+  const typeFlow = useMemo(
+    () => (drill2 && l1Map ? buildTypeFlow(l1Map, drill2) : { nodes: [] as Node[], edges: [] as Edge[] }),
+    [drill2, l1Map],
+  );
+  const activeFlow = drill2 ? typeFlow : drill ? drilledFlow : flow;
   const onDoubleClick = useCallback((n: Node) => {
-    if (drill) return; // L1 → L2 (типы) — backlog
+    if (drill2) return; // L2 → L3 (члены) — backlog
+    if (drill) { // L1 → L2: двойной клик по карточке слоя раскрывает её типы
+      const layer = (n.data as LayerCardData).name;
+      if (layer && l1Map) { setSelected(null); setDrill2(layer); }
+      return;
+    }
     const sn = (n.data as SystemNodeData).node;
     if (sn.layers && sn.layers.length > 0) { setSelected(null); setDrill(n); } // сервис со слоями → L1
-  }, [drill]);
+  }, [drill, drill2, l1Map]);
   const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
 
   // Клик по проблеме/связи → навести на узел. Если location — узел: выбрать + центрировать.
@@ -566,14 +646,21 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           )}
         </div>
         <nav className="crumbs">
-          {drill ? (
+          {drill2 && drill ? (
             <>
-              <button className="crumb-link" onClick={() => setDrill(null)}>System</button>
+              <button className="crumb-link" onClick={() => { setDrill(null); setDrill2(null); setSelected(null); }}>System</button>
+              {' ▸ '}<button className="crumb-link" onClick={() => { setDrill2(null); setSelected(null); }}>{(drill.data as SystemNodeData).node.name}</button>
+              {' ▸ '}<b>{drill2}</b>{' ▸ Типы'}
+              <span className="crumbs__hint"> · {typeFlow.nodes.length} тип(ов) слоя · связи внутри слоя</span>
+            </>
+          ) : drill ? (
+            <>
+              <button className="crumb-link" onClick={() => { setDrill(null); setSelected(null); }}>System</button>
               {' ▸ '}<b>{(drill.data as SystemNodeData).node.name}</b>{' ▸ Слои'}
               {l1Loading
                 ? <span className="crumbs__hint"> · загрузка слоёв…</span>
                 : l1Map
-                  ? <span className="crumbs__hint"> · стрелка = зависит от · <span className="crumbs__viol">красное = нарушение свода</span></span>
+                  ? <span className="crumbs__hint"> · двойной клик по слою → типы · <span className="crumbs__viol">красное = нарушение свода</span></span>
                   : <span className="crumbs__hint"> · сводка слоёв</span>}
             </>
           ) : (
