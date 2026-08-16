@@ -11,7 +11,8 @@ import '@xyflow/react/dist/style.css';
 import './system.css';
 
 import { fetchSystem, type SystemGraph } from './system';
-import { fetchMap, type GraphDto, type MemberDto } from './api';
+import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto } from './api';
+import { ImportsScreen } from './ImportsScreen';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
 import { gridLayout } from './gridLayout';
@@ -517,6 +518,9 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);  // выпадающее меню проекта
   const [pickerOpen, setPickerOpen] = useState(false); // модалка выбора папки
   const [recents, setRecents] = useState<Recent[]>(() => loadRecents());
+  const [importsOpen, setImportsOpen] = useState(false); // экран «Импорты» вместо карты
+  const [imports, setImports] = useState<ImportsDto | null>(null); // прямые пакеты (ленивая загрузка)
+  const [importsLoading, setImportsLoading] = useState(false);
   const flowRef = useRef<FlowHandle>(null);
   const flagsRef = useRef({ layers: true, drift: true }); // текущие флаги анализа (для стабильного load)
   flagsRef.current = { layers: runLayers, drift: runDrift };
@@ -529,6 +533,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setSelected(null);
     setDrill(null);
     setDrill2(null);
+    setImports(null); // новый проект — сбросить кеш импортов (перезагрузятся при открытии экрана)
     try {
       // какие код-анализы гнать — выбор пользователя (флаги drift/layers)
       const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers });
@@ -561,8 +566,22 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setSelected(null);
     setDrill(null);
     setDrill2(null);
+    setImports(null);
+    setImportsOpen(false);
     try { localStorage.removeItem('af_path'); } catch { /* ignore */ }
   }, []);
+
+  // Экран «Импорты» открыт и данных ещё нет → ленивая загрузка /api/imports по текущему проекту.
+  useEffect(() => {
+    if (!importsOpen || imports || !loadedPath) return;
+    let alive = true;
+    setImportsLoading(true);
+    fetchImports(loadedPath)
+      .then((d) => { if (alive) setImports(d); })
+      .catch(() => { if (alive) setImports(null); })
+      .finally(() => { if (alive) setImportsLoading(false); });
+    return () => { alive = false; };
+  }, [importsOpen, imports, loadedPath]);
 
   const exportJson = useCallback(() => {
     if (!graph) return;
@@ -782,16 +801,29 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           )}
         </nav>
         <div className="sysview__right">
-          {graph && (
+          {graph && !importsOpen && (
             <span className={`saved ${saved ? 'saved--ok' : 'saved--dirty'}`}>
               {saved ? '✓ сохранено' : '● есть изменения'}
             </span>
+          )}
+          {graph && (
+            <button
+              className={`sysview__nav ${importsOpen ? 'is-on' : ''}`}
+              onClick={() => setImportsOpen((o) => !o)}
+              title={importsOpen ? 'Вернуться к карте' : 'Импорты (прямые пакеты)'}
+            >
+              <Icon name="box" size={15} />{importsOpen ? 'карта' : 'импорты'}
+            </button>
           )}
           {onExit && <button className="sysview__exit" onClick={onExit}>← тип-граф (Ф1)</button>}
         </div>
       </header>
 
       <div className="sysview__body" ref={bodyRef}>
+        {importsOpen ? (
+          <ImportsScreen imports={imports} loading={importsLoading} />
+        ) : (
+        <>
         <aside className={`panel panel--view ${leftOpen ? '' : 'is-collapsed'}`}>
           {!leftOpen ? (
             <button className="panel__collapsed" onClick={() => setLeftOpen(true)} title="Показать ВИД">
@@ -958,6 +990,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
             </>
           )}
         </aside>
+        </>
+        )}
       </div>
 
       {/* раскрывающийся список проблем (над полосой «ПРОБЛЕМЫ ПРОЕКТА») */}

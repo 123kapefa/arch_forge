@@ -22,6 +22,8 @@ const PATHS = {
   expandLeft: 'M20 4v16 M16 12H4 M8 8l-4 4 4 4',
   // вернуть ширину: стрелка внутрь к правому упору
   shrinkRight: 'M20 4v16 M5 12h11 M12 8l4 4-4 4',
+  // пакет/импорты
+  box: 'M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5 M12 22V12',
 } as const;
 
 export type IconName = keyof typeof PATHS;
