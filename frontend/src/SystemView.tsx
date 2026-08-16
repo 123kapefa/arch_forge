@@ -184,6 +184,20 @@ function Inspector({ node, graph, lens, onFocus }: {
 
 const MEMBER_KIND_ORDER: Record<string, number> = { endpoint: 0, method: 1, property: 2, field: 3 };
 const MEMBER_KIND_LABEL: Record<string, string> = { endpoint: 'эндпоинты', method: 'методы', property: 'свойства', field: 'поля' };
+const IMEMBER_MARK: Record<string, string> = { endpoint: '▪', method: 'ƒ', property: '▸', field: '▸' };
+
+// Одна компактная строка: свойство «: Тип», метод «(параметры) : Возврат», эндпоинт — маршрут.
+function memberDetail(m: MemberDto): string {
+  if (m.kind === 'property' || m.kind === 'field') return m.signature ? `: ${m.signature}` : '';
+  if (m.kind === 'endpoint' && m.route) return `/${m.route.replace(/^\//, '')}`;
+  return m.signature ?? '';
+}
+function memberTitle(m: MemberDto): string {
+  const parts = [m.name];
+  if (m.signature) parts.push(m.signature);
+  if (m.route) parts.push(`/${m.route.replace(/^\//, '')}`);
+  return parts.join(' ');
+}
 
 /** L2: инспектор типа — стереотип/слой/дрейф + ВСЕ члены (эндпоинты/методы/свойства/поля), сгруппированные по виду. */
 function TypeInspector({ data, members }: { data: TypeNodeData; members: MemberDto[] }) {
@@ -224,14 +238,11 @@ function TypeInspector({ data, members }: { data: TypeNodeData; members: MemberD
               <div className="imembers__group">{MEMBER_KIND_LABEL[kind] ?? kind} · {list.length}</div>
               <ul className="imembers__list">
                 {list.map((m) => (
-                  <li key={m.id} className="imember">
-                    <div className="imember__row">
-                      <span className="imember__name" title={m.name}>{m.name}</span>
-                      {m.httpMethod && <span className={`verb verb-${m.httpMethod}`}>{m.httpMethod}</span>}
-                    </div>
-                    {m.route
-                      ? <div className="imember__sub" title={m.route}>/{m.route.replace(/^\//, '')}</div>
-                      : m.signature && <div className="imember__sub" title={m.signature}>{m.signature}</div>}
+                  <li key={m.id} className="imember" title={memberTitle(m)}>
+                    <span className="imember__mark">{IMEMBER_MARK[m.kind] ?? '·'}</span>
+                    <span className="imember__name">{m.name}</span>
+                    {m.httpMethod && <span className={`verb verb-${m.httpMethod}`}>{m.httpMethod}</span>}
+                    <span className="imember__type">{memberDetail(m)}</span>
                   </li>
                 ))}
               </ul>

@@ -103,18 +103,22 @@
 .tmember__text { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tmember--more { color: var(--muted); font-family: inherit; font-size: 11px; padding-left: 32px; }
 
-/* Члены типа в инспекторе (L2: клик по типу → его члены) */
-.imembers { margin-top: 8px; }
-.imembers__group { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; margin: 6px 0 4px; }
-.imembers__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-.imember { border-left: 2px solid var(--card-line); padding: 2px 0 2px 8px; }
+/* Члены типа в инспекторе (L2: клик по типу → его члены) — по строке на член */
+.imembers { margin-top: 6px; }
+.imembers__group { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; margin: 8px 0 3px; }
+.imembers__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.imember {
+  display: flex; align-items: baseline; gap: 6px;
+  border-left: 2px solid var(--card-line); padding: 1px 0 1px 8px;
+  font-size: 12px; line-height: 1.55; font-family: ui-monospace, 'SF Mono', monospace;
+}
 .imembers.kind-endpoint .imember { border-left-color: #4aa3df; }
 .imembers.kind-method .imember { border-left-color: #9b8cff; }
 .imembers.kind-property .imember { border-left-color: #57c78a; }
 .imembers.kind-field .imember { border-left-color: #7c8698; }
-.imember__row { display: flex; align-items: center; gap: 6px; }
-.imember__name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.imember__sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+.imember__mark { color: var(--muted); width: 10px; flex: none; text-align: center; font-size: 10px; }
+.imember__name { color: var(--text); flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imember__type { color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* HTTP-verb пилюля */
 .verb { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px; flex: none; letter-spacing: .03em; }
 .verb-GET { color: #57c78a; background: rgba(87,199,138,0.14); }
