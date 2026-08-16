@@ -23,6 +23,7 @@ import { TypeCard } from './nodes/TypeCard';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
+import { LayoutDirtyContext } from './layoutDirty';
 import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
@@ -54,6 +55,7 @@ const Flow = forwardRef<FlowHandle, {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
+  const [moved, setMoved] = useState(false); // узлы двигали → рёбра на живой обход (LayoutDirtyContext)
   const [hoverId, setHoverId] = useState<string | null>(null); // узел под курсором — подсветка связей
   const last = useRef<{ x: number; y: number; t: number } | null>(null);
   const nodesRef = useRef(nodes);
@@ -83,6 +85,7 @@ const Flow = forwardRef<FlowHandle, {
   useEffect(() => {
     setNodes(applySaved(flow.nodes));
     setEdges(flow.edges);
+    setMoved(false); // новая раскладка → рёбра снова по маршрутам ELK
     onDirty(true); // после загрузки/восстановления раскладка считается сохранённой
     if (flow.nodes.length === 0) return;
     const t = setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
@@ -106,7 +109,7 @@ const Flow = forwardRef<FlowHandle, {
   // Перетаскивание узла → раскладка расходится с сохранённой.
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
     onNodesChange(changes);
-    if (changes.some((c) => c.type === 'position' && c.dragging)) onDirty(false);
+    if (changes.some((c) => c.type === 'position' && c.dragging)) { onDirty(false); setMoved(true); }
   }, [onNodesChange, onDirty]);
 
   // Скорость указателя за кадр → включаем/выключаем притяжение к сетке во время перетаскивания.
@@ -137,6 +140,7 @@ const Flow = forwardRef<FlowHandle, {
   }, [edges, highlightId]);
 
   return (
+    <LayoutDirtyContext.Provider value={moved}>
     <ReactFlow
       nodes={nodes}
       edges={displayEdges}
@@ -163,6 +167,7 @@ const Flow = forwardRef<FlowHandle, {
       <Controls />
       <MiniMap pannable zoomable nodeColor="#3a4658" maskColor="rgba(11,15,23,0.6)" style={{ width: 210, height: 168 }} />
     </ReactFlow>
+    </LayoutDirtyContext.Provider>
   );
 });
 
