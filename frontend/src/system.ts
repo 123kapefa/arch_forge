@@ -27,6 +27,7 @@ export interface SystemNode {
   service?: string;
   members?: SystemMember[];
   layers?: LayerSummary[]; // слои сервиса-узла (L0: «внутри сервиса — слои»)
+  root?: string;           // папка микросервиса (drill L1: /api/map по нему)
 }
 
 export interface SystemMember {

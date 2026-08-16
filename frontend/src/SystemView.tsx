@@ -9,7 +9,9 @@ import '@xyflow/react/dist/style.css';
 import './system.css';
 
 import { fetchSystem, type SystemGraph } from './system';
+import { fetchMap, type GraphDto } from './api';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
+import { buildLayerFlowRich } from './layerFlow';
 import { gridLayout } from './gridLayout';
 import { RoutedEdge } from './RoutedEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
@@ -348,6 +350,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [runDrift, setRunDrift] = useState(true);   // анализ кода: дрейф от свода (convention)
   const [selected, setSelected] = useState<Node | null>(null);
   const [drill, setDrill] = useState<Node | null>(null); // сервис, раскрытый в слои (L1); null → L0
+  const [l1Map, setL1Map] = useState<GraphDto | null>(null); // тип-граф раскрытого сервиса (богатый L1)
+  const [l1Loading, setL1Loading] = useState(false);
   const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
   const [minConfidence, setMinConfidence] = useState(0);
   const [hideIsolated, setHideIsolated] = useState(false);
@@ -453,11 +457,31 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     () => filterFlow(laid, { edgeKinds, minConfidence, hideIsolated, hideTests }),
     [laid, edgeKinds, minConfidence, hideIsolated, hideTests],
   );
-  // L1: сервис раскрыт в слои. activeFlow — что показываем на доске (L0 или L1).
-  const drilledFlow = useMemo(
-    () => (drill ? buildLayerFlow((drill.data as SystemNodeData).node) : { nodes: [] as Node[], edges: [] as Edge[] }),
-    [drill],
-  );
+  // Раскрыли сервис → тянем его тип-граф (/api/map по папке сервиса) для богатого L1.
+  useEffect(() => {
+    const node = drill ? (drill.data as SystemNodeData).node : null;
+    const root = node?.root;
+    if (!root) { setL1Map(null); setL1Loading(false); return; } // нет папки → простой L1 по L0-сводке
+    let alive = true;
+    setL1Loading(true);
+    setL1Map(null);
+    fetchMap({ path: root })
+      .then((m) => { if (alive) setL1Map(m); })
+      .catch(() => { if (alive) setL1Map(null); })   // ошибка карты → откат на простой L1
+      .finally(() => { if (alive) setL1Loading(false); });
+    return () => { alive = false; };
+  }, [drill]);
+
+  // L1: сервис раскрыт в слои. Есть тип-граф → богатые карточки (типы + зависимости); иначе — по L0-сводке.
+  const drilledFlow = useMemo(() => {
+    if (!drill) return { nodes: [] as Node[], edges: [] as Edge[] };
+    const node = (drill.data as SystemNodeData).node;
+    if (l1Map) {
+      const rich = buildLayerFlowRich(node, l1Map);
+      if (rich.nodes.length > 0) return rich;
+    }
+    return buildLayerFlow(node);
+  }, [drill, l1Map]);
   const activeFlow = drill ? drilledFlow : flow;
   const onDoubleClick = useCallback((n: Node) => {
     if (drill) return; // L1 → L2 (типы) — backlog
@@ -545,7 +569,12 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           {drill ? (
             <>
               <button className="crumb-link" onClick={() => setDrill(null)}>System</button>
-              {' ▸ '}<b>{(drill.data as SystemNodeData).node.name}</b>{' ▸ Layer'}
+              {' ▸ '}<b>{(drill.data as SystemNodeData).node.name}</b>{' ▸ Слои'}
+              {l1Loading
+                ? <span className="crumbs__hint"> · загрузка слоёв…</span>
+                : l1Map
+                  ? <span className="crumbs__hint"> · стрелка = зависит от · <span className="crumbs__viol">красное = нарушение свода</span></span>
+                  : <span className="crumbs__hint"> · сводка слоёв</span>}
             </>
           ) : (
             <><b>System</b> ▸ Service ▸ Layer ▸ Type ▸ Member</>

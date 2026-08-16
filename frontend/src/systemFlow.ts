@@ -150,7 +150,7 @@ export function buildLayerFlow(node: SystemNode): { nodes: Node[]; edges: Edge[]
     id: `layer:${l.name}`,
     type: 'layer',
     position: { x: 0, y: i * 150 },
-    data: { layer: l },
+    data: { name: l.name, health: l.health, count: l.types, note: l.note },
   }));
   return { nodes, edges: [] };
 }
