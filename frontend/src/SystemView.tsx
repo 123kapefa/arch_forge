@@ -12,12 +12,14 @@ import { fetchSystem, type SystemGraph } from './system';
 import { fetchMap, type GraphDto } from './api';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
+import { buildMemberFlow, membersOf, type MemberChipData } from './memberFlow';
 import { gridLayout } from './gridLayout';
 import { RoutedEdge } from './RoutedEdge';
 import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
 import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
+import { MemberChip } from './nodes/MemberChip';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
@@ -25,7 +27,7 @@ import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
 
-const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeNode };
+const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeNode, member: MemberChip };
 const edgeTypes = { routed: RoutedEdge, ortho: OrthoEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
@@ -167,15 +169,42 @@ const KIND_LABEL: Record<string, string> = {
   service: 'сервис', datastore: 'хранилище', topic: 'шина', external: 'внешний',
 };
 
-/** Инспектор для выбранного узла — диспетчер по уровню: системный узел (L0) / слой (L1) / тип (L2). */
+/** Инспектор для выбранного узла — диспетчер по уровню: системный узел (L0) / слой (L1) / тип (L2) / член (L3). */
 function Inspector({ node, graph, lens, onFocus }: {
   node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void;
 }) {
   const d = node.data as Record<string, unknown>;
   if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} />;
+  if ('member' in d) return <MemberInspector data={node.data as unknown as MemberChipData} />;
   if ('role' in d && 'via' in d) return <TypeInspector data={node.data as unknown as TypeNodeData} />;
   if ('count' in d) return <LayerInspector data={node.data as unknown as LayerCardData} />;
   return null;
+}
+
+/** L3: инспектор члена — вид, сигнатура, HTTP-verb/маршрут, файл:строка. */
+function MemberInspector({ data }: { data: MemberChipData }) {
+  const m = data.member;
+  const KIND: Record<string, string> = { endpoint: 'эндпоинт', method: 'метод', property: 'свойство', field: 'поле' };
+  return (
+    <div className="inspector">
+      <div className="inspector__head">
+        <span className="inspector__name">{m.name}</span>
+        {m.httpMethod && <span className={`verb verb-${m.httpMethod}`}>{m.httpMethod}</span>}
+      </div>
+      <div className="inspector__kind">{KIND[m.kind] ?? m.kind}</div>
+      {m.route && (
+        <div className="inspector__block"><div className="inspector__sub">маршрут</div><code>/{m.route.replace(/^\//, '')}</code></div>
+      )}
+      {m.signature && (
+        <div className="inspector__block"><div className="inspector__sub">сигнатура</div><code>{m.signature}</code></div>
+      )}
+      {m.file && (
+        <div className="inspector__block"><div className="inspector__sub">место</div>
+          <div className="inspector__fix">{m.file.split('/').pop()}{m.line ? `:${m.line}` : ''}</div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** L2: инспектор типа — стереотип, слой, способ классификации, дрейф. */
@@ -419,6 +448,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [selected, setSelected] = useState<Node | null>(null);
   const [drill, setDrill] = useState<Node | null>(null); // сервис, раскрытый в слои (L1); null → L0
   const [drill2, setDrill2] = useState<string | null>(null); // слой, раскрытый в типы (L2); null → L1
+  const [drill3, setDrill3] = useState<string | null>(null); // тип (id), раскрытый в члены (L3); null → L2
   const [l1Map, setL1Map] = useState<GraphDto | null>(null); // тип-граф раскрытого сервиса (богатый L1)
   const [l1Loading, setL1Loading] = useState(false);
   const [edgeKinds, setEdgeKinds] = useState<ReadonlySet<string>>(new Set());
@@ -448,6 +478,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setSelected(null);
     setDrill(null);
     setDrill2(null);
+    setDrill3(null);
     try {
       // какие код-анализы гнать — выбор пользователя (флаги drift/layers)
       const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers });
@@ -480,6 +511,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setSelected(null);
     setDrill(null);
     setDrill2(null);
+    setDrill3(null);
     try { localStorage.removeItem('af_path'); } catch { /* ignore */ }
   }, []);
 
@@ -561,9 +593,16 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     void buildTypeFlow(l1Map, drill2).then((f) => { if (alive) setTypeFlow(f); });
     return () => { alive = false; };
   }, [drill2, l1Map]);
-  const activeFlow = drill2 ? typeFlow : drill ? drilledFlow : flow;
+  // L3: тип раскрыт в свои члены (чипы: эндпоинты/методы/свойства/поля). Сетка — синхронно.
+  const memberFlow = useMemo(
+    () => (drill3 && l1Map ? buildMemberFlow(l1Map, drill3) : { nodes: [] as Node[], edges: [] as Edge[] }),
+    [drill3, l1Map],
+  );
+  const drill3Info = useMemo(() => (drill3 && l1Map ? membersOf(l1Map, drill3) : null), [drill3, l1Map]);
+  const activeFlow = drill3 ? memberFlow : drill2 ? typeFlow : drill ? drilledFlow : flow;
   const onDoubleClick = useCallback((n: Node) => {
-    if (drill2) return; // L2 → L3 (члены) — backlog
+    if (drill3) return; // L3 — лист (L4 «детали члена» — backlog)
+    if (drill2) { setSelected(null); setDrill3(n.id); return; } // L2 → L3: тип раскрывается в члены
     if (drill) { // L1 → L2: двойной клик по карточке слоя раскрывает её типы
       const layer = (n.data as LayerCardData).name;
       if (layer && l1Map) { setSelected(null); setDrill2(layer); }
@@ -571,7 +610,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     }
     const sn = (n.data as SystemNodeData).node;
     if (sn.layers && sn.layers.length > 0) { setSelected(null); setDrill(n); } // сервис со слоями → L1
-  }, [drill, drill2, l1Map]);
+  }, [drill, drill2, drill3, l1Map]);
   const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
 
   // Клик по проблеме/связи → навести на узел. Если location — узел: выбрать + центрировать.
@@ -650,12 +689,20 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           )}
         </div>
         <nav className="crumbs">
-          {drill2 && drill ? (
+          {drill3 && drill2 && drill ? (
+            <>
+              <button className="crumb-link" onClick={() => { setDrill(null); setDrill2(null); setDrill3(null); setSelected(null); }}>System</button>
+              {' ▸ '}<button className="crumb-link" onClick={() => { setDrill2(null); setDrill3(null); setSelected(null); }}>{(drill.data as SystemNodeData).node.name}</button>
+              {' ▸ '}<button className="crumb-link" onClick={() => { setDrill3(null); setSelected(null); }}>{drill2}</button>
+              {' ▸ '}<b>{drill3Info?.name ?? 'Тип'}</b>{' ▸ Члены'}
+              <span className="crumbs__hint"> · {memberFlow.nodes.length === 0 ? 'нет членов' : `${memberFlow.nodes.length} член(ов)`}</span>
+            </>
+          ) : drill2 && drill ? (
             <>
               <button className="crumb-link" onClick={() => { setDrill(null); setDrill2(null); setSelected(null); }}>System</button>
               {' ▸ '}<button className="crumb-link" onClick={() => { setDrill2(null); setSelected(null); }}>{(drill.data as SystemNodeData).node.name}</button>
               {' ▸ '}<b>{drill2}</b>{' ▸ Типы'}
-              <span className="crumbs__hint"> · {typeFlow.nodes.length} тип(ов) слоя · связи внутри слоя</span>
+              <span className="crumbs__hint"> · {typeFlow.nodes.length} тип(ов) слоя · двойной клик по типу → члены</span>
             </>
           ) : drill ? (
             <>

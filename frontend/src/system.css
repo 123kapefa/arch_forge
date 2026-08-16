@@ -93,6 +93,31 @@
 .plashka.via-marker .plashka__via { color: #57c78a; border-color: #2e5e45; }
 .plashka.via-heuristic .plashka__via { color: #d9a441; border-color: #5e4d2e; }
 
+/* L3: чип члена типа */
+.member-chip {
+  width: 230px; background: var(--card); border: 1px solid var(--card-line);
+  border-radius: 8px; padding: 7px 10px 8px; font-size: 12px;
+}
+.member-chip.is-selected { box-shadow: 0 0 0 2px var(--accent); }
+.member-chip__head { display: flex; align-items: center; gap: 6px; }
+.member-chip__mark { color: var(--muted); width: 12px; text-align: center; flex: none; }
+.member-chip__name { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.member-chip__sig { color: var(--muted); font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+.member-chip__route { color: var(--accent); font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+.member-chip__kind { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; margin-top: 4px; }
+/* левый акцент по виду члена */
+.member-chip.kind-endpoint { border-left: 3px solid #4aa3df; }
+.member-chip.kind-method { border-left: 3px solid #9b8cff; }
+.member-chip.kind-property { border-left: 3px solid #57c78a; }
+.member-chip.kind-field { border-left: 3px solid #7c8698; }
+/* HTTP-verb пилюля */
+.verb { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px; flex: none; letter-spacing: .03em; }
+.verb-GET { color: #57c78a; background: rgba(87,199,138,0.14); }
+.verb-POST { color: #4aa3df; background: rgba(74,163,223,0.14); }
+.verb-PUT { color: #e0b24a; background: rgba(224,178,74,0.14); }
+.verb-PATCH { color: #e0b24a; background: rgba(224,178,74,0.14); }
+.verb-DELETE { color: #e5484d; background: rgba(229,72,77,0.14); }
+
 /* --- иконки (SVG, наследуют цвет текста) --- */
 .icon { display: block; flex: none; }
 

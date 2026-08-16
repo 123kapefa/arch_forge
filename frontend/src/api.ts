@@ -19,6 +19,18 @@ export interface NodeDto {
   via: string;    // marker | heuristic | unknown
   file: string;
   drift: string[];
+  members?: MemberDto[]; // члены типа (L3) — опционально (бэкенд опускает при пустоте)
+}
+
+export interface MemberDto {
+  id: string;
+  name: string;
+  kind: string;        // endpoint | method | property | field
+  signature?: string;  // напр. «(Guid) : Task<Product>» или «string?»
+  httpMethod?: string; // GET | POST | ... (для endpoint)
+  route?: string;      // маршрут endpoint
+  file?: string;
+  line?: number;
 }
 
 export interface EdgeDto {
