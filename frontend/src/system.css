@@ -75,23 +75,33 @@
 }
 .layer-card__foot { color: var(--muted); font-size: 11px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--card-line); }
 
-/* L2: плашка типа (переиспользуем TypeNode Фазы 1) — стили дублируем из App.css, т.к. SystemView грузит только system.css */
-.plashka {
-  width: 190px; background: #1c2230; border: 1px solid #30363d;
-  border-top: 3px solid #888; border-radius: 8px; padding: 8px 10px;
-  box-shadow: 0 2px 6px rgba(0,0,0,.35); font-size: 12px;
+/* L2: тип как UML-карточка (шапка + превью членов) — как в референсе */
+.tcard {
+  background: var(--card); border: 1px solid var(--card-line); border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35); overflow: hidden;
 }
-.plashka.is-selected { box-shadow: 0 0 0 2px var(--accent), 0 2px 8px rgba(0,0,0,.45); }
-.plashka__head { display: flex; align-items: center; gap: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
-.plashka__layer { font-weight: 700; }
-.plashka__kind { color: #8b949e; }
-.plashka__drift { margin-left: auto; color: #ffb454; font-weight: 700; text-transform: none; }
-.plashka__name { font-size: 14px; font-weight: 600; color: #e6edf3; margin: 4px 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.plashka__foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.plashka__role { color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.plashka__via { font-size: 10px; padding: 1px 6px; border-radius: 10px; border: 1px solid #30363d; color: #8b949e; flex: none; }
-.plashka.via-marker .plashka__via { color: #57c78a; border-color: #2e5e45; }
-.plashka.via-heuristic .plashka__via { color: #d9a441; border-color: #5e4d2e; }
+.tcard.is-selected { box-shadow: 0 0 0 2px var(--accent), 0 4px 14px rgba(0,0,0,.45); }
+.tcard__head { display: flex; align-items: center; gap: 11px; padding: 12px 14px; }
+.tcard__body { padding-bottom: 8px; border-top: 1px solid var(--card-line); padding-top: 6px; }
+.tcard__icon {
+  width: 30px; height: 30px; flex: none; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+}
+.tcard__title { flex: 1; min-width: 0; }
+.tcard__name { font-size: 15px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcard__meta { font-size: 12px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcard__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
+.tcard__dot.health-ok { background: #6fcf77; }
+.tcard__dot.health-warning { background: #e0b24a; }
+/* строки членов */
+.tmember {
+  display: flex; align-items: baseline; gap: 8px; height: 22px;
+  padding: 0 14px; font-size: 13px; font-family: ui-monospace, 'SF Mono', monospace;
+}
+.tmember__vis { color: #6fcf77; flex: none; }
+.tmember__mark { color: var(--muted); width: 10px; flex: none; text-align: center; }
+.tmember__text { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tmember--more { color: var(--muted); font-family: inherit; font-size: 11px; padding-left: 32px; }
 
 /* Члены типа в инспекторе (L2: клик по типу → его члены) */
 .imembers { margin-top: 8px; }

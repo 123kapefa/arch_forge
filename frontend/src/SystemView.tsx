@@ -18,7 +18,8 @@ import { RoutedEdge } from './RoutedEdge';
 import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
-import { TypeNode, type TypeNodeData } from './nodes/TypeNode';
+import { type TypeNodeData } from './nodes/TypeNode';
+import { TypeCard } from './nodes/TypeCard';
 import { problemsByLens, severityCounts, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
@@ -26,7 +27,7 @@ import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
 
-const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeNode };
+const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeCard };
 const edgeTypes = { routed: RoutedEdge, ortho: OrthoEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
