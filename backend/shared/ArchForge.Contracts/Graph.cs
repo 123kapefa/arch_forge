@@ -97,8 +97,12 @@ public sealed record ProblemDto(
     // отдельные факты агрегированной проблемы (типы дрейфа / пары нарушений) — для раскрытия списком
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ProblemItemDto>? Items = null);
 
-/// <summary>Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка.</summary>
-public sealed record ProblemItemDto(string Name, string Layer, string Note);
+/// <summary>Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка.
+/// File/Line — где живёт тип (для перехода «к файлу/плашке»); File пуст, если источник не дал путь.</summary>
+public sealed record ProblemItemDto(
+    string Name, string Layer, string Note,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? File = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line = null);
 
 /// <summary>Контур окружения. Зарезервировано под P1.5 (топология/инстанс/профиль); в Фазе 1.5 не заполняется.</summary>
 public sealed record EnvironmentDto(string Id, string Name, string Kind); // topology | instance | profile

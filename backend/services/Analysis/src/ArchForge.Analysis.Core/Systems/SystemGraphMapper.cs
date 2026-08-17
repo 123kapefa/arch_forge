@@ -34,7 +34,8 @@ public static class SystemGraphMapper
         var problems = g.Problems
             .Select((p, i) => new ProblemDto($"p{i}", SeverityString(p.Severity), p.Kind, p.Title, p.Location,
                 Category: p.Category,
-                Items: p.Items is null ? null : p.Items.Select(it => new ProblemItemDto(it.Name, it.Layer, it.Note)).ToList()))
+                Items: p.Items is null ? null : p.Items.Select(it => new ProblemItemDto(
+                    it.Name, it.Layer, it.Note, string.IsNullOrEmpty(it.File) ? null : it.File, it.Line)).ToList()))
             .ToList();
 
         var health = g.Problems.Any(p => p.Severity == ProblemSeverity.Critical) ? "critical"

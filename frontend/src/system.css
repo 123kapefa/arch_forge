@@ -588,13 +588,42 @@
 .pd-items__list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
 .pd-items__empty { color: var(--muted); font-size: 12px; padding: 4px 0; }
 .pd-item-row {
-  display: flex; align-items: baseline; gap: 10px; padding: 4px 0; font-size: 12px; color: var(--text);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  display: flex; align-items: baseline; gap: 10px; width: 100%; box-sizing: border-box;
+  padding: 4px 6px; margin: 0; font-size: 12px; color: var(--text); text-align: left; font-family: inherit;
+  background: none; border: none; border-bottom: 1px solid rgba(255, 255, 255, 0.03); cursor: pointer;
 }
-.pd-item-row:last-child { border-bottom: none; }
+.pd-item-row:hover { background: rgba(108, 140, 255, 0.10); }
+.pd-item-row.is-active { background: rgba(108, 140, 255, 0.16); }
+.pd-items__list li:last-child .pd-item-row { border-bottom: none; }
 .pd-item-row__name { font-family: ui-monospace, monospace; color: var(--text); flex: none; }
 .pd-item-row__layer { color: var(--muted); font-size: 11px; flex: none; }
 .pd-item-row__note { color: var(--muted); font-size: 11px; margin-left: auto; text-align: right; }
+
+/* инспектор факта: что это · где (файл) · переход к плашке */
+.finspect { padding: 4px 2px; display: flex; flex-direction: column; gap: 10px; }
+.finspect__name { font-family: ui-monospace, monospace; font-size: 14px; color: var(--text); word-break: break-word; }
+.finspect__tags { display: flex; align-items: center; gap: 8px; }
+.finspect__layer { color: var(--muted); font-size: 11px; }
+.finspect__note { color: var(--text); font-size: 12px; }
+.finspect__file { display: flex; flex-direction: column; gap: 4px; }
+.finspect__label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.finspect__path {
+  font-family: ui-monospace, monospace; font-size: 11px; color: var(--text);
+  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--card-line); border-radius: 6px;
+  padding: 6px 8px; overflow-x: auto; white-space: nowrap;
+}
+.finspect__copy {
+  align-self: flex-start; font-size: 11px; color: var(--muted);
+  background: none; border: 1px solid var(--card-line); border-radius: 6px; padding: 4px 8px; cursor: pointer;
+}
+.finspect__copy:hover { color: var(--text); }
+.finspect__goto {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
+  color: var(--accent); background: none; border: 1px solid var(--accent); border-radius: 6px;
+  padding: 5px 10px; cursor: pointer;
+}
+.finspect__goto:hover { background: rgba(108, 140, 255, 0.12); }
+.finspect__hint { color: var(--muted); font-size: 11px; line-height: 1.4; }
 
 /* --- экран «Импорты» --- */
 .imports-screen { flex: 1; display: flex; flex-direction: column; min-width: 0; }

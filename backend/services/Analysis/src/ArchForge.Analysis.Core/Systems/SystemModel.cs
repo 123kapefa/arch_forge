@@ -40,7 +40,8 @@ public sealed record SystemProblem(
     IReadOnlyList<ProblemItem>? Items = null); // отдельные факты (типы дрейфа / пары нарушений) для раскрытия
 
 // Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка.
-public sealed record ProblemItem(string Name, string Layer, string Note);
+// File/Line — где живёт тип (переход «к файлу/плашке»); File пуст, если источник не дал путь.
+public sealed record ProblemItem(string Name, string Layer, string Note, string File = "", int? Line = null);
 
 public sealed record SystemGraph(
     IReadOnlyList<SystemNode> Nodes,

@@ -26,10 +26,11 @@ public class DriftDetectorTests
         Assert.Equal(ProblemCategory.Convention, p.Category);
         Assert.Equal("svc-a", p.Location);
         Assert.Contains("svc-a", p.Title);
-        var it = Assert.Single(p.Items!);              // отдельный факт дрейфа — в Items (тип · слой · заметка)
+        var it = Assert.Single(p.Items!);              // отдельный факт дрейфа — в Items (тип · слой · заметка · файл)
         Assert.Equal("RegisterHandler", it.Name);
         Assert.Equal("Application", it.Layer);
         Assert.Contains("ожидается", it.Note);
+        Assert.Equal("x.cs", it.File);                 // путь к файлу — для перехода «к файлу/плашке»
     }
 
     [Fact]

@@ -52,8 +52,8 @@ export interface SystemEdge {
   problem?: string;      // id проблемы (навигация клик-по-ребру → проблема)
 }
 
-/** Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка. */
-export interface ProblemItem { name: string; layer: string; note: string }
+/** Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, заметка + где живёт тип. */
+export interface ProblemItem { name: string; layer: string; note: string; file?: string; line?: number }
 
 export interface Problem {
   id: string;

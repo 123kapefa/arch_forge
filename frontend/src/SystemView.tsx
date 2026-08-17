@@ -10,7 +10,7 @@ import { routeAll, type Rect, type XY } from './orthoRouter';
 import '@xyflow/react/dist/style.css';
 import './system.css';
 
-import { fetchSystem, type SystemGraph, type ProblemItem } from './system';
+import { fetchSystem, type SystemGraph, type ProblemItem, type Problem, type SystemNode } from './system';
 import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto } from './api';
 import { ImportsScreen } from './ImportsScreen';
 import { ConventionsView } from './ConventionsView';
@@ -52,7 +52,8 @@ const Flow = forwardRef<FlowHandle, {
   onSelect: (n: Node) => void;
   onDoubleClick: (n: Node) => void;  // двойной клик — drill на следующий уровень
   onClear: () => void;
-}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, onSelect, onDoubleClick, onClear }, ref) {
+  focusTargetRef?: { current: string | null }; // id карточки для центровки при пересборке (переход «к плашке»)
+}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, onSelect, onDoubleClick, onClear, focusTargetRef }, ref) {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
@@ -99,14 +100,33 @@ const Flow = forwardRef<FlowHandle, {
   }, [storageKey, onDirty]);
 
   useEffect(() => {
-    setNodes(applySaved(flow.nodes));
+    // при переходе «к плашке» помечаем целевую карточку selected прямо в посеве (кольцо; без доп. setNodes, чтобы не сбить центровку)
+    const focusId = focusTargetRef?.current;
+    const seeded = applySaved(flow.nodes);
+    setNodes(focusId ? seeded.map((n) => (n.id === focusId ? { ...n, selected: true } : n)) : seeded);
     setEdges(flow.edges);
     onDirty(true); // после загрузки/восстановления раскладка считается сохранённой
     if (flow.nodes.length === 0) { setVersion((v) => v + 1); return; }
-    // версию (→ пересчёт маршрутов) поднимаем после измерения узлов и fitView
-    const t = setTimeout(() => { rf.fitView({ padding: 0.2 }); setVersion((v) => v + 1); }, 70);
-    return () => clearTimeout(t);
-  }, [flow, applySaved, setNodes, setEdges, rf, onDirty]);
+    // переход «к плашке»: цель есть на доске → центрируем её; иначе — обычный fitView всех
+    const target = focusTargetRef?.current;
+    const node = target ? flow.nodes.find((n) => n.id === target) : undefined;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    if (node) {
+      // позиция карточки уже посчитана ELK (node.position) — центрируем мгновенно, без ожидания измерения.
+      // Переустанавливаем несколько раз: React Flow делает внутренний fitView, когда контейнер получает
+      // размер (см. warning «parent container needs width/height») — иначе он затирает центровку.
+      const w = (node.width ?? node.measured?.width ?? 220) as number;
+      const h = (node.height ?? node.measured?.height ?? 120) as number;
+      const cx = node.position.x + w / 2, cy = node.position.y + h / 2;
+      const center = () => rf.setCenter(cx, cy, { zoom: 1 });
+      [70, 220, 450, 750].forEach((d) => timers.push(setTimeout(center, d)));
+      if (focusTargetRef) focusTargetRef.current = null; // цель достигнута — снять
+      timers.push(setTimeout(() => setVersion((v) => v + 1), 80));
+    } else {
+      timers.push(setTimeout(() => { rf.fitView({ padding: 0.2 }); setVersion((v) => v + 1); }, 70));
+    }
+    return () => timers.forEach(clearTimeout);
+  }, [flow, applySaved, setNodes, setEdges, rf, onDirty, focusTargetRef]);
 
   useImperativeHandle(ref, () => ({
     save() { persist(); },
@@ -412,7 +432,12 @@ function healthColor(h?: string): string {
 
 // Раскрытый список отдельных фактов агрегированной проблемы (дрейф/нарушения слоёв).
 // Фильтр — чтобы найти конкретный тип среди сотен (кейс 144 дрейфа): «где именно эта проблема».
-function ProblemItems({ items }: { items: ProblemItem[] }) {
+// Клик по строке → факт в инспекторе (имя · слой · заметка · файл + переход к плашке).
+function ProblemItems({ items, active, onReveal }: {
+  items: ProblemItem[];
+  active: ProblemItem | null;
+  onReveal: (item: ProblemItem) => void;
+}) {
   const [q, setQ] = useState('');
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -430,13 +455,65 @@ function ProblemItems({ items }: { items: ProblemItem[] }) {
         {filtered.length === 0 ? (
           <li className="pd-items__empty">ничего не найдено</li>
         ) : filtered.map((it, i) => (
-          <li key={`${it.name}-${i}`} className="pd-item-row">
-            <span className="pd-item-row__name">{it.name}</span>
-            {it.layer && <span className="pd-item-row__layer">{it.layer}</span>}
-            {it.note && <span className="pd-item-row__note">{it.note}</span>}
+          <li key={`${it.name}-${i}`}>
+            <button type="button" className={`pd-item-row${active === it ? ' is-active' : ''}`} onClick={() => onReveal(it)}
+              title="показать факт (файл, слой, переход к плашке)">
+              <span className="pd-item-row__name">{it.name}</span>
+              {it.layer && <span className="pd-item-row__layer">{it.layer}</span>}
+              {it.note && <span className="pd-item-row__note">{it.note}</span>}
+            </button>
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// Путь к файлу относительно корня скана (для читаемости): /…/product_site/backend/… → backend/…
+function relPath(file: string | undefined, root: string): string {
+  if (!file) return '';
+  const f = file.replace(/\\/g, '/');
+  const r = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  return r && f.startsWith(r) ? f.slice(r.length).replace(/^\/+/, '') : f;
+}
+
+// Инспектор факта: что это (имя · слой · заметка), где (файл) и переход к плашке (если тип живёт в сервисе).
+function FactInspector({ fact, scanRoot, canGoto, onGoto }: {
+  fact: { item: ProblemItem; problem: Problem };
+  scanRoot: string;
+  canGoto: boolean;
+  onGoto: (item: ProblemItem) => void;
+}) {
+  const { item, problem } = fact;
+  const rel = relPath(item.file, scanRoot);
+  const cat = categoryOf(problem);
+  return (
+    <div className="finspect">
+      <div className="finspect__name">{item.name}</div>
+      <div className="finspect__tags">
+        <span className={`pd-row__cat cat-${cat}`}>{cat === 'convention' ? 'свод' : 'арх'}</span>
+        {item.layer && <span className="finspect__layer">{item.layer}</span>}
+      </div>
+      {item.note && <div className="finspect__note">{item.note}</div>}
+
+      {item.file ? (
+        <div className="finspect__file">
+          <div className="finspect__label">файл</div>
+          <div className="finspect__path" title={item.file}>{rel}{item.line ? ` : ${item.line}` : ''}</div>
+          <button type="button" className="finspect__copy"
+            onClick={() => void navigator.clipboard?.writeText(item.file ?? '')}>копировать путь</button>
+        </div>
+      ) : (
+        <div className="finspect__file panel__empty">путь к файлу неизвестен</div>
+      )}
+
+      {canGoto ? (
+        <button type="button" className="finspect__goto" onClick={() => onGoto(item)}>
+          показать плашку <Icon name="chevronRight" size={13} />
+        </button>
+      ) : (
+        <div className="finspect__hint">плашка недоступна: тип вне сервисного слоя (shared / unknown)</div>
+      )}
     </div>
   );
 }
@@ -537,6 +614,11 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [hideTests, setHideTests] = useState(false);
   const [problemsOpen, setProblemsOpen] = useState(false); // нижняя панель «Проблемы проекта»
   const [expandedProblems, setExpandedProblems] = useState<ReadonlySet<string>>(new Set()); // раскрытые проблемы (можно несколько сразу)
+  const [selectedFact, setSelectedFact] = useState<{ item: ProblemItem; problem: Problem } | null>(null); // выбранный факт (инспектор)
+  // цель перехода «к плашке»: сервис-владелец + файл/имя типа; focusId — id карточки в L2 (когда найдена)
+  const revealRef = useRef<{ serviceId: string; file: string; name: string; focusId?: string } | null>(null);
+  // id карточки, которую Flow центрирует при ближайшей пересборке (вместо fitView всех) — без гонки таймеров
+  const focusCardRef = useRef<string | null>(null);
   const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(new Set()); // скрытые слои (секция СЛОИ)
   const [leftOpen, setLeftOpen] = useState(true);   // панель ВИД
   const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
@@ -736,6 +818,56 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     if (sn.layers && sn.layers.length > 0) { setSelected(null); setDrill(n); } // сервис со слоями → L1
   }, [drill, drill2, l1Map]);
   const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
+
+  // Сервис-владелец файла (корень которого — префикс пути) → к нему ведёт drill для перехода к плашке.
+  const ownerService = useCallback((file?: string): SystemNode | null => {
+    if (!file) return null;
+    return graph?.nodes.find((n) => n.root && file.startsWith(n.root)) ?? null;
+  }, [graph]);
+
+  // Клик по факту → показать его в инспекторе (имя · слой · заметка · файл).
+  const revealFact = useCallback((item: ProblemItem, problem: Problem) => {
+    setSelected(null);
+    setSelectedFact({ item, problem });
+    setRightOpen(true);
+  }, []);
+
+  // «Показать плашку»: drill в сервис-владелец, дальше эффекты доводят до слоя и центрируют карточку.
+  const gotoBlock = useCallback((item: ProblemItem) => {
+    const svc = ownerService(item.file);
+    if (!svc || !item.file) return;
+    const ln = laid.nodes.find((x) => x.id === svc.id);
+    if (!ln) return;
+    revealRef.current = { serviceId: svc.id, file: item.file, name: item.name };
+    setSelected(null);
+    setSelectedFact(null);
+    setDrill2(null);
+    setDrill(ln);
+  }, [ownerService, laid]);
+
+  // Шаг 1 навигации: сервис раскрыт (l1Map готов) → находим карточку типа по имени+файлу → открываем её слой (L2).
+  useEffect(() => {
+    const t = revealRef.current;
+    if (!t || t.focusId || !l1Map || !drill) return;
+    if ((drill.data as SystemNodeData).node.id !== t.serviceId) return;
+    const base = (p: string) => p.replace(/\\/g, '/').split('/').pop();
+    const m = l1Map.nodes.find((n) => n.name === t.name && n.file != null && base(n.file) === base(t.file))
+      ?? l1Map.nodes.find((n) => n.name === t.name);
+    if (!m) { revealRef.current = null; return; }   // карточки нет в карте сервиса — остаёмся на слоях
+    t.focusId = m.id;
+    focusCardRef.current = m.id;                     // Flow отцентрирует её при пересборке typeFlow
+    setDrill2(m.layer || null);
+  }, [l1Map, drill]);
+
+  // Шаг 2: слой раскрыт (typeFlow построен) → выбираем карточку (инспектор типа); центрирует её сам Flow.
+  useEffect(() => {
+    const t = revealRef.current;
+    if (!t?.focusId) return;
+    const tn = typeFlow.nodes.find((n) => n.id === t.focusId);
+    if (!tn) return;                                 // typeFlow ещё не для нужного слоя
+    revealRef.current = null;
+    setSelected(tn);
+  }, [typeFlow]);
 
   // Клик по проблеме/связи → навести на узел. Если location — узел: выбрать + центрировать.
   // Если это namespace-префикс (дрейф/слой per-service): навести на все узлы репозитория. Иначе — не двигать.
@@ -991,9 +1123,10 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
                     storageKey={drill ? '' : storageKey}
                     onDirty={setSaved}
                     selectedId={selected?.id ?? null}
-                    onSelect={setSelected}
+                    onSelect={(n) => { setSelected(n); setSelectedFact(null); }}
                     onDoubleClick={onDoubleClick}
                     onClear={() => setSelected(null)}
+                    focusTargetRef={focusCardRef}
                   />
                 </ReactFlowProvider>
               </HiddenLayersContext.Provider>
@@ -1033,7 +1166,10 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               <div className="panel__body">
                 {selected && graph
                   ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />
-                  : <div className="panel__empty">кликните узел</div>}
+                  : selectedFact
+                    ? <FactInspector fact={selectedFact} scanRoot={loadedPath}
+                        canGoto={!!ownerService(selectedFact.item.file)} onGoto={gotoBlock} />
+                    : <div className="panel__empty">кликните узел</div>}
               </div>
             </>
           )}
@@ -1067,7 +1203,11 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
                     <span className="pd-row__title">{p.title}</span>
                     <span className="pd-row__loc">{nameById.get(p.location) ?? p.location}</span>
                   </button>
-                  {open && hasItems && <ProblemItems items={p.items!} />}
+                  {open && hasItems && (
+                    <ProblemItems items={p.items!}
+                      active={selectedFact?.problem.id === p.id ? selectedFact.item : null}
+                      onReveal={(it) => revealFact(it, p)} />
+                  )}
                 </div>
               );
             })}

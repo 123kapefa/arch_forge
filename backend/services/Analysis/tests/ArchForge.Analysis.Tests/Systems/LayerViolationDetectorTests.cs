@@ -36,6 +36,7 @@ public class LayerViolationDetectorTests
         var it = Assert.Single(p.Items!);                // отдельный факт нарушения — в Items
         Assert.Equal("Order → PaymentGateway", it.Name);
         Assert.Equal("Domain → Infrastructure", it.Layer);
+        Assert.Equal("Order.cs", it.File);               // файл типа-источника (From) — для перехода к блоку
     }
 
     [Fact]
