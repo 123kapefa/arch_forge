@@ -43,6 +43,10 @@ internal static class RoslynScan
         // Сегменты проектов сравниваем без учёта регистра: «Catalog.API» ≡ «.Api» (иначе весь API-проект → unknown).
         bool Has(string s) => p.Contains(s, StringComparison.OrdinalIgnoreCase);
         if (Has("Test")) return "tests";
+        // общий kernel (Kalmykov.Shared.*: SharedKernel/Core/Framework/Authentication/…) — отдельный сквозной
+        // слой, а не «unknown» и не слой конкретного сервиса. Ловим по dotted-сегменту, чтобы не задеть
+        // внутрисервисные папки вида Catalog.Application/Shared. Раньше маркеров слоя (Shared.Contracts → Shared).
+        if (Has(".Shared.")) return "Shared";
         if (Has(".Domain")) return "Domain";
         if (Has(".Application") || Has(".Core")) return "Application";
         if (Has(".Infrastructure") || Has(".Persistence")) return "Infrastructure";

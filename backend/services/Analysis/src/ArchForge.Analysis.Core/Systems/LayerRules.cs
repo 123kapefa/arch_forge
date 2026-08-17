@@ -8,7 +8,7 @@ public static class LayerRules
 {
     private static readonly Dictionary<string, int> Level = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Domain"] = 0, ["Contracts"] = 0,   // ядро и общий контракт — внутрь них зависеть можно всем
+        ["Domain"] = 0, ["Contracts"] = 0, ["Shared"] = 0, // ядро, общий контракт, shared kernel — внутрь можно всем
         ["Application"] = 1,
         ["Infrastructure"] = 2, ["Api"] = 2,  // внешние слои — сюда зависеть изнутри нельзя
     };

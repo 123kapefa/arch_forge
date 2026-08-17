@@ -7,7 +7,7 @@ namespace ArchForge.Analysis.Core.Systems;
 // `Layers` переиспользуется per-.sln (ServiceSummaryBuilder) и per-microservice (MicroserviceLayerBuilder).
 public static class ServiceSummaryBuilder
 {
-    private static readonly string[] LayerOrder = { "API", "Application", "Domain", "Infrastructure", "Contracts" };
+    private static readonly string[] LayerOrder = { "API", "Application", "Domain", "Infrastructure", "Contracts", "Shared" };
 
     public static IReadOnlyList<ServiceSummaryDto> Build(IReadOnlyList<ServiceAnalysis> analyses)
     {
