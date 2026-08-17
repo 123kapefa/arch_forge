@@ -58,6 +58,10 @@ public sealed class TypeClassifier
             if (via == "unknown" && r.Name == "Program") { role = "Entrypoint"; via = "heuristic"; }
             if (via == "unknown" && (r.Name.EndsWith("Result") || r.Name.EndsWith("Dto"))) { role = "Result"; via = "heuristic"; }
             if (via == "unknown" && r.Layer == "tests") { role = "Test"; via = "heuristic"; }
+            // Инфраструктурные примитивы по суффиксу — читаемые роли вместо «unknown» (особенно для shared
+            // kernel: Middleware/Provider/Checker/Dispatcher/…). Описательно, на дрейф не влияет.
+            if (via == "unknown" && InfraRole(r.Name) is { } ir) { role = ir; via = "heuristic"; }
+            if (via == "unknown" && r.Kind == "interface") { role = "Port"; via = "heuristic"; } // интерфейс без маркера — порт/контракт
 
             if (via == "marker") marker++;
             else if (via == "heuristic") heuristic++;
@@ -72,6 +76,31 @@ public sealed class TypeClassifier
 
         return new AnalysisResult(types, BuildEdges(raw), new Coverage(marker, heuristic, unknown), drift);
     }
+
+    // Описательная роль инфраструктурного типа по суффиксу (читаемость shared kernel и прочей инфры).
+    // Только когда маркер/fallback молчат — не спорит с достоверной классификацией по базам.
+    private static string? InfraRole(string name) => name switch
+    {
+        _ when name.EndsWith("Middleware") => "Middleware",
+        _ when name.EndsWith("Interceptor") => "Interceptor",
+        _ when name.EndsWith("Behavior") => "Pipeline Behavior",
+        _ when name.EndsWith("Dispatcher") => "Dispatcher",
+        _ when name.EndsWith("Metrics") => "Metrics",
+        _ when name.EndsWith("Recorder") => "Recorder",
+        _ when name.EndsWith("Checker") => "Checker",
+        _ when name.EndsWith("Builder") => "Builder",
+        _ when name.EndsWith("Provider") => "Provider",
+        _ when name.EndsWith("Client") => "HTTP Client",
+        _ when name.EndsWith("Handler") => "Handler",
+        _ when name.EndsWith("Settings") => "Config",
+        _ when name.EndsWith("Definition") => "Config",
+        _ when name.EndsWith("Event") => "Event",
+        _ when name.EndsWith("Response") => "DTO",
+        _ when name.EndsWith("Snapshot") => "Snapshot",
+        _ when name.EndsWith("Record") => "DTO",
+        _ when name.StartsWith("Base") => "Base type",
+        _ => null,
+    };
 
     // Рёбра между своими типами: implements (базы) + семантические Refs (uses/holds/raises/handles).
     // Если Refs пусты (синтаксический пол) — fallback на регекс по тексту первичного ctor.

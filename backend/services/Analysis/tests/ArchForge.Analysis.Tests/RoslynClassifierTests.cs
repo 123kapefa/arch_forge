@@ -51,6 +51,24 @@ public class RoslynClassifierTests
         Assert.Equal("Test", result.Types[0].Role);
     }
 
+    // Инфраструктурные примитивы shared kernel получают читаемые роли по суффиксу (а не «unknown»).
+    [Theory]
+    [InlineData("ObservabilityMiddleware", "class", "Middleware")]
+    [InlineData("UpdatedAtInterceptor", "class", "Interceptor")]
+    [InlineData("SecurityMetrics", "class", "Metrics")]
+    [InlineData("PlatformLinkBuilder", "class", "Builder")]
+    [InlineData("ResilientEntitlementChecker", "class", "Checker")]
+    [InlineData("ICurrentUser", "interface", "Port")]
+    [InlineData("SettingsChangedEvent", "record", "Event")]
+    [InlineData("JwtSettings", "class", "Config")]
+    public void Shared_infra_gets_descriptive_role(string name, string kind, string expected)
+    {
+        var raw = new[] { new RawType(name, kind, Array.Empty<string>(), "()", "Shared", "s.cs") };
+        var result = new TypeClassifier().Classify(raw, ConventionPack.Default());
+        Assert.Equal(expected, result.Types[0].Role);
+        Assert.Empty(result.Drift); // и без ложного дрейфа
+    }
+
     [Fact]
     public void Uses_edge_from_ctor_between_own_types()
     {
