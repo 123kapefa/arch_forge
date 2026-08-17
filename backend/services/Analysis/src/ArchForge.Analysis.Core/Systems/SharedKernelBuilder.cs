@@ -24,8 +24,8 @@ public static class SharedKernelBuilder
             var layers = ServiceSummaryBuilder.Layers(shared, edges);
             if (layers.Count == 0) continue;
 
-            // отдельный namespace «shared» → своя расцветка/легенда; kind service (svc-card с drill по layers)
-            var node = new SystemNode("shared/kernel", "Shared kernel", SystemNodeKind.Service);
+            // отдельный вид «shared» → своя расцветка/оформление на L0; drill по layers как у сервиса
+            var node = new SystemNode("shared/kernel", "Shared kernel", SystemNodeKind.Shared);
             var entry = new MicroserviceLayerBuilder.Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers);
             return (node, entry);
         }

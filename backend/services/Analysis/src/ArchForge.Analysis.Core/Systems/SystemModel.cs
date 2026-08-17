@@ -3,7 +3,7 @@ namespace ArchForge.Analysis.Core.Systems;
 // Модель СИСТЕМНОГО уровня (Фаза 1.5): сервисы + инфра + связи + проблемы.
 // Спайк P1.5-0 — облегчённая форма; в P1.5-A это ляжет в аддитивный контракт GraphDto.
 
-public enum SystemNodeKind { Service, Datastore, Topic, External }
+public enum SystemNodeKind { Service, Datastore, Topic, External, Shared }
 
 /// <summary>Источник связи (провенанс, честность adr/0008).</summary>
 public enum EdgeVia { Compose, Config, Code, Unknown }

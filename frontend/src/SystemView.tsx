@@ -205,7 +205,7 @@ const Flow = forwardRef<FlowHandle, {
 });
 
 const KIND_LABEL: Record<string, string> = {
-  service: 'сервис', datastore: 'хранилище', topic: 'шина', external: 'внешний',
+  service: 'сервис', datastore: 'хранилище', topic: 'шина', external: 'внешний', shared: 'сквозной kernel',
 };
 
 /** Инспектор для выбранного узла — диспетчер по уровню: системный узел (L0) / слой (L1) / тип+члены (L2). */

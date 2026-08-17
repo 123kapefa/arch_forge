@@ -22,21 +22,25 @@ const layerMark = (h: string) => (h === 'critical' ? '●' : h === 'warning' ? '
 export function SystemNodeView({ data, selected }: NodeProps<SystemNodeType>) {
   const { node, health, problems } = data;
   const infra = isInfra(node.kind);
-  const accent = infra ? KIND_ACCENT[node.kind] ?? '#7c8698' : repoColor(namespaceOf(node.id));
+  const shared = node.kind === 'shared'; // сквозной shared kernel — не деплой-сервис
+  const accent = shared ? '#8a94a6' : infra ? KIND_ACCENT[node.kind] ?? '#7c8698' : repoColor(namespaceOf(node.id));
   const hiddenLayers = useContext(HiddenLayersContext);
   const layers = node.layers?.filter((l) => !hiddenLayers.has(l.name)); // секция «СЛОИ» прячет выбранные
 
-  // Сервис со слоями → карточка «внутри сервиса — слои» (L0)
-  if (!infra && layers && layers.length > 0) {
+  // Сервис (или сквозной shared kernel) со слоями → карточка «внутри — слои» (L0)
+  if ((!infra || shared) && layers && layers.length > 0) {
     return (
       <div
-        className={`svc-card health-${health}${selected ? ' is-selected' : ''}`}
+        className={`svc-card health-${health}${shared ? ' svc-card--shared' : ''}${selected ? ' is-selected' : ''}`}
         style={{ borderLeft: `3px solid ${accent}` }}
       >
         <Handle type="target" position={Position.Top} />
         <div className="svc-card__head">
-          <span className="svc-card__dot" style={{ background: HEALTH_DOT[health] ?? HEALTH_DOT.ok }} />
+          {shared
+            ? <span className="svc-card__cross" aria-hidden="true">⧉</span>
+            : <span className="svc-card__dot" style={{ background: HEALTH_DOT[health] ?? HEALTH_DOT.ok }} />}
           <span className="svc-card__name" title={node.id}>{node.name}</span>
+          {shared && <span className="svc-card__tag">сквозной</span>}
           {problems.length > 0 && <span className="badge badge--warning">⚠ {problems.length}</span>}
         </div>
         <div className="svc-card__layers">

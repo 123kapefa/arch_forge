@@ -62,10 +62,12 @@ public static class SystemGraphMapper
         SystemNodeKind.Datastore => "datastore",
         SystemNodeKind.Topic => "topic",
         SystemNodeKind.External => "external",
+        SystemNodeKind.Shared => "shared",
         _ => "unknown",
     };
 
-    private static string LevelOf(SystemNodeKind k) => k == SystemNodeKind.Service ? "service" : "system";
+    // service и shared — с раскрываемыми слоями (drill); инфра — системный уровень
+    private static string LevelOf(SystemNodeKind k) => k is SystemNodeKind.Service or SystemNodeKind.Shared ? "service" : "system";
 
     private static string ViaString(EdgeVia v) => v switch
     {

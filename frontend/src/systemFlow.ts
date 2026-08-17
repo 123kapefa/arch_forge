@@ -67,7 +67,8 @@ const BAND_GAP = 210;
 function layout(nodes: Node[]): Node[] {
   const ext = nodes.filter((n) => KIND_OF(n) === 'external');
   const infra = nodes.filter((n) => KIND_OF(n) === 'datastore' || KIND_OF(n) === 'topic');
-  const svc = nodes.filter((n) => KIND_OF(n) === 'service');
+  // всё остальное (service, shared kernel, будущие виды) — в «сервисный» блок, иначе узел выпадет из раскладки
+  const svc = nodes.filter((n) => !ext.includes(n) && !infra.includes(n));
 
   const out: Node[] = [];
   const put = (n: Node, x: number, y: number) =>
