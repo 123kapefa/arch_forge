@@ -29,15 +29,26 @@ public class RoslynClassifierTests
         Assert.NotEmpty(result.Drift);
     }
 
-    // Shared kernel сам определяет свод (Core: ICommandHandler; Authentication: HTTP DelegatingHandler) —
-    // сервисные ожидания к нему неприменимы: тот же «*Handler» в слое Shared дрейфом НЕ считается.
-    [Fact]
-    public void Shared_layer_handler_is_not_drift()
+    // Свод — про сервисный код. Shared kernel сам определяет свод (Core: ICommandHandler; Authentication:
+    // HTTP DelegatingHandler), tests — тест-дубли. Тот же «*Handler» в этих слоях дрейфом НЕ считается.
+    [Theory]
+    [InlineData("Shared")]
+    [InlineData("tests")]
+    public void Non_service_layer_handler_is_not_drift(string layer)
     {
-        var raw = new[] { new RawType("TokenForwardingHandler", "class", Array.Empty<string>(), "(HttpClient c)", "Shared", "s.cs") };
+        var raw = new[] { new RawType("TokenForwardingHandler", "class", Array.Empty<string>(), "(HttpClient c)", layer, "s.cs") };
         var result = new TypeClassifier().Classify(raw, ConventionPack.Default());
         Assert.Empty(result.Drift);
         Assert.Empty(result.Types[0].Drift);
+    }
+
+    // Тест-хендлер без ожиданий свода получает роль Test (а не ложную «CommandHandler?»).
+    [Fact]
+    public void Tests_layer_handler_gets_test_role()
+    {
+        var raw = new[] { new RawType("FakeHttpMessageHandler", "class", Array.Empty<string>(), "()", "tests", "t.cs") };
+        var result = new TypeClassifier().Classify(raw, ConventionPack.Default());
+        Assert.Equal("Test", result.Types[0].Role);
     }
 
     [Fact]

@@ -34,10 +34,11 @@ public sealed class TypeClassifier
             {
                 role = "Port"; via = "heuristic";
             }
-            // Shared kernel сам ОПРЕДЕЛЯЕТ конвенции свода (Core: ICommandHandler/IQuery; Authentication:
-            // TokenForwardingHandler — HTTP DelegatingHandler; Framework: ExceptionMiddleware) — сервисные
-            // ожидания к нему неприменимы. Иначе ложный дрейф «ожидается ICommandHandler» на middleware/хендлерах.
-            if (r.Layer != "Shared")
+            // Свод — про СЕРВИСНЫЙ код (Domain/Application/Api/…). Shared kernel сам ОПРЕДЕЛЯЕТ конвенции
+            // (Core: ICommandHandler/IQuery; Authentication: TokenForwardingHandler — HTTP DelegatingHandler;
+            // Framework: ExceptionMiddleware), а tests — тест-дубли (FakeHttpMessageHandler, CapturingHandler).
+            // К ним сервисные ожидания неприменимы: иначе ложный дрейф «ожидается ICommandHandler» на них.
+            if (r.Layer is not ("Shared" or "tests"))
                 foreach (var (suffix, mk, rl) in pack.Expect)
                     if (r.Name.EndsWith(suffix) && !r.Bases.Any(b => pack.Markers.TryGetValue(b, out var rr) && rr == rl))
                     {
