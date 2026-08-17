@@ -43,31 +43,36 @@ function placeUnit(u: Unit, ox: number, oy: number, cellW: number, pos: Map<stri
 export function gridLayout(nodes: Node[], edges: Edge[]): { nodes: Node[]; edges: Edge[] } {
   if (nodes.length === 0) return { nodes, edges };
 
+  // Сквозной shared kernel — вне сервисной сетки: иначе он занимает сервисную ячейку и налезает на ручную
+  // раскладку (пользователь сам расставил сервисы). Кладём отдельно, слева-сверху над сеткой.
+  const sharedNode = nodes.find((n) => kindOf(n) === 'shared');
+  const grid = sharedNode ? nodes.filter((n) => n.id !== sharedNode.id) : nodes;
+
   // core-сервисы (со слоями) — по алфавиту для стабильности
-  const cores = nodes
+  const cores = grid
     .filter((n) => !isInfra(kindOf(n)) && layersOf(n) > 0)
     .sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
   const bases = [...new Set(cores.map((c) => norm(nameOf(c)).replace(/api$/, '')).filter((b) => b.length >= 3))];
   const clusterOf = new Map<string, string>();
-  for (const n of nodes) {
+  for (const n of grid) {
     const nn = norm(nameOf(n));
     let best = '';
     for (const b of bases) if (b.length > best.length && nn.includes(b)) best = b;
     if (best) clusterOf.set(n.id, best);
   }
 
-  const gateway = nodes.find((n) => norm(nameOf(n)).includes('gateway'));
+  const gateway = grid.find((n) => norm(nameOf(n)).includes('gateway'));
   const claimed = new Set<string>();
   const units: Unit[] = cores.map((core) => {
     const base = norm(nameOf(core)).replace(/api$/, '');
-    const sats = nodes.filter((n) => n.id !== core.id && clusterOf.get(n.id) === base);
+    const sats = grid.filter((n) => n.id !== core.id && clusterOf.get(n.id) === base);
     [core, ...sats].forEach((x) => claimed.add(x.id));
     return { core, sats };
   });
-  const infra = nodes.filter((n) => !claimed.has(n.id) && n.id !== gateway?.id);
+  const infra = grid.filter((n) => !claimed.has(n.id) && n.id !== gateway?.id);
 
   const cellW = Math.max(...units.map((u) => unitSize(u).w), CORE_W);
-  const cellH = Math.max(...units.map((u) => unitSize(u).h), coreH(cores[0] ?? nodes[0]));
+  const cellH = Math.max(...units.map((u) => unitSize(u).h), coreH(cores[0] ?? grid[0] ?? nodes[0]));
 
   // число колонок под ~16:10
   const gwBlock = 80 + ROW_GAP;
@@ -104,6 +109,9 @@ export function gridLayout(nodes: Node[], edges: Edge[]): { nodes: Node[]; edges
     const rowW = Math.min(infra.length - row * perInfraRow, perInfraRow) * (SAT_W + GAP) - GAP;
     pos.set(n.id, { x: (gridW - rowW) / 2 + col * (SAT_W + GAP), y: infraY + row * (SAT_H + GAP) });
   });
+
+  // сквозной shared kernel — своя позиция слева-сверху, вне сервисной сетки (не конфликтует с ручной раскладкой)
+  if (sharedNode) pos.set(sharedNode.id, { x: -(CORE_W + COL_GAP), y: 0 });
 
   const laidNodes = nodes.map((n) => ({ ...n, position: pos.get(n.id) ?? { x: 0, y: 0 } }));
   return { nodes: laidNodes, edges }; // маршруты не считаем → RoutedEdge рисует smoothstep
