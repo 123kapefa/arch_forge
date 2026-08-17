@@ -536,7 +536,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [hideIsolated, setHideIsolated] = useState(false);
   const [hideTests, setHideTests] = useState(false);
   const [problemsOpen, setProblemsOpen] = useState(false); // нижняя панель «Проблемы проекта»
-  const [expandedProblem, setExpandedProblem] = useState<string | null>(null); // раскрытая проблема (список фактов)
+  const [expandedProblems, setExpandedProblems] = useState<ReadonlySet<string>>(new Set()); // раскрытые проблемы (можно несколько сразу)
   const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(new Set()); // скрытые слои (секция СЛОИ)
   const [leftOpen, setLeftOpen] = useState(true);   // панель ВИД
   const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
@@ -1050,11 +1050,16 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               <div className="panel__empty">проблем не найдено</div>
             ) : allProblems.map((p) => {
               const hasItems = (p.items?.length ?? 0) > 0;
-              const open = expandedProblem === p.id;
+              const open = expandedProblems.has(p.id);
+              const toggle = () => setExpandedProblems((prev) => {
+                const next = new Set(prev);
+                if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+                return next;
+              });
               return (
-                <div key={p.id} className="pd-item">
+                <div key={p.id} className={`pd-item sev-${p.severity}`}>
                   <button className={`pd-row sev-${p.severity}`}
-                    onClick={() => (hasItems ? setExpandedProblem(open ? null : p.id) : focusNode(p.location))}
+                    onClick={() => (hasItems ? toggle() : focusNode(p.location))}
                     title={hasItems ? 'показать все факты' : 'навести на узел'}>
                     <span className="pd-row__chev">{hasItems ? <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} /> : null}</span>
                     <span className={`pd-row__cat cat-${categoryOf(p)}`}>{categoryOf(p) === 'convention' ? 'свод' : 'арх'}</span>
