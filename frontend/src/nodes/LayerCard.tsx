@@ -36,8 +36,8 @@ export function LayerCard({ data, selected }: NodeProps<LayerCardType>) {
 
       {preview && preview.length > 0 && (
         <ul className="layer-card__types">
-          {preview.map((t) => (
-            <li key={t.name} className="layer-card__type" title={t.role}>
+          {preview.map((t, i) => (
+            <li key={`${t.name}#${i}`} className="layer-card__type" title={t.role}>
               <span className="layer-card__typemark">{roleMark(t.role)}</span>
               <span className="layer-card__typename">{t.name}</span>
             </li>
