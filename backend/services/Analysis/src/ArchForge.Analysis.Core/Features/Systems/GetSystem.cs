@@ -52,6 +52,16 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
             services = ServiceSummaryBuilder.Build(analyses);              // .sln-сводка (Services[])
             nodeLayers = MicroserviceLayerBuilder.Build(analyses);        // per-microservice слои для L0-карточек
+
+            // сквозной shared kernel — отдельный drill-таргет на L0 (типы под src/Shared, вне сервисов)
+            if (SharedKernelBuilder.Build(analyses) is { } sk)
+            {
+                graph = graph with { Nodes = [.. graph.Nodes, sk.Node] };
+                nodeLayers = new Dictionary<string, MicroserviceLayerBuilder.Entry>(nodeLayers, StringComparer.Ordinal)
+                {
+                    [MicroserviceLayerBuilder.NodeKey(sk.Node.Id, sk.Node.Name)] = sk.Entry,
+                };
+            }
         }
 
         string project = File.Exists(query.Path)
