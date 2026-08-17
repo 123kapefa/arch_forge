@@ -34,12 +34,16 @@ public sealed class TypeClassifier
             {
                 role = "Port"; via = "heuristic";
             }
-            foreach (var (suffix, mk, rl) in pack.Expect)
-                if (r.Name.EndsWith(suffix) && !r.Bases.Any(b => pack.Markers.TryGetValue(b, out var rr) && rr == rl))
-                {
-                    td.Add($"ожидается {mk}");
-                    if (via == "unknown") { role = rl + "?"; via = "heuristic"; }
-                }
+            // Shared kernel сам ОПРЕДЕЛЯЕТ конвенции свода (Core: ICommandHandler/IQuery; Authentication:
+            // TokenForwardingHandler — HTTP DelegatingHandler; Framework: ExceptionMiddleware) — сервисные
+            // ожидания к нему неприменимы. Иначе ложный дрейф «ожидается ICommandHandler» на middleware/хендлерах.
+            if (r.Layer != "Shared")
+                foreach (var (suffix, mk, rl) in pack.Expect)
+                    if (r.Name.EndsWith(suffix) && !r.Bases.Any(b => pack.Markers.TryGetValue(b, out var rr) && rr == rl))
+                    {
+                        td.Add($"ожидается {mk}");
+                        if (via == "unknown") { role = rl + "?"; via = "heuristic"; }
+                    }
             if (r.Name.EndsWith("Event") && !r.Bases.Contains("IDomainEvent") && r.Layer == "Domain")
             {
                 td.Add("ожидается IDomainEvent");

@@ -29,6 +29,17 @@ public class RoslynClassifierTests
         Assert.NotEmpty(result.Drift);
     }
 
+    // Shared kernel сам определяет свод (Core: ICommandHandler; Authentication: HTTP DelegatingHandler) —
+    // сервисные ожидания к нему неприменимы: тот же «*Handler» в слое Shared дрейфом НЕ считается.
+    [Fact]
+    public void Shared_layer_handler_is_not_drift()
+    {
+        var raw = new[] { new RawType("TokenForwardingHandler", "class", Array.Empty<string>(), "(HttpClient c)", "Shared", "s.cs") };
+        var result = new TypeClassifier().Classify(raw, ConventionPack.Default());
+        Assert.Empty(result.Drift);
+        Assert.Empty(result.Types[0].Drift);
+    }
+
     [Fact]
     public void Uses_edge_from_ctor_between_own_types()
     {
