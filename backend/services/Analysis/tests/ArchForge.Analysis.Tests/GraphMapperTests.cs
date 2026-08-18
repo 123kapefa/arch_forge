@@ -20,7 +20,7 @@ public class GraphMapperTests
             ],
             [], new Coverage(0, 0, 3), []);
 
-        var ids = GraphMapper.ToDto(result, "proj").Nodes.Select(n => n.Id).ToList();
+        var ids = result.ToGraphDto("proj").Nodes.Select(n => n.Id).ToList();
         Assert.Equal(3, ids.Count);                          // ни один узел не потерян
         Assert.Equal(ids.Count, ids.Distinct().Count());     // все id уникальны
         Assert.Contains("Shared:ApiResponse", ids);          // первый экземпляр — обычный формат
@@ -31,7 +31,7 @@ public class GraphMapperTests
     public void Unique_name_keeps_layer_name_id()
     {
         var result = new AnalysisResult([Type("Order", "Domain", "Order.cs")], [], new Coverage(0, 0, 1), []);
-        Assert.Equal("Domain:Order", GraphMapper.ToDto(result, "p").Nodes[0].Id);
+        Assert.Equal("Domain:Order", result.ToGraphDto("p").Nodes[0].Id);
     }
 
     // id члена — тоже React-ключ; перегрузки (два «Fail») обязаны получить разные id
@@ -40,7 +40,7 @@ public class GraphMapperTests
     {
         var t = new TypeInfo("ApiResponse", "class", "Shared", "unknown", "unknown", [], "ApiResponse.cs", [],
             [new MemberInfo("Fail", "method", "(string e)"), new MemberInfo("Fail", "method", "(Error e)")]);
-        var members = GraphMapper.ToDto(new AnalysisResult([t], [], new Coverage(0, 0, 1), []), "p").Nodes[0].Members!;
+        var members = new AnalysisResult([t], [], new Coverage(0, 0, 1), []).ToGraphDto("p").Nodes[0].Members!;
         var ids = members.Select(m => m.Id).ToList();
         Assert.Equal(2, ids.Count);
         Assert.Equal(ids.Count, ids.Distinct().Count());

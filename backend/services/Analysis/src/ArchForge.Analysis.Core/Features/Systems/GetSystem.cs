@@ -67,7 +67,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         string project = File.Exists(query.Path)
             ? Path.GetFileName(Path.GetDirectoryName(query.Path)) ?? "system"
             : new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
-        var dto = SystemGraphMapper.ToDto(graph, project, nodeLayers, pack);
+        var dto = graph.ToGraphDto(project, nodeLayers, pack);
         return services.Count > 0 ? dto with { Services = services } : dto;
     }
 }
