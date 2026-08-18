@@ -613,6 +613,7 @@
 .finspect__tags { display: flex; align-items: center; gap: 8px; }
 .finspect__layer { color: var(--muted); font-size: 11px; }
 .finspect__note { color: var(--text); font-size: 12px; }
+.finspect__fix { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-left: 2px solid var(--accent, #6b9fff); background: color-mix(in srgb, var(--accent, #6b9fff) 8%, transparent); border-radius: 4px; font-size: 12px; }
 .finspect__file { display: flex; flex-direction: column; gap: 4px; }
 .finspect__label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
 .finspect__path {

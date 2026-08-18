@@ -496,6 +496,13 @@ function FactInspector({ fact, scanRoot, canGoto, onGoto }: {
       </div>
       {item.note && <div className="finspect__note">{item.note}</div>}
 
+      {problem.fix && (
+        <div className="finspect__fix">
+          <div className="finspect__label">как чинить</div>
+          <div>{problem.fix}</div>
+        </div>
+      )}
+
       {item.file ? (
         <div className="finspect__file">
           <div className="finspect__label">файл</div>
@@ -1092,7 +1099,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               type="range" min={0} max={1} step={0.05} value={minConfidence}
               onChange={(e) => setMinConfidence(Number(e.target.value))} style={{ width: '100%' }}
             />
-            <div className="panel__hint">скрыть слабые/эвристические связи</div>
+            <div className="panel__hint">толщина линии = уверенность; порог прячет слабые</div>
           </div>
           <div className="panel__group">
             <div className="panel__label">ФИЛЬТРЫ</div>

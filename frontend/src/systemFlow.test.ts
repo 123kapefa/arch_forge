@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SystemGraph } from './system';
-import { buildSystemFlow, edgeStyle, isInfra, filterGraph, edgeKindsOf } from './systemFlow';
+import { buildSystemFlow, edgeStyle, edgeWidth, isInfra, filterGraph, edgeKindsOf } from './systemFlow';
 
 const graph: SystemGraph = {
   project: 'sys',
@@ -87,5 +87,10 @@ describe('isInfra / edgeStyle', () => {
     expect(edgeStyle('rw-db', false).stroke).toBe('#6fcf77');
     expect(edgeStyle('http-call', false).strokeDasharray).toBeDefined();
     expect(edgeStyle('rw-db', true).stroke).toBe('#e5484d');
+  });
+  it('толщина ребра растёт с уверенностью, нарушение не тоньше 2', () => {
+    expect(edgeWidth(1)).toBeGreaterThan(edgeWidth(0.6));
+    expect(edgeWidth(0.4)).toBeLessThan(edgeWidth(0.95));
+    expect(edgeWidth(0.3, true)).toBeGreaterThanOrEqual(2); // слабое, но нарушение — всё равно заметно
   });
 });

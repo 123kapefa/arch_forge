@@ -27,6 +27,13 @@ export function edgeStyle(kind: string, violation: boolean): { stroke: string; s
   return DASHED.has(kind) ? { stroke, strokeDasharray: '6 4' } : { stroke };
 }
 
+// Толщина ребра по уверенности: слабые/эвристические связи тоньше, уверенные толще; нарушение всегда заметно.
+// Шкала совпадает с провенансом (P1.5-D): ~1.0 depends_on/ProjectReference, ~0.9 config, ~0.7 http/db, ~0.5 эвристика.
+export function edgeWidth(confidence: number, violation = false): number {
+  const w = confidence >= 0.9 ? 2.6 : confidence >= 0.7 ? 2 : confidence >= 0.5 ? 1.4 : 1;
+  return violation ? Math.max(w, 2) : w;
+}
+
 const INFRA_KINDS = new Set(['datastore', 'topic', 'external']);
 export function isInfra(kind: string): boolean {
   return INFRA_KINDS.has(kind);
@@ -121,10 +128,11 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
       const d = prev.data as EdgeData;
       d.violation ||= violation;
       d.confidence = Math.max(d.confidence, conf);
-      if (violation) prev.style = { ...prev.style, ...edgeStyle(e.kind, true) };
+      // пересобираем стиль по слитым данным: цвет по нарушению, толщина по максимальной уверенности пары
+      prev.style = { ...prev.style, ...edgeStyle(e.kind, d.violation), strokeWidth: edgeWidth(d.confidence, d.violation) };
       continue;
     }
-    const style = edgeStyle(e.kind, violation);
+    const style = { ...edgeStyle(e.kind, violation), strokeWidth: edgeWidth(conf, violation) };
     edges.set(key, {
       id: key,
       source: e.source,

@@ -51,11 +51,27 @@ public static class SystemGraphMapping
         $"{e.Source}-{e.Kind}->{e.Target}", e.Source, e.Target, e.Kind,
         Via: ViaString(e.Via), Confidence: e.Confidence);
 
-    /// <summary>Системная проблема → ProblemDto (id «p{index}», категория-линза, факты).</summary>
+    /// <summary>Системная проблема → ProblemDto (id «p{index}», категория-линза, факты, подсказка «как чинить»).</summary>
     public static ProblemDto ToProblemDto(this SystemProblem p, int index) => new(
         $"p{index}", SeverityString(p.Severity), p.Kind, p.Title, p.Location,
         Category: p.Category,
-        Items: p.Items?.Select(it => it.ToProblemItemDto()).ToList());
+        Items: p.Items?.Select(it => it.ToProblemItemDto()).ToList(),
+        Fix: FixFor(p.Kind));
+
+    // Совет «как чинить» — по виду проблемы (одинаков для всех её случаев); неизвестный вид → без подсказки.
+    private static string? FixFor(string kind) => kind switch
+    {
+        "shared-store" or "shared-db" => "Данные чужого сервиса — только через его API/события; заведите своё хранилище на сервис.",
+        "service-cycle" => "Разорвите цикл: замените синхронный вызов событием или вынесите общую логику в отдельный сервис.",
+        "dangling-event" => "Событие публикуется, но подписчиков нет — добавьте потребителя или уберите публикацию.",
+        "orphaned-subscription" => "Подписка без издателя — проверьте имя события или уберите подписку.",
+        "isolated-topic" => "Топик без связей — подключите издателя/подписчика или удалите его.",
+        "layer-violation" => "Зависимость наружу запрещена — инвертируйте её через интерфейс во внутреннем слое.",
+        "dto-mapping" => "Вынесите сборку DTO в один маппер/фабрику (см. centralizeIn в своде).",
+        "drift" => "Приведите тип к своду (нужный маркер/суффикс) или дополните archforge.conventions.json.",
+        "drift-scan-failed" or "layer-scan-failed" => "Разбор сервиса не удался — проверьте, что он собирается (restore/build).",
+        _ => null,
+    };
 
     /// <summary>Отдельный факт проблемы → ProblemItemDto (пустой File → null).</summary>
     public static ProblemItemDto ToProblemItemDto(this ProblemItem it) => new(
