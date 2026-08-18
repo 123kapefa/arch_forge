@@ -14,7 +14,7 @@ export default defineConfig({
         // dev совпал с продом: клиент отвалился до конца ответа → destroy → Map/Analysis отменяют Roslyn (P1.5-H).
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq, _req, res) => {
-            res.on('close', () => { if (!res.writableEnded) proxyReq.destroy(); });
+            res.once('close', () => { if (!res.writableEnded) proxyReq.destroy(); });
           });
         },
       },

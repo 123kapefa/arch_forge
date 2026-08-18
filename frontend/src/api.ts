@@ -89,8 +89,8 @@ export interface PackageDto {
 }
 
 /** GET /api/imports (через сервис Map). */
-export async function fetchImports(path: string): Promise<ImportsDto> {
-  const res = await fetchWithTimeout(`/api/imports?path=${encodeURIComponent(path)}`, TIMEOUT_MS);
+export async function fetchImports(path: string, signal?: AbortSignal): Promise<ImportsDto> {
+  const res = await fetchWithTimeout(`/api/imports?path=${encodeURIComponent(path)}`, TIMEOUT_MS, signal);
   if (!res.ok) throw new Error(`Импорты ${res.status}: ${await res.text()}`);
   return res.json() as Promise<ImportsDto>;
 }

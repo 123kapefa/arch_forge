@@ -30,7 +30,9 @@ internal static class RoslynScan
     {
         var files = EnumerateCs(path).ToList();
         capped = files.Count > MaxFilesPerScan;
-        return capped ? files.Take(MaxFilesPerScan).ToList() : files;
+        if (!capped) return files;
+        files.Sort(StringComparer.Ordinal); // порядок EnumerateFiles не гарантирован → сортируем, чтобы усечение было детерминированным
+        return files.Take(MaxFilesPerScan).ToList();
     }
 
     public static bool IsTypeName(string name) =>

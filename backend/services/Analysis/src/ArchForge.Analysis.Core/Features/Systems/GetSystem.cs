@@ -59,7 +59,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         {
             var analyses = analyzer.Analyze(query.Path, pack, ct);
             // сервис не разобрался (изоляция ошибок) → его типы/связи отсутствуют: честно помечаем деградацию
-            foreach (var a in analyses.Where(a => a.Result is null))
+            foreach (var a in analyses.Failed())
                 degradations.Add($"сервис «{a.Service.Name}» не разобрался — часть карты пропущена");
             var extra = new List<SystemProblem>();
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));

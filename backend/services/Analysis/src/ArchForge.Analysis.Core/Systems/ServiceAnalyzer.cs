@@ -5,15 +5,24 @@ namespace ArchForge.Analysis.Core.Systems;
 /// <summary>Результат per-service код-разбора; <c>Result == null</c> — сервис не разобрался (изоляция ошибок).</summary>
 public sealed record ServiceAnalysis(DiscoveredService Service, string Location, AnalysisResult? Result);
 
+/// <summary>Хелперы над результатами разбора — единая точка понятия «сервис не разобрался».</summary>
+public static class ServiceAnalysisExtensions
+{
+    /// <summary>Сервисы, чей код не разобрался (изоляция ошибок) — для деградации/пропуска.</summary>
+    public static IEnumerable<ServiceAnalysis> Failed(this IReadOnlyList<ServiceAnalysis> analyses) =>
+        analyses.Where(a => a.Result is null);
+}
+
 // Общий per-service код-разбор для линз, требующих КОДА (дрейф от свода, нарушения слоёв):
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier)
 {
-    // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Половина ядер
+    // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
     // кладём по индексу, порядок = discovery. Вынесено в тестируемую единицу.
-    internal static int MaxParallelism => Math.Max(1, Environment.ProcessorCount / 2);
+    private const int CoreFraction = 2; // половина ядер (каждая компиляция грузит runtime-ссылки → память)
+    internal static int MaxParallelism => Math.Max(1, Environment.ProcessorCount / CoreFraction);
 
     public IReadOnlyList<ServiceAnalysis> Analyze(string root, ConventionPack pack, CancellationToken ct = default)
     {

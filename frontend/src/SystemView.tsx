@@ -667,6 +667,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     try {
       // какие код-анализы гнать — выбор пользователя (флаги drift/layers)
       const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers }, ctrl.signal);
+      if (loadAbortRef.current !== ctrl) return; // нас вытеснили/закрыли, пока ждали — не воскрешаем состояние
       setGraph(g);
       setLoadedPath(path);
       setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
@@ -708,12 +709,13 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   useEffect(() => {
     if (!importsOpen || imports || !loadedPath) return;
     let alive = true;
+    const ctrl = new AbortController(); // закрыли экран/сменили проект → рвём запрос импортов
     setImportsLoading(true);
-    fetchImports(loadedPath)
+    fetchImports(loadedPath, ctrl.signal)
       .then((d) => { if (alive) setImports(d); })
-      .catch(() => { if (alive) setImports(null); })
+      .catch((e) => { if (alive && !isAbortError(e)) setImports(null); })
       .finally(() => { if (alive) setImportsLoading(false); });
-    return () => { alive = false; };
+    return () => { alive = false; ctrl.abort(); };
   }, [importsOpen, imports, loadedPath]);
 
   const exportJson = useCallback(() => {
