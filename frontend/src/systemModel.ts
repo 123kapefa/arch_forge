@@ -6,7 +6,7 @@ import type { Problem, SystemGraph, SystemNode } from './system';
 export type Lens = 'architecture' | 'convention';
 
 // Проблемы без category считаем architecture (обратная совместимость со старым JSON).
-function categoryOf(p: Problem): Lens {
+export function categoryOf(p: Problem): Lens {
   return p.category === 'convention' ? 'convention' : 'architecture';
 }
 

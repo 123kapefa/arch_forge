@@ -18,3 +18,12 @@ export function layerColor(layer: string): string {
   for (const ch of layer) h = (h * 31 + ch.charCodeAt(0)) % 360;
   return `hsl(${h} 55% 60%)`;
 }
+
+// Цвет репозитория (.sln) — «цвет плашки = тип проекта» (прототип): микросервисы одного репо
+// красятся одинаково. Палитра по прототипу + стабильный хеш для остальных.
+const REPO_PALETTE = ['#6c8cff', '#a87bff', '#4fb6c6', '#e0b24a', '#e57ba0', '#5fc6b0', '#c98cff'];
+export function repoColor(namespace: string): string {
+  let h = 0;
+  for (const ch of namespace) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return REPO_PALETTE[h % REPO_PALETTE.length];
+}

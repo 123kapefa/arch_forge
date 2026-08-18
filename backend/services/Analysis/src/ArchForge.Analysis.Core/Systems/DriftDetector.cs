@@ -20,11 +20,15 @@ public static class DriftDetector
 
             var total = result.Coverage.Marker + result.Coverage.Heuristic + result.Coverage.Unknown;
             var markerPct = total > 0 ? result.Coverage.Marker * 100 / total : 0;
-            var examples = string.Join("; ", result.Drift.Take(3));
+            // факт — прямо из типа (несёт File): тип · слой · «ожидается …» + путь для перехода к файлу/плашке
+            var items = result.Types
+                .Where(t => t.Drift.Count > 0)
+                .Select(t => new ProblemItem(t.Name, t.Layer, string.Join("; ", t.Drift), t.File))
+                .ToList();
             problems.Add(new SystemProblem(
                 ProblemSeverity.Info, "drift",
-                $"«{svc.Name}»: {result.Drift.Count} расхождений со сводом (маркеров {markerPct}%). Напр.: {examples}",
-                location, ProblemCategory.Convention));
+                $"«{svc.Name}»: {items.Count} расхождений со сводом (маркеров {markerPct}%)",
+                location, ProblemCategory.Convention, items));
         }
         return problems;
     }

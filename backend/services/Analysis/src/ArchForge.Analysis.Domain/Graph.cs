@@ -10,7 +10,17 @@ public sealed record TypeInfo(
     string Via, // marker | heuristic | unknown
     IReadOnlyList<string> Bases,
     string File,
-    IReadOnlyList<string> Drift);
+    IReadOnlyList<string> Drift,
+    IReadOnlyList<MemberInfo> Members); // члены типа (L3)
+
+// Член типа (L3). Kind: endpoint | method | property | field.
+public sealed record MemberInfo(
+    string Name,
+    string Kind,
+    string? Signature = null,
+    string? HttpMethod = null,
+    string? Route = null,
+    int? Line = null);
 
 public sealed record TypeEdge(string From, string To, string Kind); // implements | holds | uses | raises | handles
 

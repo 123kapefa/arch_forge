@@ -90,10 +90,15 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
 
                 var bases = Merge(SemanticBases(symbol), syntactic); // семантика ⊇ синтаксис
                 var refs = ResolveRefs(symbol, decl, model, own);
-                result.Add(new RawType(name, decl.Keyword.Text, bases, decl.ParameterList?.ToString() ?? "", layer, tree.FilePath) { Refs = refs });
+                result.Add(new RawType(name, decl.Keyword.Text, bases, decl.ParameterList?.ToString() ?? "", layer, tree.FilePath)
+                    { Refs = refs, Members = ExtractMembers(symbol) });
             }
             foreach (var en in root.DescendantNodes().OfType<EnumDeclarationSyntax>())
-                result.Add(new RawType(en.Identifier.Text, "enum", [], "", layer, tree.FilePath));
+            {
+                var values = en.Members.Select(mm => new RawMember(mm.Identifier.Text, "field",
+                    Line: mm.GetLocation().GetLineSpan().StartLinePosition.Line + 1)).ToList();
+                result.Add(new RawType(en.Identifier.Text, "enum", [], "", layer, tree.FilePath) { Members = values });
+            }
         }
         return result;
     }
@@ -165,6 +170,82 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         }
 
         return best.Select(kv => new Ref(kv.Key, kv.Value)).ToList();
+    }
+
+    // Короткое имя типа (с дженериками, без неймспейса): «Task<Product>», «Guid».
+    private static readonly SymbolDisplayFormat ShortType = SymbolDisplayFormat.MinimallyQualifiedFormat;
+    // Синтезированные компилятором члены record — не показываем как «настоящие».
+    private static readonly HashSet<string> RecordSynth = new(StringComparer.Ordinal)
+        { "Equals", "GetHashCode", "ToString", "Deconstruct", "PrintMembers" };
+
+    /// <summary>Члены типа для L3: свойства, поля, методы; у контроллеров экшены → endpoint с verb/route.</summary>
+    private static IReadOnlyList<RawMember> ExtractMembers(INamedTypeSymbol symbol)
+    {
+        var isController = InheritsController(symbol) || symbol.Name.EndsWith("Controller", StringComparison.Ordinal);
+        var members = new List<RawMember>();
+        foreach (var m in symbol.GetMembers())
+        {
+            if (m.DeclaredAccessibility == Accessibility.Private) continue;
+            switch (m)
+            {
+                case IPropertySymbol { IsIndexer: false } p when p.Name != "EqualityContract":
+                    members.Add(new RawMember(p.Name, "property", p.Type.ToDisplayString(ShortType), Line: LineOf(p)));
+                    break;
+                case IMethodSymbol { MethodKind: MethodKind.Ordinary, IsImplicitlyDeclared: false } method when !RecordSynth.Contains(method.Name):
+                    var (http, route) = isController ? HttpOf(method) : (null, null);
+                    members.Add(new RawMember(method.Name, http is not null ? "endpoint" : "method",
+                        MethodSig(method), http, route, LineOf(method)));
+                    break;
+                case IFieldSymbol { IsImplicitlyDeclared: false, IsConst: false } field:
+                    members.Add(new RawMember(field.Name, "field", field.Type.ToDisplayString(ShortType), Line: LineOf(field)));
+                    break;
+            }
+        }
+        return members;
+    }
+
+    private static string MethodSig(IMethodSymbol m)
+    {
+        var ps = string.Join(", ", m.Parameters.Select(p => p.Type.ToDisplayString(ShortType)));
+        var ret = m.ReturnsVoid ? "void" : m.ReturnType.ToDisplayString(ShortType);
+        return $"({ps}) : {ret}";
+    }
+
+    // Verb+route экшена по атрибутам ([HttpGet("...")], [Route("...")]).
+    private static (string? Http, string? Route) HttpOf(IMethodSymbol m)
+    {
+        string? http = null, route = null;
+        foreach (var a in m.GetAttributes())
+        {
+            var verb = (a.AttributeClass?.Name) switch
+            {
+                "HttpGetAttribute" => "GET", "HttpPostAttribute" => "POST", "HttpPutAttribute" => "PUT",
+                "HttpDeleteAttribute" => "DELETE", "HttpPatchAttribute" => "PATCH", _ => null,
+            };
+            if (verb is not null)
+            {
+                http = verb;
+                if (a.ConstructorArguments.FirstOrDefault().Value is string s) route = s;
+            }
+            else if (a.AttributeClass?.Name == "RouteAttribute" && a.ConstructorArguments.FirstOrDefault().Value is string rs)
+            {
+                route ??= rs;
+            }
+        }
+        return (http, route);
+    }
+
+    private static bool InheritsController(INamedTypeSymbol symbol)
+    {
+        for (var b = symbol.BaseType; b is not null; b = b.BaseType)
+            if (b.Name is "ControllerBase" or "Controller") return true;
+        return false;
+    }
+
+    private static int? LineOf(ISymbol s)
+    {
+        var loc = s.Locations.FirstOrDefault(l => l.IsInSource);
+        return loc is null ? null : loc.GetLineSpan().StartLinePosition.Line + 1;
     }
 
     /// <summary>Собирает простые имена СВОИХ именованных типов внутри type (включая аргументы дженериков/элементы массивов).</summary>

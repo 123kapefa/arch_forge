@@ -13,6 +13,7 @@ public static class Registration
         services.AddSingleton<ITypeSource>(sp =>
             ActivatorUtilities.CreateInstance<RoslynSemanticTypeSource>(sp, sp.GetRequiredService<RoslynTypeSource>()));
         services.AddSingleton<IImportSource, CsprojImportSource>();
+        services.AddSingleton<IConstructionSource, RoslynConstructionSource>(); // ось usage-графа (пока источник; потребитель — детектор далее)
         return services;
     }
 }

@@ -24,7 +24,9 @@ public sealed record GraphDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<ServiceSummaryDto>? Services = null,     // L0-сводка по найденным сервисам (.sln) со слоями; при код-линзах
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<EnvironmentDto>? Environments = null);   // зарезервировано под P1.5; в Фазе 1.5 не заполняется
+    IReadOnlyList<EnvironmentDto>? Environments = null,    // зарезервировано под P1.5; в Фазе 1.5 не заполняется
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    ConventionsDto? Conventions = null);                   // источник свода (встроенный / файл) + счётчики
 
 public sealed record NodeDto(
     string Id,
@@ -45,7 +47,11 @@ public sealed record NodeDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     string? Health = null,                                 // ok | warning | critical
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<MemberDto>? Members = null);             // члены type-узла (эндпоинты контроллера и т.п.)
+    IReadOnlyList<MemberDto>? Members = null,              // члены type-узла (эндпоинты контроллера и т.п.)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<LayerSummaryDto>? Layers = null,        // слои сервиса-узла (L0: «внутри сервиса — слои»)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Root = null);                                  // папка микросервиса (drill L1: /api/map по нему)
 
 public sealed record EdgeDto(
     string Id,
@@ -87,10 +93,31 @@ public sealed record ProblemDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Via = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Fix = null,
     // линза для фильтрации на фронте: architecture (реальные проблемы) | convention (дрейф от свода)
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Category = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Category = null,
+    // отдельные факты агрегированной проблемы (типы дрейфа / пары нарушений) — для раскрытия списком
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ProblemItemDto>? Items = null);
+
+/// <summary>Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка.
+/// File/Line — где живёт тип (для перехода «к файлу/плашке»); File пуст, если источник не дал путь.</summary>
+public sealed record ProblemItemDto(
+    string Name, string Layer, string Note,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? File = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line = null);
 
 /// <summary>Контур окружения. Зарезервировано под P1.5 (топология/инстанс/профиль); в Фазе 1.5 не заполняется.</summary>
 public sealed record EnvironmentDto(string Id, string Name, string Kind); // topology | instance | profile
+
+/// <summary>Свод конвенций, применённый при анализе: источник + сам пак (маркеры/fallback/правила) для просмотра.</summary>
+public sealed record ConventionsDto(
+    string Source,
+    IReadOnlyList<ConvEntryDto> Markers,   // маркер (база → роль), уверенно
+    IReadOnlyList<ConvEntryDto> Fallback,  // fallback (база → роль), эвристика
+    IReadOnlyList<ConvRuleDto> Rules,      // ожидание: суффикс имени → маркер/роль (дрейф, если не выполнено)
+    DtoMappingDto? DtoMapping = null);     // правило «маппинг не централизован» (суффиксы DTO, места-централизаторы, пороги)
+
+public sealed record ConvEntryDto(string Name, string Role);
+public sealed record ConvRuleDto(string Suffix, string Marker, string Role);
+public sealed record DtoMappingDto(IReadOnlyList<string> Suffix, IReadOnlyList<string> CentralizeIn, int MinSites, int MinFiles);
 
 /// <summary>Слой сервиса в L0-сводке: имя, здоровье, краткая заметка, число типов (превью L1).</summary>
 public sealed record LayerSummaryDto(

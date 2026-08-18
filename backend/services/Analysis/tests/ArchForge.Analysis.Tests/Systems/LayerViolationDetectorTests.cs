@@ -5,7 +5,7 @@ namespace ArchForge.Analysis.Tests.Systems;
 
 public class LayerViolationDetectorTests
 {
-    private static readonly TypeClassifier Classifier = new(ConventionPack.Default());
+    private static readonly TypeClassifier Classifier = new();
 
     // Order (Domain) с ctor-параметром PaymentGateway (Infrastructure) → ребро Order→PaymentGateway = нарушение.
     private static readonly RawType[] Violating =
@@ -21,7 +21,7 @@ public class LayerViolationDetectorTests
     ];
 
     private static ServiceAnalysis Ok(string loc, RawType[] raw) =>
-        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw));
+        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw, ConventionPack.Default()));
     private static ServiceAnalysis Failed(string loc) =>
         new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, null);
 
@@ -33,8 +33,10 @@ public class LayerViolationDetectorTests
         Assert.Equal("layer-violation", p.Kind);
         Assert.Equal(ProblemCategory.Architecture, p.Category);
         Assert.Equal("svc-a", p.Location);
-        Assert.Contains("Order", p.Title);
-        Assert.Contains("Infrastructure", p.Title);
+        var it = Assert.Single(p.Items!);                // отдельный факт нарушения — в Items
+        Assert.Equal("Order → PaymentGateway", it.Name);
+        Assert.Equal("Domain → Infrastructure", it.Layer);
+        Assert.Equal("Order.cs", it.File);               // файл типа-источника (From) — для перехода к блоку
     }
 
     [Fact]
@@ -63,9 +65,9 @@ public class LayerViolationDetectorTests
         Assert.Empty(LayerViolationDetector.Detect([Ok("svc-a", ambiguous)]));
     }
 
-    // Счётчик — полный, примеры урезаны до 3 (Take(3)).
+    // Счётчик в заголовке + ВСЕ факты нарушений в Items (для раскрытия списком на фронте).
     [Fact]
-    public void Count_is_full_but_examples_truncated_to_three()
+    public void Count_in_title_and_all_items_listed()
     {
         RawType[] four =
         [
@@ -77,6 +79,6 @@ public class LayerViolationDetectorTests
         ];
         var p = Assert.Single(LayerViolationDetector.Detect([Ok("svc-a", four)]));
         Assert.Contains("4 нарушений", p.Title);
-        Assert.Equal(3, p.Title.Split('→').Length - 1); // ровно 3 примера-стрелки
+        Assert.Equal(4, p.Items!.Count); // все 4 факта — в Items (не урезаны)
     }
 }

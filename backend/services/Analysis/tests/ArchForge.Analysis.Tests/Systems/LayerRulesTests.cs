@@ -18,9 +18,16 @@ public class LayerRulesTests
     [InlineData("Infrastructure", "Domain", false)]
     [InlineData("Application", "Domain", false)]
     [InlineData("Api", "Contracts", false)]
+    // shared kernel = ядро (0): на него можно зависеть всем; сам он наружу — нарушение
+    [InlineData("Api", "Shared", false)]
+    [InlineData("Application", "Shared", false)]
+    [InlineData("Domain", "Shared", false)]
+    [InlineData("Shared", "Application", true)]
+    [InlineData("Shared", "Infrastructure", true)]
     // равные уровни — не нарушение (Infrastructure↔Api — сиблинги)
     [InlineData("Infrastructure", "Api", false)]
     [InlineData("Domain", "Contracts", false)]
+    [InlineData("Shared", "Domain", false)]
     // неизвестные/несудимые слои — не нарушение (честнее пропустить, чем выдумать)
     [InlineData("tests", "Infrastructure", false)]
     [InlineData("Domain", "tests", false)]

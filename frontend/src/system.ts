@@ -26,6 +26,8 @@ export interface SystemNode {
   drift?: string[];
   service?: string;
   members?: SystemMember[];
+  layers?: LayerSummary[]; // слои сервиса-узла (L0: «внутри сервиса — слои»)
+  root?: string;           // папка микросервиса (drill L1: /api/map по нему)
 }
 
 export interface SystemMember {
@@ -50,6 +52,9 @@ export interface SystemEdge {
   problem?: string;      // id проблемы (навигация клик-по-ребру → проблема)
 }
 
+/** Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, заметка + где живёт тип. */
+export interface ProblemItem { name: string; layer: string; note: string; file?: string; line?: number }
+
 export interface Problem {
   id: string;
   severity: string;      // critical | warning | coverage | info
@@ -59,6 +64,7 @@ export interface Problem {
   via?: string;
   fix?: string;
   category?: string;     // architecture (реальные проблемы) | convention (дрейф) — линза; null → architecture
+  items?: ProblemItem[]; // отдельные факты (типы дрейфа / пары нарушений) — раскрываются списком
 }
 
 export interface SystemCoverage {
@@ -91,6 +97,18 @@ export interface EnvironmentDto {
   kind: string;
 }
 
+/** Применённый свод конвенций: источник + сам пак (для просмотра в UI). */
+export interface ConvEntry { name: string; role: string }
+export interface ConvRule { suffix: string; marker: string; role: string }
+export interface DtoMappingRule { suffix: string[]; centralizeIn: string[]; minSites: number; minFiles: number }
+export interface Conventions {
+  source: string;          // «встроенный свод» | «файл: <имя>» | «ошибка … → встроенный»
+  markers: ConvEntry[];    // маркеры (база → роль)
+  fallback: ConvEntry[];   // fallback (база → роль)
+  rules: ConvRule[];       // ожидания (суффикс → маркер/роль)
+  dtoMapping?: DtoMappingRule; // правило «маппинг не централизован»
+}
+
 export interface SystemGraph {
   project: string;
   nodes: SystemNode[];
@@ -101,6 +119,7 @@ export interface SystemGraph {
   problems?: Problem[];
   services?: ServiceSummary[];  // L0-карточки сервисов со слоями (приходят при код-линзах)
   environments?: EnvironmentDto[];
+  conventions?: Conventions;    // источник свода (для индикатора в ВИД)
 }
 
 export interface SystemQuery {

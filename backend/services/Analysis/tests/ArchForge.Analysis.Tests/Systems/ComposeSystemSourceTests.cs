@@ -522,6 +522,67 @@ public class ComposeSystemSourceTests(ITestOutputHelper output)
         finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
     }
 
+    // ---- http-call из appsettings (детектор reverse-proxy/gateway) ----
+
+    [Fact]
+    public void Http_call_from_appsettings_services_map()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_cfg_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "docker-compose.yml"), """
+            services:
+              api-gateway: { image: ns/gateway:1 }
+              catalog-api: { image: ns/catalog:1 }
+              cart-api:    { image: ns/cart:1 }
+            """);
+        // владелец файла определяется по имени папки (api-gateway ↔ узел api-gateway)
+        var gw = Directory.CreateDirectory(Path.Combine(root, "api-gateway")).FullName;
+        File.WriteAllText(Path.Combine(gw, "appsettings.Docker.json"),
+            """{ "Services": { "Catalog": "http://catalog-api:8080", "Cart": "http://cart-api:8080", "Self": "http://localhost:9000" } }""");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.True(HasEdge(g, "api-gateway", "catalog-api", "http-call")); // маршрут reverse-proxy из appsettings
+            Assert.True(HasEdge(g, "api-gateway", "cart-api", "http-call"));
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call" && e.Target.Contains("localhost")); // localhost — не сервис
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Appsettings_url_to_unknown_host_is_ignored()
+    {
+        // config-URL на хост вне скана (telemetry/collector) НЕ плодит внешний узел — только внутренние сервисы.
+        var root = Path.Combine(Path.GetTempPath(), "archforge_cfgext_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "docker-compose.yml"), """
+            services:
+              catalog-api: { image: ns/catalog:1 }
+            """);
+        var svc = Directory.CreateDirectory(Path.Combine(root, "catalog-api")).FullName;
+        File.WriteAllText(Path.Combine(svc, "appsettings.json"),
+            """{ "Otel": { "Endpoint": "http://otel-collector:4317" } }""");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.DoesNotContain(g.Nodes, n => n.Name == "otel-collector"); // неизвестный хост из config не даёт узла
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [SkippableFact]
+    public void Real_gateway_routes_to_services_via_appsettings()
+    {
+        var productSite = Workspace + "/product_site";
+        Skip.IfNot(Directory.Exists(productSite), "таргет product_site не найден");
+
+        var g = new ComposeSystemSource().Read(productSite);
+        // YARP-gateway маршрутизирует на сервисы (appsettings.Docker.json «Services»-мапа) — точка входа
+        Assert.True(HasEdge(g, "api-gateway", "catalog-api", "http-call"));
+        Assert.True(HasEdge(g, "api-gateway", "orders-api", "http-call"));
+    }
+
     private static void MakeSvc(string root, string dir, string sln, string apiImage)
     {
         var p = Directory.CreateDirectory(Path.Combine(root, dir)).FullName;

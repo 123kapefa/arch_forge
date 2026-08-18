@@ -5,7 +5,7 @@ namespace ArchForge.Analysis.Tests.Systems;
 
 public class DriftDetectorTests
 {
-    private static readonly TypeClassifier Classifier = new(ConventionPack.Default());
+    private static readonly TypeClassifier Classifier = new();
 
     // «RegisterHandler» без маркера ICommandHandler → эвристическая роль + дрейф.
     private static readonly RawType[] Drifting = [new("RegisterHandler", "class", [], "(Dep d)", "Application", "x.cs")];
@@ -13,7 +13,7 @@ public class DriftDetectorTests
     private static readonly RawType[] Clean = [new("CreateWidgetCommand", "record", ["ICommand"], "(string N)", "Application", "x.cs")];
 
     private static ServiceAnalysis Ok(string loc, RawType[] raw) =>
-        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw));
+        new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, Classifier.Classify(raw, ConventionPack.Default()));
     private static ServiceAnalysis Failed(string loc) =>
         new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, null);
 
@@ -26,6 +26,11 @@ public class DriftDetectorTests
         Assert.Equal(ProblemCategory.Convention, p.Category);
         Assert.Equal("svc-a", p.Location);
         Assert.Contains("svc-a", p.Title);
+        var it = Assert.Single(p.Items!);              // отдельный факт дрейфа — в Items (тип · слой · заметка · файл)
+        Assert.Equal("RegisterHandler", it.Name);
+        Assert.Equal("Application", it.Layer);
+        Assert.Contains("ожидается", it.Note);
+        Assert.Equal("x.cs", it.File);                 // путь к файлу — для перехода «к файлу/плашке»
     }
 
     [Fact]

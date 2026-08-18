@@ -18,6 +18,10 @@ public static class LayerViolationDetector
             }
 
             var layerOf = LayerGraph.LayerByName(result.Types);
+            // имя типа → файл (для перехода к блоку-источнику нарушения); при коллизии имён берём первый
+            var fileOf = result.Types
+                .GroupBy(t => t.Name, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First().File, StringComparer.Ordinal);
 
             // уникальные пары From→To: несколько видов рёбер (implements+uses) между теми же типами = один факт
             var violations = LayerGraph.Violations(result.Edges, layerOf)
@@ -26,11 +30,13 @@ public static class LayerViolationDetector
                 .ToList();
             if (violations.Count == 0) continue;
 
-            var examples = string.Join("; ", violations.Take(3)
-                .Select(v => $"{v.From} ({layerOf[v.From]}) → {v.To} ({layerOf[v.To]})"));
+            var items = violations
+                .Select(v => new ProblemItem($"{v.From} → {v.To}", $"{layerOf[v.From]} → {layerOf[v.To]}",
+                    "зависимость наружу", fileOf.TryGetValue(v.From, out var f) ? f : ""))
+                .ToList();
             problems.Add(new SystemProblem(ProblemSeverity.Warning, "layer-violation",
-                $"«{svc.Name}»: {violations.Count} нарушений направления слоёв. Напр.: {examples}",
-                location, ProblemCategory.Architecture));
+                $"«{svc.Name}»: {violations.Count} нарушений направления слоёв",
+                location, ProblemCategory.Architecture, items));
         }
         return problems;
     }

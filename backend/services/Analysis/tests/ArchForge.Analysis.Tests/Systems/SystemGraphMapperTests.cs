@@ -19,7 +19,7 @@ public class SystemGraphMapperTests
             ],
             [new SystemProblem(ProblemSeverity.Critical, "shared-db", "общая БД", "s/db")]);
 
-        var dto = SystemGraphMapper.ToDto(g, "sys");
+        var dto = g.ToGraphDto("sys");
 
         Assert.Equal("sys", dto.Project);
         Assert.Contains(dto.Nodes, n => n.Id == "s/api" && n.Kind == "service" && n.Health == "ok");
@@ -37,7 +37,7 @@ public class SystemGraphMapperTests
     {
         var g = new SystemGraph([new SystemNode("s/api", "api", SystemNodeKind.Service, "api:1")], [], []);
 
-        var dto = SystemGraphMapper.ToDto(g, "sys");
+        var dto = g.ToGraphDto("sys");
 
         Assert.Equal("ok", dto.Health);
         Assert.Null(dto.Problems); // пусто → null (не пишется в JSON)
@@ -50,7 +50,7 @@ public class SystemGraphMapperTests
             [new SystemNode("s/cache", "cache", SystemNodeKind.Datastore, "redis:7")], [],
             [new SystemProblem(ProblemSeverity.Warning, "shared-store", "общий redis", "s/cache")]);
 
-        var dto = SystemGraphMapper.ToDto(g, "sys");
+        var dto = g.ToGraphDto("sys");
 
         Assert.Equal("warning", dto.Health);
         Assert.Contains(dto.Nodes, n => n.Id == "s/cache" && n.Health == "warning");
@@ -64,7 +64,7 @@ public class SystemGraphMapperTests
             [new SystemNode("s/web", "web", SystemNodeKind.Service, "web:1")], [],
             [new SystemProblem(ProblemSeverity.Coverage, "ambiguous-target", "неоднозначно", "s/web")]);
 
-        var dto = SystemGraphMapper.ToDto(g, "sys");
+        var dto = g.ToGraphDto("sys");
 
         Assert.Contains(dto.Nodes, n => n.Id == "s/web" && n.Health == "ok"); // coverage не красит узел
         Assert.Equal("ok", dto.Health);                                       // и не поднимает health графа
@@ -79,7 +79,7 @@ public class SystemGraphMapperTests
             [new SystemProblem(ProblemSeverity.Info, "drift", "«Svc.A»: 4 расхождений", "svc-a/app",
                 ProblemCategory.Convention)]);
 
-        var dto = SystemGraphMapper.ToDto(g, "sys");
+        var dto = g.ToGraphDto("sys");
 
         var p = Assert.Single(dto.Problems!);
         Assert.Equal("info", p.Severity);

@@ -10,7 +10,7 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier)
 {
-    public IReadOnlyList<ServiceAnalysis> Analyze(string root, CancellationToken ct = default)
+    public IReadOnlyList<ServiceAnalysis> Analyze(string root, ConventionPack pack, CancellationToken ct = default)
     {
         if (!Directory.Exists(root)) return []; // код-разбор идёт по коду сервисов — нужен корень-папка
 
@@ -20,7 +20,7 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             ct.ThrowIfCancellationRequested();
             var location = SystemNamespace.Of(root, svc.Root); // namespace-префикс узлов сервиса ({system})
             AnalysisResult? result;
-            try { result = classifier.Classify(types.Read(svc.Root, ct)); }
+            try { result = classifier.Classify(types.Read(svc.Root, ct), pack); }
             catch (OperationCanceledException) { throw; }
             catch { result = null; } // сервис не разобрался — не роняем скан (adr/0008); линза поднимет Coverage
             list.Add(new ServiceAnalysis(svc, location, result));
