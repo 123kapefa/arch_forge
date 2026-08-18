@@ -1274,7 +1274,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           : <span className="status__ok">✓ анализ актуален</span>)}
         <span className="status__right">
           <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · свод {convCount}</span>
-          <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
+          <span>{activeFlow.nodes.length} узлов · {activeFlow.edges.length} связей</span>
           <span>линза «{lens === 'architecture' ? 'реальные' : 'дрейф'}»: {lensProblems.length}</span>
         </span>
       </footer>
