@@ -41,6 +41,24 @@ public class ServiceAnalyzerTests
     }
 
     [Fact]
+    public void Parallel_preserves_discovery_order_across_many_services()
+    {
+        var root = TempRoot();
+        try
+        {
+            // много сервисов → реально задействуем ограниченный параллелизм; каждый возвращает тип со своим
+            // именем, чтобы поймать перепутанные индексы при записи результатов из разных потоков.
+            var svcs = Enumerable.Range(0, 24).Select(i => Svc(root, $"s{i:D2}")).ToArray();
+            var res = Analyzer(svcs, path => [new(Path.GetFileName(path)!, "class", [], "()", "Application", "x.cs")])
+                .Analyze(root, ConventionPack.Default());
+
+            Assert.Equal(svcs.Select(s => s.Name), res.Select(r => r.Service.Name)); // порядок = discovery
+            Assert.All(res, r => Assert.NotNull(r.Result));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public void Service_without_compose_is_skipped()
     {
         var root = TempRoot();

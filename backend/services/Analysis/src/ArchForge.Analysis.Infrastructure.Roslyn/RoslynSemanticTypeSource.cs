@@ -45,8 +45,13 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
 
     private IReadOnlyList<RawType>? ReadSemantic(string path, CancellationToken ct)
     {
+        var files = RoslynScan.EnumerateCsCapped(path, out var capped);
+        if (capped)
+            _log.LogWarning("Сервис крупнее капа: > {Max} .cs — разбираем первые {Max} (робастность): {Path}",
+                RoslynScan.MaxFilesPerScan, RoslynScan.MaxFilesPerScan, path);
+
         var trees = new List<SyntaxTree>();
-        foreach (var file in RoslynScan.EnumerateCs(path))
+        foreach (var file in files)
         {
             ct.ThrowIfCancellationRequested(); // abort клиента → перестаём парсить
             try { trees.Add(CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file)); }

@@ -56,12 +56,12 @@ export interface MapQuery {
 const TIMEOUT_MS = 60_000; // семантика на большом проекте небыстрая, но не бесконечная
 
 /** GET /api/map (через сервис Map). */
-export async function fetchMap(q: MapQuery): Promise<GraphDto> {
+export async function fetchMap(q: MapQuery, signal?: AbortSignal): Promise<GraphDto> {
   const params = new URLSearchParams({ path: q.path });
   if (q.layer) params.set('layer', q.layer);
   if (q.focus) params.set('focus', q.focus);
 
-  const res = await fetchWithTimeout(`/api/map?${params.toString()}`, TIMEOUT_MS);
+  const res = await fetchWithTimeout(`/api/map?${params.toString()}`, TIMEOUT_MS, signal);
   if (!res.ok) {
     const body = await res.text();
     let message = body;
@@ -89,8 +89,8 @@ export interface PackageDto {
 }
 
 /** GET /api/imports (через сервис Map). */
-export async function fetchImports(path: string): Promise<ImportsDto> {
-  const res = await fetchWithTimeout(`/api/imports?path=${encodeURIComponent(path)}`, TIMEOUT_MS);
+export async function fetchImports(path: string, signal?: AbortSignal): Promise<ImportsDto> {
+  const res = await fetchWithTimeout(`/api/imports?path=${encodeURIComponent(path)}`, TIMEOUT_MS, signal);
   if (!res.ok) throw new Error(`Импорты ${res.status}: ${await res.text()}`);
   return res.json() as Promise<ImportsDto>;
 }

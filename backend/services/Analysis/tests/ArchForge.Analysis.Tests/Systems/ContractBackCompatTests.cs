@@ -131,6 +131,20 @@ public class ContractBackCompatTests
     }
 
     [Fact]
+    public void Degradations_round_trip_and_omitted_when_null()
+    {
+        // present → сериализуется и читается (P1.5-H: «карта неполная»)
+        var g = new GraphDto("sys", [], [], new CoverageDto(0, 0, 0, 0), [],
+            Degradations: ["сервис «AuthService» не разобрался — часть карты пропущена"]);
+        var back = JsonSerializer.Deserialize<GraphDto>(JsonSerializer.Serialize(g, Web), Web)!;
+        Assert.Contains("AuthService", Assert.Single(back.Degradations!));
+
+        // null → поле опущено (Ф1-байт-совместимость)
+        Assert.DoesNotContain("degradations",
+            JsonSerializer.Serialize(new GraphDto("s", [], [], new CoverageDto(0, 0, 0, 0), []), Web));
+    }
+
+    [Fact]
     public void Problem_category_is_additive()
     {
         // линза сериализуется; отсутствие (null) опускается → старый JSON без category валиден

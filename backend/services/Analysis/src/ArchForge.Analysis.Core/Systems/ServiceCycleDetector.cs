@@ -38,40 +38,59 @@ public static class ServiceCycleDetector
         return problems;
     }
 
-    // Компактный Тарьян: сильно связные компоненты ориентированного графа. Графы сервисов малы (рекурсия ок).
+    // Тарьян: сильно связные компоненты ориентированного графа. ИТЕРАТИВНО (явный стек кадров вместо
+    // рекурсии) — большой граф вызовов с длинной цепочкой не должен ронять поток StackOverflow'ом (P1.5-H).
     private static List<List<string>> Tarjan(Dictionary<string, List<string>> adj)
     {
         var index = new Dictionary<string, int>(StringComparer.Ordinal);
         var low = new Dictionary<string, int>(StringComparer.Ordinal);
         var onStack = new HashSet<string>(StringComparer.Ordinal);
-        var stack = new Stack<string>();
+        var comp = new Stack<string>();                    // Тарьян-стек текущей компоненты
         var result = new List<List<string>>();
         var counter = 0;
 
-        void Connect(string v)
+        var work = new Stack<(string V, int I)>();          // кадр «рекурсии»: узел + индекс следующего соседа
+        foreach (var root in adj.Keys)
         {
-            index[v] = low[v] = counter++;
-            stack.Push(v);
-            onStack.Add(v);
+            if (index.ContainsKey(root)) continue;
+            work.Push((root, 0));
 
-            foreach (var w in adj[v])
+            while (work.Count > 0)
             {
-                if (!index.ContainsKey(w)) { Connect(w); low[v] = Math.Min(low[v], low[w]); }
-                else if (onStack.Contains(w)) low[v] = Math.Min(low[v], index[w]);
-            }
+                var (v, i) = work.Pop();
+                if (i == 0) { index[v] = low[v] = counter++; comp.Push(v); onStack.Add(v); } // первый вход в v
 
-            if (low[v] == index[v])
-            {
-                var scc = new List<string>();
-                string w;
-                do { w = stack.Pop(); onStack.Remove(w); scc.Add(w); } while (w != v);
-                result.Add(scc);
+                var neighbors = adj[v];
+                var descended = false;
+                while (i < neighbors.Count)
+                {
+                    var w = neighbors[i];
+                    if (!index.ContainsKey(w))
+                    {
+                        work.Push((v, i + 1));              // продолжим v после возврата из w
+                        work.Push((w, 0));                 // «уходим» в w
+                        descended = true;
+                        break;
+                    }
+                    if (onStack.Contains(w)) low[v] = Math.Min(low[v], index[w]);
+                    i++;
+                }
+                if (descended) continue;
+
+                if (low[v] == index[v]) // корень SCC — вынимаем компоненту
+                {
+                    var scc = new List<string>();
+                    string w;
+                    do { w = comp.Pop(); onStack.Remove(w); scc.Add(w); } while (w != v);
+                    result.Add(scc);
+                }
+                if (work.Count > 0) // «возврат» в родителя: подтягиваем его low по завершённому v
+                {
+                    var parent = work.Peek().V;
+                    low[parent] = Math.Min(low[parent], low[v]);
+                }
             }
         }
-
-        foreach (var v in adj.Keys)
-            if (!index.ContainsKey(v)) Connect(v);
-
         return result;
     }
 }
