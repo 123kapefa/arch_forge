@@ -26,7 +26,7 @@ public sealed class GetSystemEndpoint : IEndpoint
         });
 }
 
-public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? analyzer = null)
+public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? analyzer = null, IConstructionSource? construction = null)
 {
     public GraphDto? Handle(GetSystemQuery query, CancellationToken ct = default)
     {
@@ -49,6 +49,12 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             var extra = new List<SystemProblem>();
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
             if (query.Layers) extra.AddRange(LayerViolationDetector.Detect(analyses));
+            // свод-линза «маппинг не централизован» — по оси конструирования (data-DTO собран инлайн в N мест)
+            if (query.Drift && construction is not null)
+            {
+                var loc = analyses.Count > 0 ? analyses[0].Location : "";
+                extra.AddRange(DtoMappingDetector.Detect(construction.Read(query.Path, ct), loc));
+            }
             if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
             services = ServiceSummaryBuilder.Build(analyses);              // .sln-сводка (Services[])
             nodeLayers = MicroserviceLayerBuilder.Build(analyses);        // per-microservice слои для L0-карточек

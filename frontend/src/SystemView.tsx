@@ -907,6 +907,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       return next;
     });
   const counts = useMemo(() => severityCounts(graph?.problems), [graph]);
+  // замечания линзы «свод» (дрейф + маппинг и т.п.) — мягкие, не входят в crit/warn статус-бара
+  const convCount = useMemo(() => (graph?.problems ?? []).filter((p) => categoryOf(p) === 'convention').length, [graph]);
   const lensProblems = useMemo(() => problemsByLens(graph?.problems, lens), [graph, lens]);
   // Нижний список — ВСЕ проблемы (обе линзы), с тегом категории: линза красит граф, а не прячет список.
   const allProblems = useMemo(() => {
@@ -1222,7 +1224,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           <span className="pb-badge pb-badge--crit">⊖ {counts.critical}</span>
           <span className="pb-badge pb-badge--warn">⚠ {counts.warning}</span>
           <span className="pb-badge pb-badge--cov">○ {counts.coverage}</span>
-          <span className="pb-badge pb-badge--drift">≈ {counts.info} дрейф</span>
+          <span className="pb-badge pb-badge--drift">≈ {convCount} свод</span>
           <span className="pb__toggle">
             {problemsOpen ? 'свернуть' : 'развернуть'}
             <Icon name={problemsOpen ? 'chevronDown' : 'chevronUp'} size={13} />
@@ -1235,7 +1237,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
         {branch && <span className="status__branch"><Icon name="branch" size={13} /> {branch}</span>}
         {graph && <span className="status__ok">✓ анализ актуален</span>}
         <span className="status__right">
-          <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · дрейф {counts.info}</span>
+          <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · свод {convCount}</span>
           <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
           <span>линза «{lens === 'architecture' ? 'реальные' : 'дрейф'}»: {lensProblems.length}</span>
         </span>
