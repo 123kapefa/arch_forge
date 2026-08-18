@@ -4,15 +4,29 @@ namespace ArchForge.Analysis.Core;
 
 // Convention-pack: маркер (базовый тип/интерфейс) → роль. Источник — свод команды.
 // Грузится из файла проекта (archforge.conventions.json), иначе — встроенный дефолт.
+// Правило свод-линзы «маппинг не централизован»: какие типы считать DTO (Suffix), какие места считать
+// «централизаторами» (CentralizeIn — по суффиксу имени: Mapper/Mapping/…), и пороги для смелла.
+public sealed record DtoMappingRule(
+    IReadOnlyList<string> Suffix,
+    IReadOnlyList<string> CentralizeIn,
+    int MinSites,
+    int MinFiles)
+{
+    public static readonly DtoMappingRule Default =
+        new(["Dto"], ["Mapper", "Mapping", "Builder", "Factory", "Extensions"], MinSites: 3, MinFiles: 3);
+}
+
 public sealed class ConventionPack(
     IReadOnlyDictionary<string, string> markers,
     IReadOnlyDictionary<string, string> fallback,
     IReadOnlyList<(string Suffix, string Marker, string Role)> expect,
-    string source = "встроенный свод")
+    string source = "встроенный свод",
+    DtoMappingRule? dtoMapping = null)
 {
     public IReadOnlyDictionary<string, string> Markers { get; } = markers;
     public IReadOnlyDictionary<string, string> Fallback { get; } = fallback;
     public IReadOnlyList<(string Suffix, string Marker, string Role)> Expect { get; } = expect;
+    public DtoMappingRule DtoMapping { get; } = dtoMapping ?? DtoMappingRule.Default;
     public string Source { get; } = source; // "встроенный свод" | "файл: <имя>" | "ошибка … → встроенный"
 
     // Дефолт: маркеры свода + популярные .NET-паттерны. Пользовательский пак заменит/дополнит.
@@ -80,7 +94,12 @@ public sealed class ConventionPack(
                     expect.RemoveAll(e => e.Suffix == r.Suffix); // тот же суффикс → правило пользователя заменяет
                     expect.Add((r.Suffix, r.Marker, r.Role));
                 }
-            return new ConventionPack(markers, fallback, expect, $"файл: {Path.GetFileName(file)}");
+            var dm = DtoMappingRule.Default;
+            if (pf.DtoMapping is { } d) // секция dtoMapping: переопределяем поля пофайлово (null → дефолт)
+                dm = new DtoMappingRule(
+                    d.Suffix ?? dm.Suffix, d.CentralizeIn ?? dm.CentralizeIn,
+                    d.MinSites ?? dm.MinSites, d.MinFiles ?? dm.MinFiles);
+            return new ConventionPack(markers, fallback, expect, $"файл: {Path.GetFileName(file)}", dm);
         }
         catch
         {
@@ -100,7 +119,11 @@ public sealed class ConventionPack(
     private sealed record PackFile(
         Dictionary<string, string>? Markers,
         Dictionary<string, string>? Fallback,
-        List<ExpectRule>? Expect);
+        List<ExpectRule>? Expect,
+        DtoMappingFile? DtoMapping);
 
     private sealed record ExpectRule(string Suffix, string Marker, string Role);
+
+    private sealed record DtoMappingFile(
+        List<string>? Suffix, List<string>? CentralizeIn, int? MinSites, int? MinFiles);
 }

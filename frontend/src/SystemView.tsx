@@ -798,14 +798,24 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     });
     return () => { alive = false; };
   }, [drill, l1Map]);
+  // хотспоты маппинга (свод-линза): имя DTO → сколько мест сборки вне мапперов (из проблем kind dto-mapping)
+  const dtoHotspots = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of graph?.problems ?? []) {
+      if (p.kind !== 'dto-mapping') continue;
+      const name = /«([^»]+)»/.exec(p.title)?.[1];
+      if (name) m.set(name, new Set((p.items ?? []).map((i) => i.file)).size || (p.items?.length ?? 0));
+    }
+    return m;
+  }, [graph]);
   // L2: слой раскрыт в свои типы (плашки Фазы 1 + внутрислойные связи). Раскладка ELK — асинхронная.
   const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] });
   useEffect(() => {
     if (!drill2 || !l1Map) { setTypeFlow({ nodes: [], edges: [] }); return; }
     let alive = true;
-    void buildTypeFlow(l1Map, drill2).then((f) => { if (alive) setTypeFlow(f); });
+    void buildTypeFlow(l1Map, drill2, dtoHotspots).then((f) => { if (alive) setTypeFlow(f); });
     return () => { alive = false; };
-  }, [drill2, l1Map]);
+  }, [drill2, l1Map, dtoHotspots]);
   const activeFlow = drill2 ? typeFlow : drill ? drilledFlow : flow;
   const onDoubleClick = useCallback((n: Node) => {
     if (drill2) return; // L2 — лист: члены типа смотрим в инспекторе (клик по типу)

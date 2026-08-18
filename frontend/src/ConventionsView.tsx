@@ -6,7 +6,8 @@ import { Icon } from './Icon';
 const SAMPLE = `{
   "markers":  { "IRequestHandler": "Handler" },
   "fallback": { "IRepository": "Repository" },
-  "expect":   [ { "suffix": "Command", "marker": "ICommand", "role": "Command" } ]
+  "expect":   [ { "suffix": "Command", "marker": "ICommand", "role": "Command" } ],
+  "dtoMapping": { "suffix": ["Dto", "Response"], "centralizeIn": ["Mapper", "Mapping"], "minSites": 3, "minFiles": 3 }
 }`;
 
 /** Модалка: применённый свод (маркеры + fallback + правила) + подсказка, как дополнить файлом. */
@@ -46,6 +47,17 @@ export function ConventionsView({ conventions, onClose }: { conventions: Convent
               </ul>
             )}
           </div>
+
+          {conventions.dtoMapping && (
+            <div className="cv__section">
+              <div className="cv__sec-head">МАППИНГ <span>DTO собран инлайн в N мест вне мапперов → замечание</span></div>
+              <ul className="cv__list">
+                <li className="cv__rule">DTO по суффиксу: {conventions.dtoMapping.suffix.map((s, i) => <span key={s}>{i > 0 ? ' ' : ''}<code>*{s}</code></span>)}</li>
+                <li className="cv__rule">централизаторы: {conventions.dtoMapping.centralizeIn.map((s, i) => <span key={s}>{i > 0 ? ' ' : ''}<code>*{s}</code></span>)}</li>
+                <li className="cv__rule">порог: <span className="cv__role">≥ {conventions.dtoMapping.minSites} мест в ≥ {conventions.dtoMapping.minFiles} файлах</span></li>
+              </ul>
+            </div>
+          )}
 
           <div className="cv__section">
             <div className="cv__sec-head">КАК ДОПОЛНИТЬ <button className="cv__copy" onClick={copy}>{copied ? 'скопировано ✓' : 'копировать пример'}</button></div>

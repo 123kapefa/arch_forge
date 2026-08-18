@@ -100,11 +100,13 @@ export interface EnvironmentDto {
 /** Применённый свод конвенций: источник + сам пак (для просмотра в UI). */
 export interface ConvEntry { name: string; role: string }
 export interface ConvRule { suffix: string; marker: string; role: string }
+export interface DtoMappingRule { suffix: string[]; centralizeIn: string[]; minSites: number; minFiles: number }
 export interface Conventions {
   source: string;          // «встроенный свод» | «файл: <имя>» | «ошибка … → встроенный»
   markers: ConvEntry[];    // маркеры (база → роль)
   fallback: ConvEntry[];   // fallback (база → роль)
   rules: ConvRule[];       // ожидания (суффикс → маркер/роль)
+  dtoMapping?: DtoMappingRule; // правило «маппинг не централизован»
 }
 
 export interface SystemGraph {

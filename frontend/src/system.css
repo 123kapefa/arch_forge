@@ -90,6 +90,7 @@
 .tcard__title { flex: 1; min-width: 0; }
 .tcard__name { font-size: 15px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tcard__meta { font-size: 12px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcard__hot { flex: none; font-size: 10px; color: var(--warn); background: rgba(224, 178, 74, 0.16); border-radius: 8px; padding: 1px 6px; white-space: nowrap; } /* хотспот маппинга (свод) */
 .tcard__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
 .tcard__dot.health-ok { background: #6fcf77; }
 .tcard__dot.health-warning { background: #e0b24a; }

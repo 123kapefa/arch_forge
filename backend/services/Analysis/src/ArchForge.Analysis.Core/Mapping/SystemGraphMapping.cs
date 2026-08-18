@@ -66,7 +66,8 @@ public static class SystemGraphMapping
         pack.Source,
         pack.Markers.Select(m => new ConvEntryDto(m.Key, m.Value)).OrderBy(e => e.Name, StringComparer.Ordinal).ToList(),
         pack.Fallback.Select(m => new ConvEntryDto(m.Key, m.Value)).OrderBy(e => e.Name, StringComparer.Ordinal).ToList(),
-        pack.Expect.Select(r => new ConvRuleDto(r.Suffix, r.Marker, r.Role)).ToList());
+        pack.Expect.Select(r => new ConvRuleDto(r.Suffix, r.Marker, r.Role)).ToList(),
+        new DtoMappingDto(pack.DtoMapping.Suffix, pack.DtoMapping.CentralizeIn, pack.DtoMapping.MinSites, pack.DtoMapping.MinFiles));
 
     // --- строковые проекции enum'ов + свёртка здоровья ---
     private static string KindString(SystemNodeKind k) => k switch

@@ -8,31 +8,25 @@ namespace ArchForge.Analysis.Core.Systems;
 // Пороги/суффиксы пока в коде; следующий шаг — вынести в свод (ConventionPack).
 public static class DtoMappingDetector
 {
-    private const int MinSites = 3, MinFiles = 3;
-    private static readonly string[] DtoSuffix = { "Dto" };
-
-    // места, где инлайн-сборка DTO — норма, а не смелл: сами мапперы/фабрики и проводка (DI/Program).
-    private static bool InMapper(string t) =>
-        t.EndsWith("Mapper") || t.EndsWith("Mapping") || t.EndsWith("Builder") || t.EndsWith("Factory") || t.EndsWith("Extensions");
+    // места, где инлайн-сборка DTO — норма: проводка (DI/Program). Мапперы задаёт свод (rule.CentralizeIn).
     private static bool InWiring(ConstructionSite s) =>
         s.File.Replace('\\', '/').EndsWith("/Program.cs")
         || s.InType.EndsWith("DependencyInjection") || s.InType.EndsWith("Startup")
         || s.InType.EndsWith("Module") || s.InType.EndsWith("Registration");
 
-    public static IReadOnlyList<SystemProblem> Detect(IReadOnlyList<ConstructionSite> sites, string location)
+    public static IReadOnlyList<SystemProblem> Detect(IReadOnlyList<ConstructionSite> sites, string location, DtoMappingRule rule)
     {
-        var candidates = sites.Where(s =>
-            DtoSuffix.Any(suf => s.TypeName.EndsWith(suf, StringComparison.Ordinal))
-            && s.Layer != "tests"
-            && !InWiring(s)
-            && !InMapper(s.InType));
+        bool IsDto(string t) => rule.Suffix.Any(suf => t.EndsWith(suf, StringComparison.Ordinal));
+        bool InCentralizer(string t) => rule.CentralizeIn.Any(suf => t.EndsWith(suf, StringComparison.Ordinal));
+
+        var candidates = sites.Where(s => IsDto(s.TypeName) && s.Layer != "tests" && !InWiring(s) && !InCentralizer(s.InType));
 
         var problems = new List<SystemProblem>();
         foreach (var g in candidates.GroupBy(s => s.TypeName, StringComparer.Ordinal))
         {
             var group = g.ToList();
             var files = group.Select(s => s.File).Distinct(StringComparer.Ordinal).Count();
-            if (group.Count < MinSites || files < MinFiles) continue; // одиночное/локальное — не смелл
+            if (group.Count < rule.MinSites || files < rule.MinFiles) continue; // одиночное/локальное — не смелл
 
             var items = group
                 .OrderBy(s => s.File, StringComparer.Ordinal).ThenBy(s => s.Line)

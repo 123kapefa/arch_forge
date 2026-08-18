@@ -112,10 +112,12 @@ public sealed record ConventionsDto(
     string Source,
     IReadOnlyList<ConvEntryDto> Markers,   // маркер (база → роль), уверенно
     IReadOnlyList<ConvEntryDto> Fallback,  // fallback (база → роль), эвристика
-    IReadOnlyList<ConvRuleDto> Rules);     // ожидание: суффикс имени → маркер/роль (дрейф, если не выполнено)
+    IReadOnlyList<ConvRuleDto> Rules,      // ожидание: суффикс имени → маркер/роль (дрейф, если не выполнено)
+    DtoMappingDto? DtoMapping = null);     // правило «маппинг не централизован» (суффиксы DTO, места-централизаторы, пороги)
 
 public sealed record ConvEntryDto(string Name, string Role);
 public sealed record ConvRuleDto(string Suffix, string Marker, string Role);
+public sealed record DtoMappingDto(IReadOnlyList<string> Suffix, IReadOnlyList<string> CentralizeIn, int MinSites, int MinFiles);
 
 /// <summary>Слой сервиса в L0-сводке: имя, здоровье, краткая заметка, число типов (превью L1).</summary>
 public sealed record LayerSummaryDto(

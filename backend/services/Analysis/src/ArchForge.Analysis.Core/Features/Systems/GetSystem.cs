@@ -53,7 +53,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             if (query.Drift && construction is not null)
             {
                 var loc = analyses.Count > 0 ? analyses[0].Location : "";
-                extra.AddRange(DtoMappingDetector.Detect(construction.Read(query.Path, ct), loc));
+                extra.AddRange(DtoMappingDetector.Detect(construction.Read(query.Path, ct), loc, pack.DtoMapping));
             }
             if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
             services = ServiceSummaryBuilder.Build(analyses);              // .sln-сводка (Services[])

@@ -11,6 +11,7 @@ export interface TypeCardData {
   via: string;
   drift?: string[];
   members?: MemberDto[];
+  hotspot?: number; // «маппинг не централизован»: собран инлайн в N мест вне мапперов (свод-замечание)
   [key: string]: unknown;
 }
 export type TypeCardType = Node<TypeCardData, 'type'>;
@@ -48,6 +49,9 @@ export function TypeCard({ data, selected }: NodeProps<TypeCardType>) {
           <div className="tcard__name" title={data.name}>{data.name}</div>
           <div className="tcard__meta">«{data.kind}»{roleTail}</div>
         </div>
+        {data.hotspot ? (
+          <span className="tcard__hot" title={`маппинг не централизован: собирается инлайн в ${data.hotspot} местах вне мапперов`}>⚑ {data.hotspot}</span>
+        ) : null}
         <span className={`tcard__dot health-${health}`} />
       </div>
       {preview.length > 0 && (
