@@ -619,6 +619,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const revealRef = useRef<{ serviceId: string; file: string; name: string; focusId?: string } | null>(null);
   // id карточки, которую Flow центрирует при ближайшей пересборке (вместо fitView всех) — без гонки таймеров
   const focusCardRef = useRef<string | null>(null);
+  // тик «показать плашку»: запускает шаг-1 на КАЖДЫЙ клик, даже если сервис уже раскрыт (drill не сменился)
+  const [revealTick, setRevealTick] = useState(0);
   const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(new Set()); // скрытые слои (секция СЛОИ)
   const [leftOpen, setLeftOpen] = useState(true);   // панель ВИД
   const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
@@ -853,21 +855,23 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setSelectedFact(null);
     setDrill2(null);
     setDrill(ln);
+    setRevealTick((n) => n + 1); // сервис мог быть уже раскрыт (тот же объект drill) → шаг-1 без тика не запустится
   }, [ownerService, laid]);
 
   // Шаг 1 навигации: сервис раскрыт (l1Map готов) → находим карточку типа по имени+файлу → открываем её слой (L2).
   useEffect(() => {
     const t = revealRef.current;
     if (!t || t.focusId || !l1Map || !drill) return;
-    if ((drill.data as SystemNodeData).node.id !== t.serviceId) return;
+    if ((drill.data as SystemNodeData).node.id !== t.serviceId) return; // drill ещё не на нужном сервисе — ждём
     const base = (p: string) => p.replace(/\\/g, '/').split('/').pop();
     const m = l1Map.nodes.find((n) => n.name === t.name && n.file != null && base(n.file) === base(t.file))
       ?? l1Map.nodes.find((n) => n.name === t.name);
-    if (!m) { revealRef.current = null; return; }   // карточки нет в карте сервиса — остаёмся на слоях
+    // не нашли — не сбрасываем цель: при смене сервиса l1Map мгновение остаётся от прошлого; дождёмся своей карты
+    if (!m) return;
     t.focusId = m.id;
     focusCardRef.current = m.id;                     // Flow отцентрирует её при пересборке typeFlow
     setDrill2(m.layer || null);
-  }, [l1Map, drill]);
+  }, [l1Map, drill, revealTick]);
 
   // Шаг 2: слой раскрыт (typeFlow построен) → выбираем карточку (инспектор типа); центрирует её сам Flow.
   useEffect(() => {
