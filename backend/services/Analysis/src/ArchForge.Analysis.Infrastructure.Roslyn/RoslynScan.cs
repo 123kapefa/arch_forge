@@ -8,6 +8,10 @@ internal static class RoslynScan
     // Хэндвритен .cs редко >2 МБ; крупнее — почти всегда генерённое/данные (парсить дорого, толку нет).
     private const long MaxFileBytes = 2_000_000;
 
+    // Кап числа .cs на один разбор: пата-репо (десятки тысяч файлов) душат парсер/память. Backstop против
+    // аномалий; реальные сервисы (сотни–тысячи файлов) не задевает. Урезание видимо в логах вызывающего (adr/0008).
+    internal const int MaxFilesPerScan = 20_000;
+
     // .cs таргета, кроме генерённого/сборочного мусора (adr/0008) и гигантских файлов (робастность).
     public static IEnumerable<string> EnumerateCs(string path) =>
         Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
@@ -19,6 +23,15 @@ internal static class RoslynScan
                 try { return new FileInfo(f).Length <= MaxFileBytes; }
                 catch { return false; } // недоступный файл — пропускаем (изоляция ошибок)
             });
+
+    /// <summary>Список .cs с капом числа файлов (backstop). <paramref name="capped"/> = список был урезан
+    /// (пата-репо) → вызывающий логирует деградацию (adr/0008).</summary>
+    internal static IReadOnlyList<string> EnumerateCsCapped(string path, out bool capped)
+    {
+        var files = EnumerateCs(path).ToList();
+        capped = files.Count > MaxFilesPerScan;
+        return capped ? files.Take(MaxFilesPerScan).ToList() : files;
+    }
 
     public static bool IsTypeName(string name) =>
         name.Length > 0 && (char.IsUpper(name[0]) || name[0] == '_');
