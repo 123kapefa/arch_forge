@@ -120,6 +120,7 @@ export interface SystemGraph {
   services?: ServiceSummary[];  // L0-карточки сервисов со слоями (приходят при код-линзах)
   environments?: EnvironmentDto[];
   conventions?: Conventions;    // источник свода (для индикатора в ВИД)
+  degradations?: string[];      // P1.5-H: что пропущено при разборе (сбой сервиса…) — «карта неполная»
 }
 
 export interface SystemQuery {

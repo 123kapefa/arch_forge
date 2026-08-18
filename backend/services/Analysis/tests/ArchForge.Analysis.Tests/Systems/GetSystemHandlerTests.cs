@@ -178,6 +178,45 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    private sealed class ThrowingTypes : ITypeSource
+    {
+        public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) => throw new IOException("boom");
+    }
+
+    // P1.5-H: сервис не разобрался → в контракте видимая деградация «карта неполная», не тихий пропуск.
+    [Fact]
+    public void Failed_service_parse_surfaces_degradation()
+    {
+        var dir = TempDir("sysdeg");
+        try
+        {
+            var analyzer = new ServiceAnalyzer(
+                new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
+                new ThrowingTypes(), new TypeClassifier());
+
+            var dto = new GetSystemHandler(new FakeSource(OneService()), analyzer)
+                .Handle(new GetSystemQuery(dir, Drift: true));
+
+            Assert.NotNull(dto!.Degradations);
+            Assert.Contains(dto.Degradations!, d => d.Contains("Svc.A"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // Все сервисы разобрались → деградаций нет (поле опущено).
+    [Fact]
+    public void No_degradation_when_all_services_parse()
+    {
+        var dir = TempDir("sysok");
+        try
+        {
+            var dto = new GetSystemHandler(new FakeSource(OneService()), Analyzer(dir, Drift))
+                .Handle(new GetSystemQuery(dir, Drift: true));
+            Assert.Null(dto!.Degradations);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     // Код-линзы гоняются только для пути-папки; путь-к-файлу compose не запускает разбор кода.
     [Fact]
     public void Code_lenses_ignored_for_file_path()

@@ -447,6 +447,7 @@
 }
 .status__branch { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
 .status__ok { color: var(--ok); }
+.status__degraded { color: var(--warn); cursor: help; } /* карта неполная (P1.5-H): наведи — что пропущено */
 .status__right { margin-left: auto; display: flex; gap: 16px; align-items: center; }
 .health-ok { color: var(--ok); }
 .health-warning { color: var(--warn); }

@@ -1265,7 +1265,11 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       <footer className="sysview__status">
         <span className="status__proj">◆ arch_forge</span>
         {branch && <span className="status__branch"><Icon name="branch" size={13} /> {branch}</span>}
-        {graph && <span className="status__ok">✓ анализ актуален</span>}
+        {graph && (graph.degradations?.length
+          ? <span className="status__degraded" title={`Карта неполная — не всё удалось разобрать:\n• ${graph.degradations.join('\n• ')}`}>
+              ⚠ карта неполная: {graph.degradations.length}
+            </span>
+          : <span className="status__ok">✓ анализ актуален</span>)}
         <span className="status__right">
           <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · свод {convCount}</span>
           <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>

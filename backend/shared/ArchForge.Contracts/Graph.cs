@@ -26,7 +26,9 @@ public sealed record GraphDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<EnvironmentDto>? Environments = null,    // зарезервировано под P1.5; в Фазе 1.5 не заполняется
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    ConventionsDto? Conventions = null);                   // источник свода (встроенный / файл) + счётчики
+    ConventionsDto? Conventions = null,                    // источник свода (встроенный / файл) + счётчики
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? Degradations = null);           // P1.5-H: что урезано/пропущено (сбой сервиса…) — «карта неполная»
 
 public sealed record NodeDto(
     string Id,
