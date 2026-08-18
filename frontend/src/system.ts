@@ -134,12 +134,12 @@ export interface SystemQuery {
 const TIMEOUT_MS = 120_000;
 
 /** GET /api/system (через сервис Map — единственная фронт-фейсинг точка, adr/0010). */
-export async function fetchSystem(q: SystemQuery): Promise<SystemGraph> {
+export async function fetchSystem(q: SystemQuery, signal?: AbortSignal): Promise<SystemGraph> {
   const params = new URLSearchParams({ path: q.path });
   if (q.drift) params.set('drift', 'true');
   if (q.layers) params.set('layers', 'true');
 
-  const res = await fetchWithTimeout(`/api/system?${params.toString()}`, TIMEOUT_MS);
+  const res = await fetchWithTimeout(`/api/system?${params.toString()}`, TIMEOUT_MS, signal);
   if (!res.ok) {
     const body = await res.text();
     let message = body;

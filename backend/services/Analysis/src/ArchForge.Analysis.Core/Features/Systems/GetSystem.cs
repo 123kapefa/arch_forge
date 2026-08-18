@@ -4,6 +4,7 @@ using ArchForge.SharedKernel;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 
 namespace ArchForge.Analysis.Core.Features.Systems;
 
@@ -17,12 +18,22 @@ public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers
 public sealed class GetSystemEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapGet("/api/system", (string path, bool? drift, bool? layers, GetSystemHandler handler, CancellationToken ct) =>
+        app.MapGet("/api/system", (string path, bool? drift, bool? layers,
+            GetSystemHandler handler, ILogger<GetSystemEndpoint> log, CancellationToken ct) =>
         {
-            GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false), ct);
-            return graph is null
-                ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
-                : Results.Ok(graph);
+            try
+            {
+                GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false), ct);
+                return graph is null
+                    ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
+                    : Results.Ok(graph);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // abort клиента дошёл до Roslyn-циклов — разбор прерван, не досчитываем впустую (видимость P1.5-H)
+                log.LogInformation("Запрос /api/system отменён клиентом (abort) — разбор прерван: {Path}", path);
+                throw; // ASP.NET завершит запрос как отменённый (клиент уже отключился)
+            }
         });
 }
 

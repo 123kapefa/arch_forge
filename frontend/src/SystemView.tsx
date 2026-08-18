@@ -12,6 +12,7 @@ import './system.css';
 
 import { fetchSystem, type SystemGraph, type ProblemItem, type Problem, type SystemNode } from './system';
 import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto } from './api';
+import { isAbortError } from './http';
 import { ImportsScreen } from './ImportsScreen';
 import { ConventionsView } from './ConventionsView';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
@@ -649,10 +650,14 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const flowRef = useRef<FlowHandle>(null);
   const flagsRef = useRef({ layers: true, drift: true }); // текущие флаги анализа (для стабильного load)
   flagsRef.current = { layers: runLayers, drift: runDrift };
+  const loadAbortRef = useRef<AbortController | null>(null); // текущий тяжёлый анализ — рвём при вытеснении
 
   const load = useCallback(async (rawPath: string) => {
     const path = rawPath.trim();
     if (!path) return;
+    loadAbortRef.current?.abort();                 // вытесняем прежний анализ → бэкенд перестаёт жечь Roslyn
+    const ctrl = new AbortController();
+    loadAbortRef.current = ctrl;
     setLoading(true);
     setError(null);
     setSelected(null);
@@ -661,7 +666,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     setImports(null); // новый проект — сбросить кеш импортов (перезагрузятся при открытии экрана)
     try {
       // какие код-анализы гнать — выбор пользователя (флаги drift/layers)
-      const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers });
+      const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers }, ctrl.signal);
       setGraph(g);
       setLoadedPath(path);
       setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
@@ -669,10 +674,11 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
       void fetchGitBranch(path).then(setBranch); // git-ветка для статус-бара (не блокирует)
       try { localStorage.setItem('af_path', path); } catch { /* quota */ }
     } catch (e) {
+      if (isAbortError(e) || loadAbortRef.current !== ctrl) return; // нас вытеснили — новый load рулит состоянием
       setError(e instanceof Error ? e.message : String(e));
       setGraph(null);
     } finally {
-      setLoading(false);
+      if (loadAbortRef.current === ctrl) setLoading(false); // только актуальный load снимает индикатор
     }
   }, []);
 
@@ -685,6 +691,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   }, [loadedPath, load]);
 
   const closeProject = useCallback(() => {
+    loadAbortRef.current?.abort(); // закрыли проект во время анализа → рвём запрос
+    loadAbortRef.current = null;
     setGraph(null);
     setLoadedPath('');
     setBranch(null);
@@ -786,13 +794,14 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
     const root = node?.root;
     if (!root) { setL1Map(null); setL1Loading(false); return; } // нет папки → простой L1 по L0-сводке
     let alive = true;
+    const ctrl = new AbortController(); // сменили сервис/вышли из L1 → рвём запрос карты (бэкенд не досчитывает)
     setL1Loading(true);
     setL1Map(null);
-    fetchMap({ path: root })
+    fetchMap({ path: root }, ctrl.signal)
       .then((m) => { if (alive) setL1Map(m); })
-      .catch(() => { if (alive) setL1Map(null); })   // ошибка карты → откат на простой L1
+      .catch((e) => { if (alive && !isAbortError(e)) setL1Map(null); }) // ошибка карты → откат; вытеснение — молча
       .finally(() => { if (alive) setL1Loading(false); });
-    return () => { alive = false; };
+    return () => { alive = false; ctrl.abort(); };
   }, [drill]);
 
   // L1: сервис раскрыт в слои. Есть тип-граф → богатые карточки (ELK-раскладка, async); иначе — по L0-сводке.
