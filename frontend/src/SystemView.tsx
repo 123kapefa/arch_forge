@@ -604,7 +604,7 @@ function ProjectMenu({ graph, path, recents, onClose, actions, onBrowse, onPick 
 }
 
 /** L0 System Overview: карточки-сервисы + инфра + рёбра, панель «Вид», инспектор, статус-бар. */
-export function SystemView({ onExit }: { onExit?: () => void }) {
+export function SystemView() {
   const [graph, setGraph] = useState<SystemGraph | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1032,7 +1032,6 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
               <Icon name="box" size={15} />{importsOpen ? 'карта' : 'импорты'}
             </button>
           )}
-          {onExit && <button className="sysview__exit" onClick={onExit}>← тип-граф (Ф1)</button>}
         </div>
       </header>
 

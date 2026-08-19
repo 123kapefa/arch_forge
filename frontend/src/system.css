@@ -243,14 +243,6 @@
 .saved { font-size: 12px; display: inline-flex; align-items: center; }
 .saved--ok { color: var(--ok); }
 .saved--dirty { color: var(--warn); }
-.sysview__exit {
-  background: transparent;
-  border: 1px solid var(--card-line);
-  color: var(--muted);
-  border-radius: 6px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
 /* кнопка-навигация в шапке (Импорты ⇄ Карта) */
 .sysview__nav {
   display: inline-flex; align-items: center; gap: 6px;
