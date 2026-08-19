@@ -21,8 +21,7 @@ import { gridLayout } from './gridLayout';
 import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
-import { type TypeNodeData } from './nodes/TypeNode';
-import { TypeCard } from './nodes/TypeCard';
+import { TypeCard, type TypeCardData } from './nodes/TypeCard';
 import { problemsByLens, severityCounts, categoryOf, namespaceOf, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
@@ -216,7 +215,7 @@ function Inspector({ node, graph, lens, onFocus }: {
   const d = node.data as Record<string, unknown>;
   if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} />;
   if ('role' in d && 'via' in d) {
-    return <TypeInspector data={node.data as unknown as TypeNodeData} members={(d.members as MemberDto[] | undefined) ?? []} />;
+    return <TypeInspector data={node.data as unknown as TypeCardData} members={(d.members as MemberDto[] | undefined) ?? []} />;
   }
   if ('count' in d) return <LayerInspector data={node.data as unknown as LayerCardData} />;
   return null;
@@ -240,7 +239,7 @@ function memberTitle(m: MemberDto): string {
 }
 
 /** L2: инспектор типа — стереотип/слой/дрейф + ВСЕ члены (эндпоинты/методы/свойства/поля), сгруппированные по виду. */
-function TypeInspector({ data, members }: { data: TypeNodeData; members: MemberDto[] }) {
+function TypeInspector({ data, members }: { data: TypeCardData; members: MemberDto[] }) {
   const groups = useMemo(() => {
     const by = new Map<string, MemberDto[]>();
     for (const m of members) {
