@@ -139,6 +139,94 @@ public class MicroserviceLayerBuilderTests
     }
 
     [Fact]
+    public void Single_service_all_projects_map_to_primary_node() // #81
+    {
+        // одно-сервисный .sln (нет /src/Services/), location "." (скан в корне); узлы auth-api + auth-migrate.
+        // Все проекты (.API/.Domain/.Infrastructure) садятся на ГЛАВНЫЙ узел (auth-api собрал name-матч),
+        // а не дробятся/теряются. Сателлит auth-migrate кода не получает.
+        RawType[] raw =
+        [
+            new("AuthController", "class", [], "()", "Api", "/x/auth/src/Auth.API/AuthController.cs"),
+            new("Account", "class", [], "()", "Domain", "/x/auth/src/Auth.Domain/Account.cs"),
+            new("Repo", "class", [], "()", "Infrastructure", "/x/auth/src/Auth.Infrastructure/Repo.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Sln", "/x/auth", "compose.yml"), ".",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("./auth-api", "auth-api"), ("./auth-migrate", "auth-migrate") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        var apiKey = MicroserviceLayerBuilder.NodeKey("./auth-api", "auth-api");
+        Assert.Contains(map[apiKey].Layers, l => l.Name == "API");
+        Assert.Contains(map[apiKey].Layers, l => l.Name == "Domain");
+        Assert.Contains(map[apiKey].Layers, l => l.Name == "Infrastructure");
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./auth-migrate", "auth-migrate"))); // сателлит без кода
+    }
+
+    [Fact]
+    public void Single_service_satellite_project_does_not_hijack_primary() // #81
+    {
+        // сателлит migrator совпадает с проектом AuthService.Migrator, НО код должен сесть на auth-service (главный:
+        // имя ≈ .sln «AuthService»), а не на migrator/mailpit. Иначе весь сервис уезжал бы на джобу-мигратор.
+        RawType[] raw =
+        [
+            new("Ctrl", "class", [], "()", "Api", "/x/auth/src/AuthService.Api/Ctrl.cs"),
+            new("Account", "class", [], "()", "Domain", "/x/auth/src/AuthService.Domain/Account.cs"),
+            new("Migr", "class", [], "()", "Tooling", "/x/auth/src/AuthService.Migrator/Migr.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("AuthService", "/x/auth", "compose.yaml"), ".",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("./mailpit", "mailpit"), ("./migrator", "migrator"), ("./auth-service", "auth-service") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        var authKey = MicroserviceLayerBuilder.NodeKey("./auth-service", "auth-service");
+        Assert.Contains(map[authKey].Layers, l => l.Name == "API");
+        Assert.Contains(map[authKey].Layers, l => l.Name == "Domain");
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./migrator", "migrator"))); // сателлит без кода
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./mailpit", "mailpit")));
+    }
+
+    [Fact]
+    public void Single_service_no_signal_does_not_guess_primary() // #81: без сигнала не гадаем (не уводим код на sidecar)
+    {
+        // .sln «Backend» не похож ни на один узел; проекты не совпадают по имени с узлами (adminer/api-x).
+        // Ни один узел не набирает сигнал → primary=null → код НЕ уезжает на чужой adminer.
+        RawType[] raw =
+        [
+            new("Ctrl", "class", [], "()", "Api", "/x/repo/src/Foo.Api/Ctrl.cs"),
+            new("Account", "class", [], "()", "Domain", "/x/repo/src/Foo.Domain/Account.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Backend", "/x/repo", "compose.yml"), ".",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("./adminer", "adminer"), ("./api-x", "api-x") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./adminer", "adminer"))); // не ложная атрибуция
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./api-x", "api-x")));
+    }
+
+    [Fact]
+    public void Nested_services_partition_disables_primary_no_key_collision() // #81 BLOCKER: /src/<Area>/Services/ — тоже партиция
+    {
+        // Services на уровень глубже src (/src/Backend/Services/Cart/…) — MicroserviceOf партиционирует → primary
+        // выключен, catch-all (SharedDto) не схлопывается с группой Cart (иначе Domain сервиса Cart стёрся бы).
+        RawType[] raw =
+        [
+            new("CartLine", "class", [], "()", "Domain", "/x/repo/src/Backend/Services/Cart/Cart.Domain/CartLine.cs"),
+            new("SharedDto", "class", [], "()", "Contracts", "/x/repo/src/Shared/SharedDto.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Repo", "/x/repo", "compose.yml"), "repo",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("repo/cart-api", "cart-api") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        Assert.Contains(map["repo::cart"].Layers, l => l.Name == "Domain"); // Cart сохранил Domain, не стёрт catch-all'ом
+    }
+
+    [Fact]
     public void Single_microservice_sln_keyed_by_namespace()
     {
         // нет Services/ → весь .sln = один сервис, ключ по имени namespace (auth-service → auth)

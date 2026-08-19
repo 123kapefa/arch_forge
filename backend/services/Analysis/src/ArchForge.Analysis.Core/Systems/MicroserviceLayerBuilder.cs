@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Domain;
 using ArchForge.Contracts;
 
 namespace ArchForge.Analysis.Core.Systems;
@@ -27,11 +28,18 @@ public static class MicroserviceLayerBuilder
         {
             if (sa.Result is null) continue;
             var location = sa.Location;
+            // Одно-сервисный .sln (нет партиции /Services/): весь код = один сервис. Несматченные проекты
+            // (Auth.Domain/Application/…) отправляем на ГЛАВНЫЙ узел location, иначе они падают в Last(location)
+            // и теряются, а узел показывает лишь проект, совпавший по имени (auth-api ← Auth.API) — #81.
+            // Признак партиции — тот же MicroserviceOf, что и группировка (иначе ключи схлопнутся и данные потеряются).
+            // В мульти-сервисном репо главного нет — catch-all остаётся общим (не привязываем чужой код).
+            var hasServices = sa.Result.Types.Any(t => MicroserviceOf(t.File) is not null);
+            var primary = hasServices ? null : PrimaryNode(sa.Result.Types, byNorm, sa.Service.Name);
             // minimal-API эндпоинты сервиса — по тому же ключу микросервиса, что и типы (#71)
             var miniByMs = sa.MinimalEndpoints
-                .GroupBy(h => MsKey(h.File, location, byNorm), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(h => MsKey(h.File, location, byNorm, primary), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => (IReadOnlyList<EndpointHit>)x.ToList(), StringComparer.OrdinalIgnoreCase);
-            var groups = sa.Result.Types.GroupBy(t => MsKey(t.File, location, byNorm), StringComparer.OrdinalIgnoreCase);
+            var groups = sa.Result.Types.GroupBy(t => MsKey(t.File, location, byNorm, primary), StringComparer.OrdinalIgnoreCase);
             foreach (var g in groups)
             {
                 var names = g.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
@@ -88,16 +96,49 @@ public static class MicroserviceLayerBuilder
     public static string NodeKey(string nodeId, string nodeName) => $"{Prefix(nodeId)}::{Normalize(nodeName)}";
 
     // Ключ микросервиса для файла: /Services/<Name> → Name; иначе — сопоставление сегмента под /src/ с именем
-    // compose-узла (код вне /Services/, напр. gateway, #75); иначе — общий хвост namespace (catch-all).
-    private static string MsKey(string file, string location, IReadOnlyDictionary<string, string> byNorm)
+    // compose-узла (код вне /Services/, напр. gateway, #75); иначе — главный узел (одно-сервисный .sln, #81)
+    // или общий хвост namespace (catch-all мульти-сервиса).
+    private static string MsKey(string file, string location, IReadOnlyDictionary<string, string> byNorm, string? primaryCatchAll)
     {
         var ms = MicroserviceOf(file);
         if (ms is not null) return ms;
         if (byNorm.Count > 0)
             foreach (var cand in CandidateSegments(file))
                 if (byNorm.TryGetValue(NormAlnum(cand), out var name)) return name;
-        return Last(location);
+        return primaryCatchAll ?? Last(location);
     }
+
+    // Сателлит-деплой (не несёт код сервиса): миграторы/сидеры/крон-джобы — исключаем из кандидатов на «главного».
+    // Только специфичные job-маркеры: «worker» намеренно НЕ включён — это легитимный тип сервиса (.NET Worker).
+    private static readonly string[] SatelliteMarkers = { "migrat", "seed", "cron" };
+    private static bool IsSatellite(string name) => SatelliteMarkers.Any(m => name.Contains(m, StringComparison.OrdinalIgnoreCase));
+
+    // Главный узел одно-сервисного .sln (на него уходит весь код, #81). Из compose-узлов берём НЕ-сателлиты,
+    // среди них — с бóльшим числом совпавших проектов; при равенстве — узел, чьё имя ≈ имени .sln (auth-service ≡
+    // AuthService). ВАЖНО: возвращаем узел только при ПОЛОЖИТЕЛЬНОМ сигнале (совпал проект ИЛИ имя ≈ .sln) — иначе
+    // не гадаем по алфавиту среди всех узлов системы (мог бы уехать на чужой sidecar вроде adminer); null → обычный
+    // catch-all (безопасная деградация к прежнему поведению).
+    private static string? PrimaryNode(IReadOnlyList<TypeInfo> types, IReadOnlyDictionary<string, string> byNorm, string slnName)
+    {
+        var candidates = byNorm.Values.Where(n => !IsSatellite(n)).Distinct(StringComparer.Ordinal).ToList();
+        if (candidates.Count == 0) return null;
+        var counts = candidates.ToDictionary(n => n, _ => 0, StringComparer.Ordinal);
+        foreach (var t in types)
+            foreach (var cand in CandidateSegments(t.File))
+                if (byNorm.TryGetValue(NormAlnum(cand), out var name) && counts.ContainsKey(name)) { counts[name]++; break; }
+        var slnNorm = NormAlnum(slnName);
+        var best = candidates
+            .OrderByDescending(n => counts[n])                                   // больше совпавших проектов
+            .ThenByDescending(n => NameMatchesSln(NormAlnum(n), slnNorm) ? 1 : 0) // имя узла ≈ имя .sln
+            .ThenBy(n => n, StringComparer.Ordinal)                              // детерминизм
+            .First();
+        return counts[best] > 0 || NameMatchesSln(NormAlnum(best), slnNorm) ? best : null; // без сигнала — не гадаем
+    }
+
+    // Имя узла ≈ имя .sln по NormAlnum (равно или одно содержит другое). Известное ограничение: подстрока без
+    // границ сегмента может дать ложное совпадение при слишком общих именах — тай-брейк, не основной сигнал.
+    private static bool NameMatchesSln(string nodeNorm, string slnNorm) =>
+        slnNorm.Length > 0 && nodeNorm.Length > 0 && (nodeNorm == slnNorm || nodeNorm.Contains(slnNorm) || slnNorm.Contains(nodeNorm));
 
     // Кандидаты имени сервиса из пути: только ВЕРХНИЕ папки проекта после /src/ (+ их последняя dotted-часть,
     // «Kalmykov.ApiGateway» → «ApiGateway»). Ограничение глубины — чтобы подпапки (напр. Routes/Catalog в gateway)
