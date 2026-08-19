@@ -331,11 +331,14 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
 
         // Свои проекты таргета берём из исходников, а не из bin/ (иначе дубль-определения символов).
         var ownProjects = Directory.EnumerateFiles(targetPath, "*.csproj", SearchOption.AllDirectories)
+            .Where(p => !PathFilter.IsHiddenOrCopy(targetPath, p))
             .Select(p => Path.GetFileNameWithoutExtension(p)!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var dll in Directory.EnumerateFiles(targetPath, "*.dll", SearchOption.AllDirectories))
         {
+            // bin/ здесь НУЖЕН (reference-сборки), поэтому исключаем только копии/скрытое, а не сам bin/
+            if (PathFilter.IsHiddenOrCopy(targetPath, dll)) continue; // .dll из копии (.claude/worktrees) → чужой/устаревший символ
             if (!dll.Replace('\\', '/').Contains("/bin/")) continue;
             if (ownProjects.Contains(Path.GetFileNameWithoutExtension(dll))) continue;
             if (seen.Add(Path.GetFileName(dll))) TryAdd(references, dll);

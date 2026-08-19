@@ -24,6 +24,7 @@ public sealed class CsprojImportSource : IImportSource
 
         foreach (var csproj in Directory.EnumerateFiles(path, "*.csproj", SearchOption.AllDirectories))
         {
+            if (PathFilter.IsHiddenOrCopy(path, csproj)) continue; // .csproj из копии (.claude/worktrees) → дубли зависимостей
             string project = Path.GetFileNameWithoutExtension(csproj);
             XDocument doc;
             try { doc = XDocument.Load(csproj); }
