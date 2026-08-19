@@ -187,6 +187,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
     private static IReadOnlyList<RawMember> ExtractMembers(INamedTypeSymbol symbol)
     {
         var isController = InheritsController(symbol) || symbol.Name.EndsWith("Controller", StringComparison.Ordinal);
+        var classRoute = isController ? ClassRouteOf(symbol) : null; // префикс [Route] на контроллере — склеиваем с методом
         var members = new List<RawMember>();
         foreach (var m in symbol.GetMembers())
         {
@@ -197,7 +198,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
                     members.Add(new RawMember(p.Name, "property", p.Type.ToDisplayString(ShortType), Line: LineOf(p)));
                     break;
                 case IMethodSymbol { MethodKind: MethodKind.Ordinary, IsImplicitlyDeclared: false } method when !RecordSynth.Contains(method.Name):
-                    var (http, route) = isController ? HttpOf(method) : (null, null);
+                    var (http, route) = isController ? HttpOf(method, classRoute) : (null, null);
                     members.Add(new RawMember(method.Name, http is not null ? "endpoint" : "method",
                         MethodSig(method), http, route, LineOf(method)));
                     break;
@@ -216,10 +217,10 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         return $"({ps}) : {ret}";
     }
 
-    // Verb+route экшена по атрибутам ([HttpGet("...")], [Route("...")]).
-    private static (string? Http, string? Route) HttpOf(IMethodSymbol m)
+    // Verb+route экшена по атрибутам ([HttpGet("...")], [Route("...")]); route склеивается с префиксом класса.
+    private static (string? Http, string? Route) HttpOf(IMethodSymbol m, string? classRoute)
     {
-        string? http = null, route = null;
+        string? http = null, methodRoute = null;
         foreach (var a in m.GetAttributes())
         {
             var verb = (a.AttributeClass?.Name) switch
@@ -230,15 +231,40 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
             if (verb is not null)
             {
                 http = verb;
-                if (a.ConstructorArguments.FirstOrDefault().Value is string s) route = s;
+                if (a.ConstructorArguments.FirstOrDefault().Value is string s) methodRoute = s;
             }
             else if (a.AttributeClass?.Name == "RouteAttribute" && a.ConstructorArguments.FirstOrDefault().Value is string rs)
             {
-                route ??= rs;
+                methodRoute ??= rs;
             }
         }
-        return (http, route);
+        return (http, http is null ? null : CombineRoute(classRoute, methodRoute));
     }
+
+    // Route контроллера, если задан [Route("...")] на классе (константы резолвятся Roslyn'ом в строку).
+    private static string? ClassRouteOf(INamedTypeSymbol symbol)
+    {
+        foreach (var a in symbol.GetAttributes())
+            if (a.AttributeClass?.Name == "RouteAttribute" && a.ConstructorArguments.FirstOrDefault().Value is string rs)
+                return rs;
+        return null;
+    }
+
+    // Склейка маршрута: класс-[Route] + метод. Абсолютный метод-маршрут (ведущий '/' или '~/') отменяет префикс
+    // класса (семантика ASP.NET). Иначе — соединяем непустые сегменты через '/'. Токены ([controller]) не разворачиваем.
+    internal static string? CombineRoute(string? classRoute, string? methodRoute)
+    {
+        var mr = methodRoute?.Trim();
+        if (!string.IsNullOrEmpty(mr) && (mr.StartsWith('/') || mr.StartsWith("~/")))
+            return "/" + TrimSlash(mr.StartsWith("~/") ? mr[2..] : mr);
+        var parts = new[] { classRoute, mr }
+            .Select(TrimSlash)
+            .Where(p => p.Length > 0)
+            .ToArray();
+        return parts.Length == 0 ? null : "/" + string.Join("/", parts);
+    }
+
+    private static string TrimSlash(string? s) => s?.Trim().Trim('/') ?? "";
 
     private static bool InheritsController(INamedTypeSymbol symbol)
     {

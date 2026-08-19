@@ -34,6 +34,26 @@ public class MicroserviceLayerBuilderTests
     }
 
     [Fact]
+    public void Aggregates_service_endpoints_from_controller_members()
+    {
+        RawType[] raw =
+        [
+            new("SettingsController", "class", [], "()", "API",
+                "/x/src/Services/Settings/Settings.API/SettingsController.cs")
+            {
+                Members = [new RawMember("GetPublic", "endpoint", "() : void", "GET", "/api/settings/public", 20)],
+            },
+        ];
+        var map = MicroserviceLayerBuilder.Build([Svc("product/backend", raw)]);
+
+        var entry = map["product/backend::settings"];
+        Assert.Single(entry.Endpoints);
+        Assert.Equal("GET", entry.Endpoints[0].Method);
+        Assert.Equal("/api/settings/public", entry.Endpoints[0].Route);
+        Assert.Equal("controller", entry.Endpoints[0].Source);
+    }
+
+    [Fact]
     public void Single_microservice_sln_keyed_by_namespace()
     {
         // нет Services/ → весь .sln = один сервис, ключ по имени namespace (auth-service → auth)

@@ -8,7 +8,8 @@ namespace ArchForge.Analysis.Core.Systems;
 // Совпадение с compose-узлом — по namespace + нормализованному имени (catalog-api ↔ Catalog).
 public static class MicroserviceLayerBuilder
 {
-    public sealed record Entry(string Health, string? Root, IReadOnlyList<LayerSummaryDto> Layers);
+    public sealed record Entry(string Health, string? Root, IReadOnlyList<LayerSummaryDto> Layers,
+        IReadOnlyList<EndpointDto> Endpoints);
 
     /// <summary>ключ: "{namespace}::{нормализованное имя микросервиса}" → сводка слоёв.</summary>
     public static IReadOnlyDictionary<string, Entry> Build(IReadOnlyList<ServiceAnalysis> analyses)
@@ -22,11 +23,13 @@ public static class MicroserviceLayerBuilder
             {
                 var names = g.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
                 var edges = analysis.Edges.Where(e => names.Contains(e.From) && names.Contains(e.To)).ToList();
-                var layers = ServiceSummaryBuilder.Layers(g.ToList(), edges);
+                var types = g.ToList();
+                var layers = ServiceSummaryBuilder.Layers(types, edges);
                 if (layers.Count == 0) continue;
                 // корень папки микросервиса (для drill L1: /api/map по нему) — .../Services/<Name> или корень .sln
                 var root = g.Select(t => ServiceRootOf(t.File)).FirstOrDefault(r => r is not null) ?? svc.Root;
-                byKey[$"{location}::{Normalize(g.Key)}"] = new Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers);
+                var endpoints = EndpointCollector.FromTypes(types); // HTTP-эндпоинты сервиса (L1-список; #71)
+                byKey[$"{location}::{Normalize(g.Key)}"] = new Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers, endpoints);
             }
         }
         return byKey;

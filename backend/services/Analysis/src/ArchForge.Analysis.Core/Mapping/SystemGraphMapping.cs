@@ -42,8 +42,9 @@ public static class SystemGraphMapping
         var layers = nodeLayers is not null && nodeLayers.TryGetValue(
             MicroserviceLayerBuilder.NodeKey(n.Id, n.Name), out var entry) ? entry : null;
         var health = layers is null ? problemHealth : Worse(problemHealth, layers.Health);
+        var endpoints = layers?.Endpoints is { Count: > 0 } eps ? eps : null; // пустой список → не шлём (#71)
         return new NodeDto(n.Id, n.Name, KindString(n.Kind), Layer: "", Role: "", Via: "", File: "", Drift: [],
-            Level: LevelOf(n.Kind), Health: health, Layers: layers?.Layers, Root: layers?.Root);
+            Level: LevelOf(n.Kind), Health: health, Layers: layers?.Layers, Root: layers?.Root, Endpoints: endpoints);
     }
 
     /// <summary>Системное ребро → EdgeDto (id, провенанс Via, уверенность).</summary>
