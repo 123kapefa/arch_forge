@@ -636,6 +636,8 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const [rightW, setRightW] = useState(readRightW);
   const [rightFull, setRightFull] = useState(readRightFull);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const flowObsRef = useRef<ResizeObserver | null>(null);
+  const [flowReady, setFlowReady] = useState(false); // монтируем ReactFlow только когда контейнер измерен (>0×0) — иначе warning про размер (#58)
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
   const [loadedPath, setLoadedPath] = useState(''); // путь загруженного проекта — ключ раскладки
   const [branch, setBranch] = useState<string | null>(null); // git-ветка открытого проекта
@@ -651,6 +653,20 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
   const flagsRef = useRef({ layers: true, drift: true }); // текущие флаги анализа (для стабильного load)
   flagsRef.current = { layers: runLayers, drift: runDrift };
   const loadAbortRef = useRef<AbortController | null>(null); // текущий тяжёлый анализ — рвём при вытеснении
+
+  // Гейт рендера графа: монтируем ReactFlow только когда контейнер .sysview__flow измерен (>0×0) — иначе на
+  // первом тике флекс ещё не разрешён и React Flow пишет warning про размер (#58). Callback-ref, а не одноразовый
+  // эффект: пере-вооружается на КАЖДЫЙ маунт контейнера (включая возврат с экрана «Импорты»), на размонтировании
+  // отключает observer и сбрасывает флаг — иначе observer течёт на отсоединённом узле, а гейт не защищает ремаунт.
+  const measureFlowBox = useCallback((el: HTMLDivElement | null) => {
+    flowObsRef.current?.disconnect();
+    if (!el) { flowObsRef.current = null; setFlowReady(false); return; }
+    const check = () => { if (el.clientWidth > 0 && el.clientHeight > 0) setFlowReady(true); };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    flowObsRef.current = ro;
+  }, []);
 
   const load = useCallback(async (rawPath: string) => {
     const path = rawPath.trim();
@@ -995,11 +1011,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
             <>
               <button className="crumb-link" onClick={() => { setDrill(null); setSelected(null); }}>System</button>
               {' ▸ '}<b>{(drill.data as SystemNodeData).node.name}</b>{' ▸ Слои'}
-              {l1Loading
-                ? <span className="crumbs__hint"> · загрузка слоёв…</span>
-                : l1Map
-                  ? <span className="crumbs__hint"> · двойной клик по слою → типы · <span className="crumbs__viol">красное = нарушение свода</span></span>
-                  : <span className="crumbs__hint"> · сводка слоёв</span>}
+              {l1Loading && <span className="crumbs__hint"> · загрузка слоёв…</span>}
             </>
           ) : (
             <><b>System</b> ▸ Service ▸ Layer ▸ Type ▸ Member</>
@@ -1146,8 +1158,9 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
 
         <main className="sysview__board">
           {error && <div className="sysview__error">{error}</div>}
-          <div className="sysview__flow">
+          <div className="sysview__flow" ref={measureFlowBox}>
             {graph ? (
+              flowReady && (
               <HiddenLayersContext.Provider value={hiddenLayers}>
                 <ReactFlowProvider>
                   <Flow
@@ -1164,6 +1177,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
                   />
                 </ReactFlowProvider>
               </HiddenLayersContext.Provider>
+              )
             ) : (
               <div className="sysview__empty">
                 {loading ? 'анализирую…' : <>Проект не открыт. Нажми <b>«Открыть проект»</b> вверху слева.</>}
@@ -1274,7 +1288,7 @@ export function SystemView({ onExit }: { onExit?: () => void }) {
           : <span className="status__ok">✓ анализ актуален</span>)}
         <span className="status__right">
           <span>● {counts.critical} · ⚠ {counts.warning} · ○ {counts.coverage} · свод {convCount}</span>
-          <span>{flow.nodes.length} узлов · {flow.edges.length} связей</span>
+          <span>{activeFlow.nodes.length} узлов · {activeFlow.edges.length} связей</span>
           <span>линза «{lens === 'architecture' ? 'реальные' : 'дрейф'}»: {lensProblems.length}</span>
         </span>
       </footer>
