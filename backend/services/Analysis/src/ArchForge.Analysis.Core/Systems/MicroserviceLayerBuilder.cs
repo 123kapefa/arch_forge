@@ -39,8 +39,11 @@ public static class MicroserviceLayerBuilder
                 var types = g.ToList();
                 var layers = ServiceSummaryBuilder.Layers(types, edges);
                 if (layers.Count == 0) continue;
-                // корень папки микросервиса (для drill L1: /api/map по нему) — .../Services/<Name> или корень .sln
-                var root = g.Select(t => ServiceRootOf(t.File)).FirstOrDefault(r => r is not null) ?? sa.Service.Root;
+                // корень папки для drill L1 (/api/map по нему): /Services/<Name> — если это /Services/; иначе
+                // ОБЩИЙ каталог-префикс файлов группы (gateway → его папка; одно-сервисный .sln с типами в разных
+                // проектах → их общий корень, не сужаем до одного проекта, #78); последний фолбэк — корень .sln.
+                var svcRoot = g.Select(t => ServiceRootOf(t.File)).FirstOrDefault(r => r is not null);
+                var root = svcRoot ?? CommonDirPrefix(types.Select(t => t.File)) ?? sa.Service.Root;
                 var mini = miniByMs.TryGetValue(g.Key, out var m) ? m : [];
                 var endpoints = EndpointCollector.From(types, mini); // контроллеры + minimal API (L1-список; #71)
                 byKey[$"{location}::{Normalize(g.Key)}"] = new Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers, endpoints);
@@ -58,6 +61,27 @@ public static class MicroserviceLayerBuilder
         var after = i + "/Services/".Length;
         var slash = p.IndexOf('/', after);
         return slash > after ? p[..slash] : null;
+    }
+
+    // Общий каталог-префикс путей (посегментно): для кода вне /Services/ даёт папку, охватывающую ВСЕ файлы группы —
+    // gateway (все файлы в одном проекте) → его папка; сервис с типами в нескольких проектах → их общий корень
+    // (не сужаем до одного проекта). Иначе drill грузил бы корень всего backend либо только часть сервиса (#78).
+    private static string? CommonDirPrefix(IEnumerable<string> files)
+    {
+        string[]? common = null;
+        foreach (var f in files)
+        {
+            var p = f.Replace('\\', '/');
+            var slash = p.LastIndexOf('/');
+            if (slash <= 0) continue;                       // нет каталога (или корневой) — пропускаем
+            var dir = p[..slash].Split('/');                // сегменты каталога файла (с ведущим "" для абсолютных)
+            if (common is null) { common = dir; continue; }
+            var n = Math.Min(common.Length, dir.Length);
+            var k = 0;
+            while (k < n && string.Equals(common[k], dir[k], StringComparison.Ordinal)) k++;
+            common = common[..k];
+        }
+        return common is { Length: > 0 } ? string.Join('/', common) : null;
     }
 
     /// <summary>Ключ compose-узла для сопоставления со сводкой: namespace-префикс id + норм. имя.</summary>
