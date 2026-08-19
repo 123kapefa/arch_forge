@@ -100,6 +100,42 @@ public class MicroserviceLayerBuilderTests
         var key = MicroserviceLayerBuilder.NodeKey("backend/api-gateway", "api-gateway");
         Assert.True(map.ContainsKey(key), $"нет ключа {key}: [{string.Join(", ", map.Keys)}]");
         Assert.Contains(map[key].Endpoints, e => e.Source == "minimal" && e.Route == "/api/auth/csrf");
+        // root = папка проекта, а не корень всего backend — иначе drill грузит весь backend (#78)
+        Assert.Equal("/x/backend/src/ApiGateway/Kalmykov.ApiGateway", map[key].Root);
+    }
+
+    [Fact]
+    public void Non_services_root_covers_multiple_projects_under_area() // #78: общий каталог группы, не один проект
+    {
+        // gateway из нескольких проектов под одной area-папкой /ApiGateway — root должен охватить оба
+        RawType[] raw =
+        [
+            new("Host", "class", [], "()", "Api", "/x/backend/src/ApiGateway/Gw.Host/Host.cs"),
+            new("RouteBuilder", "class", [], "()", "Api", "/x/backend/src/ApiGateway/Gw.Routing/RouteBuilder.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Sln", "/x/backend", "compose.yml"), "backend",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("backend/api-gateway", "api-gateway") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        var key = MicroserviceLayerBuilder.NodeKey("backend/api-gateway", "api-gateway");
+        Assert.Equal("/x/backend/src/ApiGateway", map[key].Root); // area, а не один из проектов
+    }
+
+    [Fact]
+    public void Single_group_multi_project_root_is_common_prefix() // #78: не сужаем root до папки первого файла
+    {
+        // одно-сервисный .sln, типы в разных проектах в ОДНОЙ группе (нет compose-матча) — root = общий корень,
+        // а не папка первого проекта (репро блокера ревью: раньше NonServicesRootOf брал первый файл).
+        RawType[] raw =
+        [
+            new("Account", "class", [], "()", "Domain", "/x/auth-service/src/Auth.Domain/Account.cs"),
+            new("AuthController", "class", [], "()", "Api", "/x/auth-service/src/Auth.API/AuthController.cs"),
+        ];
+        var map = MicroserviceLayerBuilder.Build([Svc("auth-service", raw)]);
+
+        Assert.Equal("/x/auth-service/src", map["auth-service::auth"].Root); // общий /src, не .../Auth.Domain
     }
 
     [Fact]
