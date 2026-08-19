@@ -139,6 +139,55 @@ public class MicroserviceLayerBuilderTests
     }
 
     [Fact]
+    public void Single_service_all_projects_map_to_primary_node() // #81
+    {
+        // одно-сервисный .sln (нет /src/Services/), location "." (скан в корне); узлы auth-api + auth-migrate.
+        // Все проекты (.API/.Domain/.Infrastructure) садятся на ГЛАВНЫЙ узел (auth-api собрал name-матч),
+        // а не дробятся/теряются. Сателлит auth-migrate кода не получает.
+        RawType[] raw =
+        [
+            new("AuthController", "class", [], "()", "Api", "/x/auth/src/Auth.API/AuthController.cs"),
+            new("Account", "class", [], "()", "Domain", "/x/auth/src/Auth.Domain/Account.cs"),
+            new("Repo", "class", [], "()", "Infrastructure", "/x/auth/src/Auth.Infrastructure/Repo.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Sln", "/x/auth", "compose.yml"), ".",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("./auth-api", "auth-api"), ("./auth-migrate", "auth-migrate") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        var apiKey = MicroserviceLayerBuilder.NodeKey("./auth-api", "auth-api");
+        Assert.Contains(map[apiKey].Layers, l => l.Name == "API");
+        Assert.Contains(map[apiKey].Layers, l => l.Name == "Domain");
+        Assert.Contains(map[apiKey].Layers, l => l.Name == "Infrastructure");
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./auth-migrate", "auth-migrate"))); // сателлит без кода
+    }
+
+    [Fact]
+    public void Single_service_satellite_project_does_not_hijack_primary() // #81
+    {
+        // сателлит migrator совпадает с проектом AuthService.Migrator, НО код должен сесть на auth-service (главный:
+        // имя ≈ .sln «AuthService»), а не на migrator/mailpit. Иначе весь сервис уезжал бы на джобу-мигратор.
+        RawType[] raw =
+        [
+            new("Ctrl", "class", [], "()", "Api", "/x/auth/src/AuthService.Api/Ctrl.cs"),
+            new("Account", "class", [], "()", "Domain", "/x/auth/src/AuthService.Domain/Account.cs"),
+            new("Migr", "class", [], "()", "Tooling", "/x/auth/src/AuthService.Migrator/Migr.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("AuthService", "/x/auth", "compose.yaml"), ".",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("./mailpit", "mailpit"), ("./migrator", "migrator"), ("./auth-service", "auth-service") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        var authKey = MicroserviceLayerBuilder.NodeKey("./auth-service", "auth-service");
+        Assert.Contains(map[authKey].Layers, l => l.Name == "API");
+        Assert.Contains(map[authKey].Layers, l => l.Name == "Domain");
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./migrator", "migrator"))); // сателлит без кода
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./mailpit", "mailpit")));
+    }
+
+    [Fact]
     public void Single_microservice_sln_keyed_by_namespace()
     {
         // нет Services/ → весь .sln = один сервис, ключ по имени namespace (auth-service → auth)
