@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ArchForge.Analysis.Core;
 using ArchForge.Analysis.Core.Systems;
 
 namespace ArchForge.Analysis.Infrastructure.Manifests;

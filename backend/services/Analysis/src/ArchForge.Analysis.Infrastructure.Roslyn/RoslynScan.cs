@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace ArchForge.Analysis.Infrastructure.Roslyn;
@@ -12,14 +13,15 @@ internal static class RoslynScan
     // аномалий; реальные сервисы (сотни–тысячи файлов) не задевает. Урезание видимо в логах вызывающего (adr/0008).
     internal const int MaxFilesPerScan = 20_000;
 
-    // .cs таргета, кроме генерённого/сборочного мусора (adr/0008) и гигантских файлов (робастность).
+    // .cs таргета, кроме генерённого мусора (.g.cs/.Designer.cs), шумовых каталогов (bin/obj, копии/дампы,
+    // скрытые .git/.claude/worktrees — единый PathFilter) и гигантских файлов (adr/0008).
     public static IEnumerable<string> EnumerateCs(string path) =>
         Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
             .Where(f =>
             {
+                if (PathFilter.IsNoise(path, f)) return false; // копии из .claude/worktrees и т.п. дублируют разбор
                 var n = f.Replace('\\', '/');
-                if (n.Contains("/obj/") || n.Contains("/bin/")
-                    || n.EndsWith(".g.cs") || n.EndsWith(".Designer.cs")) return false;
+                if (n.EndsWith(".g.cs") || n.EndsWith(".Designer.cs")) return false;
                 try { return new FileInfo(f).Length <= MaxFileBytes; }
                 catch { return false; } // недоступный файл — пропускаем (изоляция ошибок)
             });
