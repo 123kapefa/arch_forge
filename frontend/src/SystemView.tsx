@@ -3,7 +3,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import {
-  ReactFlow, ReactFlowProvider, useReactFlow, useStoreApi, useNodesState, useEdgesState,
+  ReactFlow, ReactFlowProvider, useReactFlow, useStoreApi, useNodesState, useEdgesState, useNodesInitialized,
   Background, Controls, MiniMap, type Edge, type Node, type NodeChange,
 } from '@xyflow/react';
 import { routeAll, type Rect, type XY } from './orthoRouter';
@@ -80,6 +80,7 @@ const Flow = forwardRef<FlowHandle, {
   nodesRef.current = nodes;
   const rf = useReactFlow();
   const storeApi = useStoreApi();
+  const nodesInitialized = useNodesInitialized(); // все узлы измерены → можно точно посчитать маршруты рёбер
   // начальный вьюпорт L0 читаем один раз на маунте (не на каждый рендер) — для defaultViewport/onInit
   const initialVp = useMemo(() => (storageKey ? readViewport(storageKey) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -90,11 +91,18 @@ const Flow = forwardRef<FlowHandle, {
     if (nodeLookup.size === 0) { setRoutes(new Map()); return; }
     const rects = new Map<string, Rect>();
     for (const n of nodeLookup.values()) {
+      // пока хоть один узел не измерен — не считаем маршруты по fallback-размерам:
+      // иначе рёбра мелькнут неточным маршрутом до пересчёта (см. nodesInitialized ниже).
+      if (n.measured?.width == null || n.measured?.height == null) return;
       const p = n.internals.positionAbsolute;
-      rects.set(n.id, { x: p.x, y: p.y, w: n.measured?.width ?? 200, h: n.measured?.height ?? 100 });
+      rects.set(n.id, { x: p.x, y: p.y, w: n.measured.width, h: n.measured.height });
     }
     setRoutes(routeAll(rects, flow.edges.map((e) => ({ id: e.id, source: e.source, target: e.target }))));
   }, [version, flow.edges, storeApi]);
+
+  // Как только все узлы измерены (маунт/reload/drill) — пересчитываем маршруты по реальным позициям.
+  // До этого рёбра скрыты (см. displayEdges), чтобы не мелькала дефолтная линия и не «возвращалась» в маршрут.
+  useEffect(() => { if (nodesInitialized) setVersion((v) => v + 1); }, [nodesInitialized]);
 
   // Наложить сохранённые позиции на вычисленную раскладку (по id узла).
   const applySaved = useCallback((ns: Node[]): Node[] => {
@@ -190,16 +198,18 @@ const Flow = forwardRef<FlowHandle, {
 
   // Подсветка связей: наведение (или выбор) узла → его рёбра ярче и над блоками, остальные приглушены.
   const highlightId = hoverId ?? selectedId;
+  const routesReady = routes.size > 0; // маршруты посчитаны — можно показывать рёбра (иначе мелькнёт дефолт)
   const displayEdges = useMemo(() => edges.map((e) => {
     const route = routes.get(e.id);                    // предрассчитанный маршрут с развязкой
     const on = highlightId != null && (e.source === highlightId || e.target === highlightId);
     return {
       ...e,
       data: { ...e.data, route },
+      hidden: !routesReady,                            // прячем до готовности маршрутов (без flicker при reload/drill)
       zIndex: on ? 1000 : 0,
       style: { ...e.style, opacity: on ? 1 : highlightId ? 0.08 : 1, strokeWidth: on ? 3 : e.style?.strokeWidth },
     };
-  }), [edges, routes, highlightId]);
+  }), [edges, routes, routesReady, highlightId]);
 
   return (
     <ReactFlow
