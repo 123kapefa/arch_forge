@@ -135,7 +135,13 @@ describe('ownerByRoot / lensHitsByNode (подсветка линзы #70)', () 
     expect(ownerByRoot(nodes, undefined)).toBeNull();
   });
 
-  it('lensHitsByNode: арх — по локализации; дрейф — по владельцу файла факта', () => {
+  it('ownerByRoot матчит по границе сегмента (…/Cat не ловит …/Catalog/…)', () => {
+    const nodes = [node('cat', '/r/Services/Cat'), node('catalog', '/r/Services/Catalog')];
+    expect(ownerByRoot(nodes, '/r/Services/Catalog/X.cs')?.id).toBe('catalog'); // не «cat» по префиксу
+    expect(ownerByRoot(nodes, '/r/Services/Cat')?.id).toBe('cat'); // файл ровно = root
+  });
+
+  it('lensHitsByNode: арх — по локализации; дрейф — по владельцу файла (даже если Location = id узла)', () => {
     const g: SystemGraph = {
       project: 'p',
       nodes: [node('gw', '/r/backend'), node('catalog', '/r/backend/src/Services/Catalog'),
@@ -143,7 +149,9 @@ describe('ownerByRoot / lensHitsByNode (подсветка линзы #70)', () 
       edges: [], coverage: { marker: 0, heuristic: 0, unknown: 0, total: 0 }, drift: [],
       problems: [
         { id: 'p0', severity: 'critical', kind: 'shared-db', title: 'x', location: 'catalog', category: 'architecture' },
-        { id: 'p1', severity: 'info', kind: 'drift', title: 'd', location: 'backend', category: 'convention',
+        // Location = 'catalog' (id узла!), но факты в catalog И cart — дрейф обязан разнестись по владельцам,
+        // а не осесть на узле-локации (регресс-тест на dto-mapping, где Location = первый сервис по discovery).
+        { id: 'p1', severity: 'info', kind: 'dto-mapping', title: 'd', location: 'catalog', category: 'convention',
           items: [{ name: 'A', layer: 'Domain', note: '', file: '/r/backend/src/Services/Catalog/A.cs' },
                   { name: 'B', layer: 'Domain', note: '', file: '/r/backend/src/Services/Cart/B.cs' }] },
       ],
@@ -153,7 +161,7 @@ describe('ownerByRoot / lensHitsByNode (подсветка линзы #70)', () 
     expect(arch.has('cart')).toBe(false);
 
     const conv = lensHitsByNode(g, 'convention');
-    expect(conv.get('catalog')).toBe(1);
+    expect(conv.get('catalog')).toBe(1); // по файлу факта, а не 2 от Location-шортката
     expect(conv.get('cart')).toBe(1);
     expect(conv.has('gw')).toBe(false); // факты специфичнее — на gw ничего
   });

@@ -62,13 +62,18 @@ export function problemsUnder(problems: Problem[] | undefined, namespace: string
 export function ownerByRoot(nodes: SystemNode[], file: string | undefined): SystemNode | null {
   if (!file) return null;
   let best: SystemNode | null = null;
-  for (const n of nodes)
-    if (n.root && file.startsWith(n.root) && (best === null || n.root.length > (best.root?.length ?? 0))) best = n;
+  for (const n of nodes) {
+    if (!n.root) continue;
+    // совпадение по ГРАНИЦЕ сегмента: файл = root или начинается с root + '/' (иначе «…/Cat» ложно матчит «…/Catalog/…»)
+    const match = file === n.root || file.startsWith(n.root.endsWith('/') ? n.root : n.root + '/');
+    if (match && (best === null || n.root.length > (best.root?.length ?? 0))) best = n;
+  }
   return best;
 }
 
 /** Сколько проблем активной линзы «попадает» в каждый узел — для подсветки L0 (#70).
- *  Арх — по локализации (Location = id узла); дрейф локализован на системе → разносим факты по владельцу файла. */
+ *  Дрейф локализован на системе (Location — не узел) → красим владельцев файлов-фактов, даже если Location
+ *  случайно = id узла (напр. dto-mapping кладёт Location = первый сервис по discovery). Арх — по узлу-локации. */
 export function lensHitsByNode(graph: SystemGraph | null | undefined, lens: Lens): Map<string, number> {
   const hits = new Map<string, number>();
   if (!graph) return hits;
@@ -76,8 +81,12 @@ export function lensHitsByNode(graph: SystemGraph | null | undefined, lens: Lens
   const add = (id: string, n = 1) => hits.set(id, (hits.get(id) ?? 0) + n);
   for (const p of graph.problems ?? []) {
     if (categoryOf(p) !== lens) continue;
-    if (ids.has(p.location)) { add(p.location, Math.max(1, p.items?.length ?? 1)); continue; }
-    for (const it of p.items ?? []) { const svc = ownerByRoot(graph.nodes, it.file); if (svc) add(svc.id); }
+    const items = p.items ?? [];
+    if (lens === 'convention' && items.length > 0) {
+      for (const it of items) { const svc = ownerByRoot(graph.nodes, it.file); if (svc) add(svc.id); }
+    } else if (ids.has(p.location)) {
+      add(p.location, Math.max(1, items.length));
+    }
   }
   return hits;
 }

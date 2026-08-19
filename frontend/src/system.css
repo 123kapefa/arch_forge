@@ -305,9 +305,8 @@
 .panel__vtitle { writing-mode: vertical-rl; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; }
 .panel__group { margin-bottom: 16px; }
 .panel__label { font-size: 10px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
-.panel__hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4; } /* подпись линзы (#70) */
 .panel__empty { color: var(--muted); font-style: italic; }
-.panel__hint { font-size: 10px; color: var(--muted); margin-top: 5px; }
+.panel__hint { font-size: 10px; color: var(--muted); margin-top: 5px; } /* + подпись линзы (#70) */
 /* индикатор источника свода (встроенный / файл) — кнопка, открывает просмотрщик */
 .panel__conv { display: block; width: 100%; text-align: left; cursor: pointer; margin: 7px 0 2px; padding: 6px 8px; background: var(--card); border: 1px solid var(--card-line); border-radius: 7px; font: inherit; }
 .panel__conv:hover { border-color: var(--accent); }
