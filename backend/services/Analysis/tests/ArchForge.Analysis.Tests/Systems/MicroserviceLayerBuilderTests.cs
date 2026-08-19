@@ -79,6 +79,30 @@ public class MicroserviceLayerBuilderTests
     }
 
     [Fact]
+    public void Maps_non_services_code_to_compose_node_by_name() // #75
+    {
+        // код gateway лежит вне /Services/ (под /src/ApiGateway/Kalmykov.ApiGateway) — привязываем к узлу api-gateway
+        RawType[] raw =
+        [
+            new("GatewayRouteBuilder", "class", [], "()", "Api",
+                "/x/backend/src/ApiGateway/Kalmykov.ApiGateway/GatewayRouteBuilder.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Sln", "/x/backend", "compose.yml"), "backend",
+            Classifier.Classify(raw, ConventionPack.Default()))
+        {
+            MinimalEndpoints = [new EndpointHit("GET", "/api/auth/csrf",
+                "/x/backend/src/ApiGateway/Kalmykov.ApiGateway/Program.cs", 20)],
+        };
+        var compose = new (string, string)[] { ("backend/api-gateway", "api-gateway") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        var key = MicroserviceLayerBuilder.NodeKey("backend/api-gateway", "api-gateway");
+        Assert.True(map.ContainsKey(key), $"нет ключа {key}: [{string.Join(", ", map.Keys)}]");
+        Assert.Contains(map[key].Endpoints, e => e.Source == "minimal" && e.Route == "/api/auth/csrf");
+    }
+
+    [Fact]
     public void Single_microservice_sln_keyed_by_namespace()
     {
         // нет Services/ → весь .sln = один сервис, ключ по имени namespace (auth-service → auth)

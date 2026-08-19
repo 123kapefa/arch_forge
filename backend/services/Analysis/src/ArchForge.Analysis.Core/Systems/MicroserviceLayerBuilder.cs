@@ -11,9 +11,17 @@ public static class MicroserviceLayerBuilder
     public sealed record Entry(string Health, string? Root, IReadOnlyList<LayerSummaryDto> Layers,
         IReadOnlyList<EndpointDto> Endpoints);
 
-    /// <summary>ключ: "{namespace}::{нормализованное имя микросервиса}" → сводка слоёв.</summary>
-    public static IReadOnlyDictionary<string, Entry> Build(IReadOnlyList<ServiceAnalysis> analyses)
+    /// <summary>ключ: "{namespace}::{нормализованное имя микросервиса}" → сводка слоёв.
+    /// <paramref name="composeServices"/> (id+имя compose-узлов) позволяет привязать код ВНЕ /Services/
+    /// (gateway и т.п.) к его узлу по имени — иначе он остаётся без слоёв/endpoints (#75).</summary>
+    public static IReadOnlyDictionary<string, Entry> Build(IReadOnlyList<ServiceAnalysis> analyses,
+        IReadOnlyList<(string Id, string Name)>? composeServices = null)
     {
+        // имя compose-сервиса (норм. alnum) → имя: для сопоставления сегмента пути кода вне /Services/ с узлом (#75)
+        var byNorm = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (_, name) in composeServices ?? [])
+            byNorm[NormAlnum(name)] = name;
+
         var byKey = new Dictionary<string, Entry>(StringComparer.Ordinal);
         foreach (var sa in analyses)
         {
@@ -21,9 +29,9 @@ public static class MicroserviceLayerBuilder
             var location = sa.Location;
             // minimal-API эндпоинты сервиса — по тому же ключу микросервиса, что и типы (#71)
             var miniByMs = sa.MinimalEndpoints
-                .GroupBy(h => MicroserviceOf(h.File) ?? Last(location), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(h => MsKey(h.File, location, byNorm), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => (IReadOnlyList<EndpointHit>)x.ToList(), StringComparer.OrdinalIgnoreCase);
-            var groups = sa.Result.Types.GroupBy(t => MicroserviceOf(t.File) ?? Last(location), StringComparer.OrdinalIgnoreCase);
+            var groups = sa.Result.Types.GroupBy(t => MsKey(t.File, location, byNorm), StringComparer.OrdinalIgnoreCase);
             foreach (var g in groups)
             {
                 var names = g.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
@@ -54,6 +62,44 @@ public static class MicroserviceLayerBuilder
 
     /// <summary>Ключ compose-узла для сопоставления со сводкой: namespace-префикс id + норм. имя.</summary>
     public static string NodeKey(string nodeId, string nodeName) => $"{Prefix(nodeId)}::{Normalize(nodeName)}";
+
+    // Ключ микросервиса для файла: /Services/<Name> → Name; иначе — сопоставление сегмента под /src/ с именем
+    // compose-узла (код вне /Services/, напр. gateway, #75); иначе — общий хвост namespace (catch-all).
+    private static string MsKey(string file, string location, IReadOnlyDictionary<string, string> byNorm)
+    {
+        var ms = MicroserviceOf(file);
+        if (ms is not null) return ms;
+        if (byNorm.Count > 0)
+            foreach (var cand in CandidateSegments(file))
+                if (byNorm.TryGetValue(NormAlnum(cand), out var name)) return name;
+        return Last(location);
+    }
+
+    // Кандидаты имени сервиса из пути: сегменты-папки после /src/ + их последняя dotted-часть
+    // («Kalmykov.ApiGateway» → «ApiGateway»). Для матчинга с именем compose-узла (#75).
+    private static IEnumerable<string> CandidateSegments(string file)
+    {
+        var p = file.Replace('\\', '/');
+        var i = p.IndexOf("/src/", StringComparison.OrdinalIgnoreCase);
+        var rest = i >= 0 ? p[(i + 5)..] : p;
+        var parts = rest.Split('/');
+        for (var k = 0; k < parts.Length - 1; k++) // папки (последний сегмент — имя файла)
+        {
+            var seg = parts[k];
+            if (seg.Length == 0) continue;
+            yield return seg;
+            var dot = seg.LastIndexOf('.');
+            if (dot > 0 && dot < seg.Length - 1) yield return seg[(dot + 1)..];
+        }
+    }
+
+    // Имя → только буквы/цифры в нижнем регистре: «api-gateway» ≡ «ApiGateway» → «apigateway».
+    private static string NormAlnum(string s)
+    {
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (var c in s) if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+        return sb.ToString();
+    }
 
     // Микросервис из пути: сегмент после "/Services/"; null — если структуры Services/ нет.
     private static string? MicroserviceOf(string file)

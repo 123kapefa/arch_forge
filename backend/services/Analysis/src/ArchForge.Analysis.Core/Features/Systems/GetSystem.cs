@@ -72,7 +72,11 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             }
             if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
             services = ServiceSummaryBuilder.Build(analyses);              // .sln-сводка (Services[])
-            nodeLayers = MicroserviceLayerBuilder.Build(analyses);        // per-microservice слои для L0-карточек
+            // compose-узлы сервисов → привязка кода вне /Services/ (gateway) к своему узлу по имени (#75)
+            var composeServices = graph.Nodes
+                .Where(n => n.Kind == SystemNodeKind.Service)
+                .Select(n => (n.Id, n.Name)).ToList();
+            nodeLayers = MicroserviceLayerBuilder.Build(analyses, composeServices); // per-microservice слои для L0-карточек
 
             // сквозной shared kernel — отдельный drill-таргет на L0 (типы под src/Shared, вне сервисов)
             if (SharedKernelBuilder.Build(analyses) is { } sk)
