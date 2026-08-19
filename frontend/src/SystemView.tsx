@@ -357,6 +357,38 @@ function LayerInspector({ data }: { data: LayerCardData }) {
   );
 }
 
+/** L1: список HTTP-эндпоинтов сервиса (контроллеры + minimal API) — когда на L1 слой не выбран (#71). */
+function ServiceEndpoints({ node }: { node: SystemNode }) {
+  const eps = node.endpoints ?? [];
+  return (
+    <div className="inspector">
+      <div className="inspector__head">
+        <span className="inspector__dot" style={{ background: repoColor(node.name) }} />
+        <span className="inspector__name">{node.name}</span>
+      </div>
+      <div className="inspector__kind">сервис · {eps.length} endpoint(ов)</div>
+      {eps.length === 0 ? (
+        <div className="inspector__block panel__empty">эндпоинты не найдены (контроллеры / minimal API)</div>
+      ) : (
+        <div className="inspector__block">
+          <div className="inspector__sub">ENDPOINTS · {eps.length}</div>
+          <ul className="imembers__list">
+            {eps.map((e, i) => (
+              <li key={`${e.method}-${e.route}-${i}`} className="imember"
+                  title={`${e.method} ${e.route}${e.type ? ' · ' + e.type : ''}`}>
+                <span className={`verb verb-${e.method}`}>{e.method}</span>
+                <span className="imember__type ep__route">{e.route || '—'}</span>
+                {e.source === 'minimal' && <span className="iedge__kind">minimal</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="inspector__block panel__empty">двойной клик по слою → его типы (L2)</div>
+    </div>
+  );
+}
+
 function SystemInspector({ node, graph, lens, onFocus }: {
   node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void;
 }) {
@@ -1111,6 +1143,8 @@ export function SystemView() {
             <>
               <button className="crumb-link" onClick={() => { setDrill(null); setSelected(null); }}>System</button>
               {' ▸ '}<b>{(drill.data as SystemNodeData).node.name}</b>{' ▸ Слои'}
+              {(() => { const eps = (drill.data as SystemNodeData).node.endpoints?.length ?? 0;
+                return eps > 0 ? <span className="crumbs__hint"> · {eps} endpoint(ов) справа</span> : null; })()}
               {l1Loading && <span className="crumbs__hint"> · загрузка слоёв…</span>}
             </>
           ) : (
@@ -1317,7 +1351,9 @@ export function SystemView() {
                   : selectedFact
                     ? <FactInspector fact={selectedFact} scanRoot={loadedPath}
                         canGoto={!!ownerService(selectedFact.item.file)} onGoto={gotoBlock} />
-                    : <div className="panel__empty">кликните узел</div>}
+                    : drill && !drill2
+                      ? <ServiceEndpoints node={(drill.data as SystemNodeData).node} />
+                      : <div className="panel__empty">кликните узел</div>}
               </div>
             </>
           )}

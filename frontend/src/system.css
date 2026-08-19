@@ -119,6 +119,7 @@
 .imember__mark { color: var(--muted); width: 10px; flex: none; text-align: center; font-size: 10px; }
 .imember__name { color: var(--text); flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .imember__type { color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep__route { color: var(--text); } /* маршрут endpoint — основной контент строки, не приглушаем (#71) */
 /* HTTP-verb пилюля */
 .verb { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px; flex: none; letter-spacing: .03em; }
 .verb-GET { color: #57c78a; background: rgba(87,199,138,0.14); }

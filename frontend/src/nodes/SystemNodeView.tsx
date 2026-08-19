@@ -52,7 +52,10 @@ export function SystemNodeView({ data, selected }: NodeProps<SystemNodeType>) {
             </div>
           ))}
         </div>
-        <div className="svc-card__foot">двойной клик → слои (L1)</div>
+        <div className="svc-card__foot">
+          {node.endpoints && node.endpoints.length > 0 && <>⇄ {node.endpoints.length} endpoint(ов) · </>}
+          двойной клик → слои (L1)
+        </div>
         <Handle type="source" position={Position.Bottom} />
       </div>
     );
