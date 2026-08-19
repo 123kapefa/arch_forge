@@ -525,13 +525,33 @@ function FactInspector({ fact, scanRoot, canGoto, onGoto }: {
   );
 }
 
-// Ширина инспектора — до перезапуска приложения (sessionStorage, не localStorage).
+// UI-предпочтения панелей (открыто/ширина/высота) держим до перезапуска приложения (sessionStorage,
+// как ширину инспектора) — чтобы переживали перезагрузку страницы (#65/#66).
 const RIGHT_MIN = 240;
+const LEFT_MIN = 170, LEFT_DEFAULT = 210;
+const BOTTOM_MIN = 120, BOTTOM_DEFAULT = 260;
 function readRightW(): number {
   try { const v = Number(sessionStorage.getItem('af_rightW')); return v >= RIGHT_MIN ? v : 320; } catch { return 320; }
 }
 function readRightFull(): boolean {
   try { return sessionStorage.getItem('af_rightFull') === '1'; } catch { return false; }
+}
+function readBool(key: string, dflt: boolean): boolean {
+  try { const v = sessionStorage.getItem(key); return v === null ? dflt : v === '1'; } catch { return dflt; }
+}
+function readNum(key: string, dflt: number, min: number): number {
+  try { const v = Number(sessionStorage.getItem(key)); return v >= min ? v : dflt; } catch { return dflt; }
+}
+const setSS = (key: string, val: string) => { try { sessionStorage.setItem(key, val); } catch { /* quota */ } };
+
+// Кэш системного графа на перезагрузку (#64): ключ = путь + флаги (drift/layers). sessionStorage —
+// живёт до закрытия вкладки, не тащит устаревший разбор между запусками; при quota просто не кэшируем.
+const gcacheKey = (path: string, drift: boolean, layers: boolean) => `af_gcache:${drift ? 1 : 0}${layers ? 1 : 0}:${path}`;
+function readGraphCache(path: string, drift: boolean, layers: boolean): SystemGraph | null {
+  try { const s = sessionStorage.getItem(gcacheKey(path, drift, layers)); return s ? JSON.parse(s) as SystemGraph : null; } catch { return null; }
+}
+function writeGraphCache(path: string, drift: boolean, layers: boolean, g: SystemGraph): void {
+  setSS(gcacheKey(path, drift, layers), JSON.stringify(g));
 }
 
 interface ProjectActions {
@@ -619,7 +639,8 @@ export function SystemView() {
   const [minConfidence, setMinConfidence] = useState(0);
   const [hideIsolated, setHideIsolated] = useState(false);
   const [hideTests, setHideTests] = useState(false);
-  const [problemsOpen, setProblemsOpen] = useState(false); // нижняя панель «Проблемы проекта»
+  const [problemsOpen, setProblemsOpen] = useState(() => readBool('af_problemsOpen', false)); // нижняя панель «Проблемы проекта»
+  const [bottomH, setBottomH] = useState(() => readNum('af_bottomH', BOTTOM_DEFAULT, BOTTOM_MIN)); // высота нижней панели (#66)
   const [expandedProblems, setExpandedProblems] = useState<ReadonlySet<string>>(new Set()); // раскрытые проблемы (можно несколько сразу)
   const [selectedFact, setSelectedFact] = useState<{ item: ProblemItem; problem: Problem } | null>(null); // выбранный факт (инспектор)
   // цель перехода «к плашке»: сервис-владелец + файл/имя типа; focusId — id карточки в L2 (когда найдена)
@@ -629,12 +650,14 @@ export function SystemView() {
   // тик «показать плашку»: запускает шаг-1 на КАЖДЫЙ клик, даже если сервис уже раскрыт (drill не сменился)
   const [revealTick, setRevealTick] = useState(0);
   const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(new Set()); // скрытые слои (секция СЛОИ)
-  const [leftOpen, setLeftOpen] = useState(true);   // панель ВИД
-  const [rightOpen, setRightOpen] = useState(true);  // панель ИНСПЕКТОР
+  const [leftOpen, setLeftOpen] = useState(() => readBool('af_leftOpen', true));   // панель ВИД
+  const [leftW, setLeftW] = useState(() => readNum('af_leftW', LEFT_DEFAULT, LEFT_MIN)); // ширина левой панели (#66)
+  const [rightOpen, setRightOpen] = useState(() => readBool('af_rightOpen', true));  // панель ИНСПЕКТОР
   // ширина инспектора: перетаскивание границы + «на всю ширину». Держим до перезапуска (sessionStorage).
   const [rightW, setRightW] = useState(readRightW);
   const [rightFull, setRightFull] = useState(readRightFull);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null); // нижняя панель проблем — для ресайза по высоте (#66)
   const flowObsRef = useRef<ResizeObserver | null>(null);
   const [flowReady, setFlowReady] = useState(false); // монтируем ReactFlow только когда контейнер измерен (>0×0) — иначе warning про размер (#58)
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
@@ -667,9 +690,22 @@ export function SystemView() {
     flowObsRef.current = ro;
   }, []);
 
-  const load = useCallback(async (rawPath: string) => {
+  const load = useCallback(async (rawPath: string, opts?: { cache?: boolean }) => {
     const path = rawPath.trim();
     if (!path) return;
+    const { drift, layers } = flagsRef.current; // какие код-анализы гнать (выбор пользователя)
+    // Кэш на перезагрузку (#64): при restore берём готовый граф, не гоняем полный разбор.
+    // Свежий разбор — «Пере-анализировать» и смена флагов (там cache не передаётся).
+    if (opts?.cache) {
+      const cached = readGraphCache(path, drift, layers);
+      if (cached) {
+        setGraph(cached);
+        setLoadedPath(path);
+        setEdgeKinds(new Set(edgeKindsOf(cached)));
+        void fetchGitBranch(path).then(setBranch);
+        return;
+      }
+    }
     loadAbortRef.current?.abort();                 // вытесняем прежний анализ → бэкенд перестаёт жечь Roslyn
     const ctrl = new AbortController();
     loadAbortRef.current = ctrl;
@@ -680,12 +716,12 @@ export function SystemView() {
     setDrill2(null);
     setImports(null); // новый проект — сбросить кеш импортов (перезагрузятся при открытии экрана)
     try {
-      // какие код-анализы гнать — выбор пользователя (флаги drift/layers)
-      const g = await fetchSystem({ path, drift: flagsRef.current.drift, layers: flagsRef.current.layers }, ctrl.signal);
+      const g = await fetchSystem({ path, drift, layers }, ctrl.signal);
       if (loadAbortRef.current !== ctrl) return; // нас вытеснили/закрыли, пока ждали — не воскрешаем состояние
       setGraph(g);
       setLoadedPath(path);
       setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
+      writeGraphCache(path, drift, layers, g); // обновить кэш на следующую перезагрузку (#64)
       setRecents((prev) => pushRecent(prev, { path, name: g.project, nodes: g.nodes.length, at: Date.now() }));
       void fetchGitBranch(path).then(setBranch); // git-ветка для статус-бара (не блокирует)
       try { localStorage.setItem('af_path', path); } catch { /* quota */ }
@@ -747,6 +783,12 @@ export function SystemView() {
   // Ширина инспектора живёт до перезапуска приложения (sessionStorage).
   useEffect(() => { try { sessionStorage.setItem('af_rightW', String(rightW)); } catch { /* ignore */ } }, [rightW]);
   useEffect(() => { try { sessionStorage.setItem('af_rightFull', rightFull ? '1' : '0'); } catch { /* ignore */ } }, [rightFull]);
+  // Персист состояния/размеров панелей — переживают перезагрузку (#65/#66).
+  useEffect(() => setSS('af_leftOpen', leftOpen ? '1' : '0'), [leftOpen]);
+  useEffect(() => setSS('af_rightOpen', rightOpen ? '1' : '0'), [rightOpen]);
+  useEffect(() => setSS('af_problemsOpen', problemsOpen ? '1' : '0'), [problemsOpen]);
+  useEffect(() => setSS('af_leftW', String(leftW)), [leftW]);
+  useEffect(() => setSS('af_bottomH', String(bottomH)), [bottomH]);
 
   const toggleRightFull = useCallback(() => setRightFull((f) => !f), []);
   // Перетаскивание левой границы инспектора → ширина (снимает режим «на всю ширину»).
@@ -755,8 +797,8 @@ export function SystemView() {
     const body = bodyRef.current;
     if (!body) return;
     const rect = body.getBoundingClientRect();
-    const leftW = leftOpen ? 210 : 40;
-    const max = Math.max(RIGHT_MIN, rect.width - leftW - 60);
+    const leftPanelW = leftOpen ? leftW : 40;
+    const max = Math.max(RIGHT_MIN, rect.width - leftPanelW - 60);
     const onMove = (ev: MouseEvent) => {
       setRightFull(false);
       setRightW(Math.min(max, Math.max(RIGHT_MIN, rect.right - ev.clientX)));
@@ -769,14 +811,48 @@ export function SystemView() {
     document.body.style.userSelect = 'none';
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [leftOpen]);
+  }, [leftOpen, leftW]);
+
+  // Перетаскивание правой границы левой панели → её ширина (#66).
+  const startLeftResize = useCallback((e: ReactMouseEvent) => {
+    e.preventDefault();
+    const body = bodyRef.current;
+    if (!body) return;
+    const rect = body.getBoundingClientRect();
+    const max = Math.max(LEFT_MIN, rect.width - (rightOpen ? rightW : 40) - 60);
+    const onMove = (ev: MouseEvent) => setLeftW(Math.min(max, Math.max(LEFT_MIN, ev.clientX - rect.left)));
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+    };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [rightOpen, rightW]);
+
+  // Перетаскивание верхней границы нижней панели → её высота (#66). Низ панели закреплён, тянем вверх.
+  const startBottomResize = useCallback((e: ReactMouseEvent) => {
+    e.preventDefault();
+    const bottom = drawerRef.current?.getBoundingClientRect().bottom ?? window.innerHeight;
+    const max = Math.max(BOTTOM_MIN, window.innerHeight * 0.7);
+    const onMove = (ev: MouseEvent) => setBottomH(Math.min(max, Math.max(BOTTOM_MIN, bottom - ev.clientY)));
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+    };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
 
 
   // Восстановить последний открытый проект при старте.
   useEffect(() => {
     let lastPath = '';
     try { lastPath = localStorage.getItem('af_path') ?? ''; } catch { /* ignore */ }
-    if (lastPath) void load(lastPath);
+    if (lastPath) void load(lastPath, { cache: true }); // перезагрузка — из кэша, без повторного разбора (#64)
   }, [load]);
 
   // Клавиатура: ⌘S — сохранить раскладку; Esc — закрыть меню проекта.
@@ -1039,7 +1115,8 @@ export function SystemView() {
           <ImportsScreen imports={imports} loading={importsLoading} />
         ) : (
         <>
-        <aside className={`panel panel--view ${leftOpen ? '' : 'is-collapsed'}`}>
+        <aside className={`panel panel--view ${leftOpen ? '' : 'is-collapsed'}`} style={leftOpen ? { width: leftW } : undefined}>
+          {leftOpen && <div className="panel__resize panel__resize--right" onMouseDown={startLeftResize} title="Потянуть — изменить ширину" />}
           {!leftOpen ? (
             <button className="panel__collapsed" onClick={() => setLeftOpen(true)} title="Показать ВИД">
               <Icon name="chevronRight" size={16} />
@@ -1226,7 +1303,8 @@ export function SystemView() {
 
       {/* раскрывающийся список проблем (над полосой «ПРОБЛЕМЫ ПРОЕКТА») */}
       {graph && problemsOpen && (
-        <div className="problems-drawer">
+        <div className="problems-drawer" ref={drawerRef} style={{ height: bottomH }}>
+          <div className="pd__resize" onMouseDown={startBottomResize} title="Потянуть — изменить высоту" />
           <div className="pd__list">
             {allProblems.length === 0 ? (
               <div className="panel__empty">проблем не найдено</div>
