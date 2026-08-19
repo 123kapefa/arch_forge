@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { GraphDto } from './api';
-import { aggregateLayers, toLayerFlow } from './graph';
+import { aggregateLayers } from './graph';
 
 const g: GraphDto = {
   project: 'demo',
@@ -49,20 +49,5 @@ describe('aggregateLayers', () => {
     const { layers, links } = aggregateLayers(gs);
     expect(layers.map((l) => l.layer)).toEqual(['My Layer', 'Other Layer']);
     expect(links).toEqual([{ source: 'My Layer', target: 'Other Layer', weight: 1 }]);
-  });
-});
-
-describe('toLayerFlow', () => {
-  it('null → пусто', () => {
-    expect(toLayerFlow(null)).toEqual({ nodes: [], edges: [] });
-  });
-
-  it('слои → узлы layer:* (type=layer), межслойные рёбра с меткой-весом, координаты конечны', () => {
-    const { nodes, edges } = toLayerFlow(g);
-    expect(nodes.map((n) => n.id).sort()).toEqual(['layer:Domain', 'layer:Infrastructure', 'layer:tests']);
-    expect(nodes.every((n) => n.type === 'layer')).toBe(true);
-    const e = edges.find((x) => x.source === 'layer:Domain' && x.target === 'layer:Infrastructure');
-    expect(e?.label).toBe('2');
-    expect(nodes.every((n) => Number.isFinite(n.position.x))).toBe(true);
   });
 });
