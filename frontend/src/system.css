@@ -539,6 +539,7 @@
 .problems-drawer {
   border-top: 1px solid var(--card-line); background: var(--panel);
   display: flex; flex-direction: column; position: relative;
+  max-height: 80vh; /* бэкстоп: при уменьшении окна (live-resize) высота не выдавит статус-бар/карту (#66) */
 }
 /* ручка изменения высоты — на верхней границе нижней панели, во всю ширину */
 .pd__resize {
