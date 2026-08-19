@@ -26,7 +26,8 @@ public static class SharedKernelBuilder
 
             // отдельный вид «shared» → своя расцветка/оформление на L0; drill по layers как у сервиса
             var node = new SystemNode("shared/kernel", "Shared kernel", SystemNodeKind.Shared);
-            var entry = new MicroserviceLayerBuilder.Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers);
+            var entry = new MicroserviceLayerBuilder.Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers,
+                EndpointCollector.FromTypes(shared));
             return (node, entry);
         }
         return null;

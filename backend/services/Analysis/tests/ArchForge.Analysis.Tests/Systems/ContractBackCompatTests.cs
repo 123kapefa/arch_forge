@@ -81,6 +81,22 @@ public class ContractBackCompatTests
     }
 
     [Fact]
+    public void Node_endpoints_round_trip()  // #71
+    {
+        var node = new NodeDto("gw", "api-gateway", "service", "", "", "", "", [],
+            Level: "service", Health: "ok",
+            Endpoints: [new EndpointDto("GET", "/api/auth/csrf", "minimal", Line: 20),
+                        new EndpointDto("POST", "/audit/record", "controller", Type: "AuditController")]);
+
+        var back = JsonSerializer.Deserialize<NodeDto>(JsonSerializer.Serialize(node, Web), Web)!;
+
+        Assert.Equal(2, back.Endpoints!.Count);
+        Assert.Equal("minimal", back.Endpoints![0].Source);
+        Assert.Equal("/api/auth/csrf", back.Endpoints![0].Route);
+        Assert.Equal("AuditController", back.Endpoints![1].Type);
+    }
+
+    [Fact]
     public void Environment_dto_round_trips()  // зарезервированная запись — smoke
     {
         var back = JsonSerializer.Deserialize<EnvironmentDto>(

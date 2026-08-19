@@ -53,7 +53,9 @@ public sealed record NodeDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<LayerSummaryDto>? Layers = null,        // слои сервиса-узла (L0: «внутри сервиса — слои»)
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? Root = null);                                  // папка микросервиса (drill L1: /api/map по нему)
+    string? Root = null,                                   // папка микросервиса (drill L1: /api/map по нему)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<EndpointDto>? Endpoints = null);         // HTTP-эндпоинты сервиса (L1-список + счётчик L0; #71)
 
 public sealed record EdgeDto(
     string Id,
@@ -120,6 +122,15 @@ public sealed record ConventionsDto(
 public sealed record ConvEntryDto(string Name, string Role);
 public sealed record ConvRuleDto(string Suffix, string Marker, string Role);
 public sealed record DtoMappingDto(IReadOnlyList<string> Suffix, IReadOnlyList<string> CentralizeIn, int MinSites, int MinFiles);
+
+/// <summary>HTTP-эндпоинт сервиса (L1). Source: controller ([Http*]/ControllerBase) | minimal (app.MapGet/...).
+/// Route — полный путь, насколько разрешимо статически (склейка класс-[Route] + метод; константы резолвятся).</summary>
+public sealed record EndpointDto(
+    string Method,     // GET | POST | PUT | DELETE | PATCH
+    string Route,      // путь (может быть пустым/относительным, если статически не разрешён)
+    string Source,     // controller | minimal
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Type = null,   // тип-владелец (контроллер)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line = null);
 
 /// <summary>Слой сервиса в L0-сводке: имя, здоровье, краткая заметка, число типов (превью L1).</summary>
 public sealed record LayerSummaryDto(

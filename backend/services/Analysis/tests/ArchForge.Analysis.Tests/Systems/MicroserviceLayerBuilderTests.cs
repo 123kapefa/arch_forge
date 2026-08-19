@@ -34,6 +34,75 @@ public class MicroserviceLayerBuilderTests
     }
 
     [Fact]
+    public void Aggregates_service_endpoints_from_controller_members()
+    {
+        RawType[] raw =
+        [
+            new("SettingsController", "class", [], "()", "API",
+                "/x/src/Services/Settings/Settings.API/SettingsController.cs")
+            {
+                Members = [new RawMember("GetPublic", "endpoint", "() : void", "GET", "/api/settings/public", 20)],
+            },
+        ];
+        var map = MicroserviceLayerBuilder.Build([Svc("product/backend", raw)]);
+
+        var entry = map["product/backend::settings"];
+        Assert.Single(entry.Endpoints);
+        Assert.Equal("GET", entry.Endpoints[0].Method);
+        Assert.Equal("/api/settings/public", entry.Endpoints[0].Route);
+        Assert.Equal("controller", entry.Endpoints[0].Source);
+    }
+
+    [Fact]
+    public void Merges_minimal_api_endpoints_with_controllers()
+    {
+        RawType[] raw =
+        [
+            new("GatewayController", "class", [], "()", "API",
+                "/x/src/Services/Gateway/Gateway.API/GatewayController.cs")
+            {
+                Members = [new RawMember("Health", "endpoint", "() : void", "GET", "/gw/health", 10)],
+            },
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Sln", "/gateway", "compose.yml"), "product/backend",
+            Classifier.Classify(raw, ConventionPack.Default()))
+        {
+            MinimalEndpoints = [new EndpointHit("POST", "/api/auth/csrf",
+                "/x/src/Services/Gateway/Gateway.API/Program.cs", 20)],
+        };
+
+        var eps = MicroserviceLayerBuilder.Build([sa])["product/backend::gateway"].Endpoints;
+
+        Assert.Equal(2, eps.Count);
+        Assert.Contains(eps, e => e.Source == "controller" && e.Route == "/gw/health");
+        Assert.Contains(eps, e => e.Source == "minimal" && e.Route == "/api/auth/csrf");
+    }
+
+    [Fact]
+    public void Maps_non_services_code_to_compose_node_by_name() // #75
+    {
+        // код gateway лежит вне /Services/ (под /src/ApiGateway/Kalmykov.ApiGateway) — привязываем к узлу api-gateway
+        RawType[] raw =
+        [
+            new("GatewayRouteBuilder", "class", [], "()", "Api",
+                "/x/backend/src/ApiGateway/Kalmykov.ApiGateway/GatewayRouteBuilder.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Sln", "/x/backend", "compose.yml"), "backend",
+            Classifier.Classify(raw, ConventionPack.Default()))
+        {
+            MinimalEndpoints = [new EndpointHit("GET", "/api/auth/csrf",
+                "/x/backend/src/ApiGateway/Kalmykov.ApiGateway/Program.cs", 20)],
+        };
+        var compose = new (string, string)[] { ("backend/api-gateway", "api-gateway") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        var key = MicroserviceLayerBuilder.NodeKey("backend/api-gateway", "api-gateway");
+        Assert.True(map.ContainsKey(key), $"нет ключа {key}: [{string.Join(", ", map.Keys)}]");
+        Assert.Contains(map[key].Endpoints, e => e.Source == "minimal" && e.Route == "/api/auth/csrf");
+    }
+
+    [Fact]
     public void Single_microservice_sln_keyed_by_namespace()
     {
         // нет Services/ → весь .sln = один сервис, ключ по имени namespace (auth-service → auth)

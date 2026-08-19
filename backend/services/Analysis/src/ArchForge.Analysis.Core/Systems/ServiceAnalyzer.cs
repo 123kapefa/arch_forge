@@ -3,7 +3,11 @@ using ArchForge.Analysis.Domain;
 namespace ArchForge.Analysis.Core.Systems;
 
 /// <summary>Результат per-service код-разбора; <c>Result == null</c> — сервис не разобрался (изоляция ошибок).</summary>
-public sealed record ServiceAnalysis(DiscoveredService Service, string Location, AnalysisResult? Result);
+public sealed record ServiceAnalysis(DiscoveredService Service, string Location, AnalysisResult? Result)
+{
+    // minimal-API эндпоинты сервиса (app.MapGet/…); контроллеры идут через Result.Types[].Members. #71
+    public IReadOnlyList<EndpointHit> MinimalEndpoints { get; init; } = [];
+}
 
 /// <summary>Хелперы над результатами разбора — единая точка понятия «сервис не разобрался».</summary>
 public static class ServiceAnalysisExtensions
@@ -16,7 +20,8 @@ public static class ServiceAnalysisExtensions
 // Общий per-service код-разбор для линз, требующих КОДА (дрейф от свода, нарушения слоёв):
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
-public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier)
+public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
+    IEndpointSource? endpoints = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -45,7 +50,11 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { result = classifier.Classify(types.Read(svc.Root, ct), pack); }
             catch (OperationCanceledException) { throw; }  // отмена — наверх (Parallel.For сведёт к OCE)
             catch { result = null; }                       // сбой сервиса → null: не роняем скан, линза поднимет Coverage (adr/0008)
-            results[i] = new ServiceAnalysis(svc, location, result);
+            IReadOnlyList<EndpointHit> mini = [];          // minimal-API эндпоинты (#71) — отдельный try: их сбой не роняет разбор
+            try { mini = endpoints?.Read(svc.Root, ct) ?? []; }
+            catch (OperationCanceledException) { throw; }
+            catch { mini = []; }
+            results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini };
         });
         return results;
     }
