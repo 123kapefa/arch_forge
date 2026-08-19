@@ -57,6 +57,40 @@ export function problemsUnder(problems: Problem[] | undefined, namespace: string
   );
 }
 
+/** Узел-владелец файла: самый специфичный (самый ДЛИННЫЙ root-префикс). null — файл не под чьим-то root.
+ *  Длиннейший, а не первый: широкий root (напр. gateway = корень backend) — префикс файлов всех сервисов. */
+export function ownerByRoot(nodes: SystemNode[], file: string | undefined): SystemNode | null {
+  if (!file) return null;
+  let best: SystemNode | null = null;
+  for (const n of nodes) {
+    if (!n.root) continue;
+    // совпадение по ГРАНИЦЕ сегмента: файл = root или начинается с root + '/' (иначе «…/Cat» ложно матчит «…/Catalog/…»)
+    const match = file === n.root || file.startsWith(n.root.endsWith('/') ? n.root : n.root + '/');
+    if (match && (best === null || n.root.length > (best.root?.length ?? 0))) best = n;
+  }
+  return best;
+}
+
+/** Сколько проблем активной линзы «попадает» в каждый узел — для подсветки L0 (#70).
+ *  Дрейф локализован на системе (Location — не узел) → красим владельцев файлов-фактов, даже если Location
+ *  случайно = id узла (напр. dto-mapping кладёт Location = первый сервис по discovery). Арх — по узлу-локации. */
+export function lensHitsByNode(graph: SystemGraph | null | undefined, lens: Lens): Map<string, number> {
+  const hits = new Map<string, number>();
+  if (!graph) return hits;
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  const add = (id: string, n = 1) => hits.set(id, (hits.get(id) ?? 0) + n);
+  for (const p of graph.problems ?? []) {
+    if (categoryOf(p) !== lens) continue;
+    const items = p.items ?? [];
+    if (lens === 'convention' && items.length > 0) {
+      for (const it of items) { const svc = ownerByRoot(graph.nodes, it.file); if (svc) add(svc.id); }
+    } else if (ids.has(p.location)) {
+      add(p.location, Math.max(1, items.length));
+    }
+  }
+  return hits;
+}
+
 /** Узлы системного графа, сгруппированные по виду (service/datastore/topic/external) — для L0-легенды. */
 export function nodesByKind(graph: SystemGraph): Record<string, SystemNode[]> {
   const by: Record<string, SystemNode[]> = {};

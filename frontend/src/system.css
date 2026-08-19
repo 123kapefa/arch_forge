@@ -306,7 +306,7 @@
 .panel__group { margin-bottom: 16px; }
 .panel__label { font-size: 10px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
 .panel__empty { color: var(--muted); font-style: italic; }
-.panel__hint { font-size: 10px; color: var(--muted); margin-top: 5px; }
+.panel__hint { font-size: 10px; color: var(--muted); margin-top: 5px; } /* + подпись линзы (#70) */
 /* индикатор источника свода (встроенный / файл) — кнопка, открывает просмотрщик */
 .panel__conv { display: block; width: 100%; text-align: left; cursor: pointer; margin: 7px 0 2px; padding: 6px 8px; background: var(--card); border: 1px solid var(--card-line); border-radius: 7px; font: inherit; }
 .panel__conv:hover { border-color: var(--accent); }
@@ -481,6 +481,11 @@
 .svc-card__head .badge { margin-left: auto; }
 .badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; }
 .badge--warning { background: rgba(224, 178, 74, 0.18); color: var(--warn); }
+.badge--arch { background: rgba(229, 72, 77, 0.16); color: var(--crit); }   /* линза «реальные» — красный (#70) */
+.badge--drift { background: rgba(224, 178, 74, 0.18); color: var(--warn); } /* линза «дрейф» — жёлтый (#70) */
+/* ореол узла по активной линзе (#70): outline (а не box-shadow) — не конфликтует с кольцом выделения */
+.svc-card.lenshit--architecture, .sys-node.lenshit--architecture { outline: 2px solid rgba(229, 72, 77, 0.6); outline-offset: 1px; }
+.svc-card.lenshit--convention, .sys-node.lenshit--convention { outline: 2px solid rgba(224, 178, 74, 0.65); outline-offset: 1px; }
 .svc-card__layers { padding: 3px 0; }
 .svc-layer { display: flex; align-items: center; gap: 8px; padding: 3px 11px; font-size: 12px; }
 .svc-layer__name { flex: none; min-width: 60px; } /* длинные имена само-растягиваются; короткие отдают место заметке */

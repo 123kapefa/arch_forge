@@ -22,9 +22,10 @@ import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
 import { TypeCard, type TypeCardData } from './nodes/TypeCard';
-import { problemsByLens, severityCounts, categoryOf, namespaceOf, type Lens } from './systemModel';
+import { problemsByLens, severityCounts, categoryOf, namespaceOf, ownerByRoot, lensHitsByNode, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
+import { LensContext } from './lensContext';
 import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
@@ -998,10 +999,8 @@ export function SystemView() {
   const allEdgeKinds = useMemo(() => (graph ? edgeKindsOf(graph) : []), [graph]);
 
   // Сервис-владелец файла (корень которого — префикс пути) → к нему ведёт drill для перехода к плашке.
-  const ownerService = useCallback((file?: string): SystemNode | null => {
-    if (!file) return null;
-    return graph?.nodes.find((n) => n.root && file.startsWith(n.root)) ?? null;
-  }, [graph]);
+  // владелец файла = самый специфичный root (иначе широкий root gateway перехватывает все сервисы) — #70
+  const ownerService = useCallback((file?: string): SystemNode | null => ownerByRoot(graph?.nodes ?? [], file), [graph]);
 
   // Клик по факту → показать его в инспекторе (имя · слой · заметка · файл).
   const revealFact = useCallback((item: ProblemItem, problem: Problem) => {
@@ -1090,6 +1089,8 @@ export function SystemView() {
   // замечания линзы «свод» (дрейф + маппинг и т.п.) — мягкие, не входят в crit/warn статус-бара
   const convCount = useMemo(() => (graph?.problems ?? []).filter((p) => categoryOf(p) === 'convention').length, [graph]);
   const lensProblems = useMemo(() => problemsByLens(graph?.problems, lens), [graph, lens]);
+  // Линза красит узлы L0 по её проблемам (#70) — чистая логика в systemModel (тестируемо).
+  const lensHits = useMemo(() => lensHitsByNode(graph, lens), [graph, lens]);
   // Нижний список — ВСЕ проблемы (обе линзы), с тегом категории: линза красит граф, а не прячет список.
   const allProblems = useMemo(() => {
     const ord: Record<string, number> = { critical: 0, warning: 1, coverage: 2, info: 3 };
@@ -1197,6 +1198,11 @@ export function SystemView() {
               <input type="radio" name="lens" checked={lens === 'convention'} onChange={() => setLens('convention')} />
               дрейф от свода
             </label>
+            <div className="panel__hint">
+              {lens === 'architecture'
+                ? 'красным — узлы с реальными арх-проблемами (общая БД, циклы, нарушения слоёв)'
+                : 'жёлтым — узлы с дрейфом от свода (типы не по конвенциям)'}
+            </div>
           </div>
           <div className="panel__group">
             <div className="panel__label">АНАЛИЗ КОДА</div>
@@ -1296,6 +1302,7 @@ export function SystemView() {
             {graph ? (
               flowReady && (
               <HiddenLayersContext.Provider value={hiddenLayers}>
+                <LensContext.Provider value={{ lens, hits: lensHits }}>
                 <ReactFlowProvider>
                   <Flow
                     ref={flowRef}
@@ -1310,6 +1317,7 @@ export function SystemView() {
                     focusTargetRef={focusCardRef}
                   />
                 </ReactFlowProvider>
+                </LensContext.Provider>
               </HiddenLayersContext.Provider>
               )
             ) : (
