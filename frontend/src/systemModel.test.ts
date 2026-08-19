@@ -9,6 +9,8 @@ import {
   nodesByKind,
   namespaceOf,
   serviceRootPath,
+  ownerByRoot,
+  lensHitsByNode,
 } from './systemModel';
 
 const problems: Problem[] = [
@@ -119,5 +121,40 @@ describe('namespaceOf / serviceRootPath (drill L0→L1)', () => {
   });
   it('узел без namespace → корень скана', () => {
     expect(serviceRootPath('/ws', { id: 'redis', name: 'redis', kind: 'datastore' })).toBe('/ws');
+  });
+});
+
+describe('ownerByRoot / lensHitsByNode (подсветка линзы #70)', () => {
+  const node = (id: string, root?: string) => ({ id, name: id, kind: 'service', root });
+
+  it('ownerByRoot берёт самый длинный root-префикс (широкий gateway не перехватывает)', () => {
+    const nodes = [node('gw', '/r/backend'), node('catalog', '/r/backend/src/Services/Catalog')];
+    expect(ownerByRoot(nodes, '/r/backend/src/Services/Catalog/Item.cs')?.id).toBe('catalog');
+    expect(ownerByRoot(nodes, '/r/backend/Program.cs')?.id).toBe('gw'); // под catalog не подходит → широкий
+    expect(ownerByRoot(nodes, '/other/x.cs')).toBeNull();
+    expect(ownerByRoot(nodes, undefined)).toBeNull();
+  });
+
+  it('lensHitsByNode: арх — по локализации; дрейф — по владельцу файла факта', () => {
+    const g: SystemGraph = {
+      project: 'p',
+      nodes: [node('gw', '/r/backend'), node('catalog', '/r/backend/src/Services/Catalog'),
+              node('cart', '/r/backend/src/Services/Cart')],
+      edges: [], coverage: { marker: 0, heuristic: 0, unknown: 0, total: 0 }, drift: [],
+      problems: [
+        { id: 'p0', severity: 'critical', kind: 'shared-db', title: 'x', location: 'catalog', category: 'architecture' },
+        { id: 'p1', severity: 'info', kind: 'drift', title: 'd', location: 'backend', category: 'convention',
+          items: [{ name: 'A', layer: 'Domain', note: '', file: '/r/backend/src/Services/Catalog/A.cs' },
+                  { name: 'B', layer: 'Domain', note: '', file: '/r/backend/src/Services/Cart/B.cs' }] },
+      ],
+    };
+    const arch = lensHitsByNode(g, 'architecture');
+    expect(arch.get('catalog')).toBe(1);
+    expect(arch.has('cart')).toBe(false);
+
+    const conv = lensHitsByNode(g, 'convention');
+    expect(conv.get('catalog')).toBe(1);
+    expect(conv.get('cart')).toBe(1);
+    expect(conv.has('gw')).toBe(false); // факты специфичнее — на gw ничего
   });
 });

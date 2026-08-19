@@ -57,6 +57,31 @@ export function problemsUnder(problems: Problem[] | undefined, namespace: string
   );
 }
 
+/** Узел-владелец файла: самый специфичный (самый ДЛИННЫЙ root-префикс). null — файл не под чьим-то root.
+ *  Длиннейший, а не первый: широкий root (напр. gateway = корень backend) — префикс файлов всех сервисов. */
+export function ownerByRoot(nodes: SystemNode[], file: string | undefined): SystemNode | null {
+  if (!file) return null;
+  let best: SystemNode | null = null;
+  for (const n of nodes)
+    if (n.root && file.startsWith(n.root) && (best === null || n.root.length > (best.root?.length ?? 0))) best = n;
+  return best;
+}
+
+/** Сколько проблем активной линзы «попадает» в каждый узел — для подсветки L0 (#70).
+ *  Арх — по локализации (Location = id узла); дрейф локализован на системе → разносим факты по владельцу файла. */
+export function lensHitsByNode(graph: SystemGraph | null | undefined, lens: Lens): Map<string, number> {
+  const hits = new Map<string, number>();
+  if (!graph) return hits;
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  const add = (id: string, n = 1) => hits.set(id, (hits.get(id) ?? 0) + n);
+  for (const p of graph.problems ?? []) {
+    if (categoryOf(p) !== lens) continue;
+    if (ids.has(p.location)) { add(p.location, Math.max(1, p.items?.length ?? 1)); continue; }
+    for (const it of p.items ?? []) { const svc = ownerByRoot(graph.nodes, it.file); if (svc) add(svc.id); }
+  }
+  return hits;
+}
+
 /** Узлы системного графа, сгруппированные по виду (service/datastore/topic/external) — для L0-легенды. */
 export function nodesByKind(graph: SystemGraph): Record<string, SystemNode[]> {
   const by: Record<string, SystemNode[]> = {};
