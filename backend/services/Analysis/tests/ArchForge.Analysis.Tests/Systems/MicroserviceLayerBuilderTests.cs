@@ -54,6 +54,31 @@ public class MicroserviceLayerBuilderTests
     }
 
     [Fact]
+    public void Merges_minimal_api_endpoints_with_controllers()
+    {
+        RawType[] raw =
+        [
+            new("GatewayController", "class", [], "()", "API",
+                "/x/src/Services/Gateway/Gateway.API/GatewayController.cs")
+            {
+                Members = [new RawMember("Health", "endpoint", "() : void", "GET", "/gw/health", 10)],
+            },
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Sln", "/gateway", "compose.yml"), "product/backend",
+            Classifier.Classify(raw, ConventionPack.Default()))
+        {
+            MinimalEndpoints = [new EndpointHit("POST", "/api/auth/csrf",
+                "/x/src/Services/Gateway/Gateway.API/Program.cs", 20)],
+        };
+
+        var eps = MicroserviceLayerBuilder.Build([sa])["product/backend::gateway"].Endpoints;
+
+        Assert.Equal(2, eps.Count);
+        Assert.Contains(eps, e => e.Source == "controller" && e.Route == "/gw/health");
+        Assert.Contains(eps, e => e.Source == "minimal" && e.Route == "/api/auth/csrf");
+    }
+
+    [Fact]
     public void Single_microservice_sln_keyed_by_namespace()
     {
         // нет Services/ → весь .sln = один сервис, ключ по имени namespace (auth-service → auth)

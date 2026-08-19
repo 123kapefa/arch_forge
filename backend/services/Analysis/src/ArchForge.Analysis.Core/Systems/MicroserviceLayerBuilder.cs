@@ -15,20 +15,26 @@ public static class MicroserviceLayerBuilder
     public static IReadOnlyDictionary<string, Entry> Build(IReadOnlyList<ServiceAnalysis> analyses)
     {
         var byKey = new Dictionary<string, Entry>(StringComparer.Ordinal);
-        foreach (var (svc, location, analysis) in analyses)
+        foreach (var sa in analyses)
         {
-            if (analysis is null) continue;
-            var groups = analysis.Types.GroupBy(t => MicroserviceOf(t.File) ?? Last(location), StringComparer.OrdinalIgnoreCase);
+            if (sa.Result is null) continue;
+            var location = sa.Location;
+            // minimal-API эндпоинты сервиса — по тому же ключу микросервиса, что и типы (#71)
+            var miniByMs = sa.MinimalEndpoints
+                .GroupBy(h => MicroserviceOf(h.File) ?? Last(location), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => (IReadOnlyList<EndpointHit>)x.ToList(), StringComparer.OrdinalIgnoreCase);
+            var groups = sa.Result.Types.GroupBy(t => MicroserviceOf(t.File) ?? Last(location), StringComparer.OrdinalIgnoreCase);
             foreach (var g in groups)
             {
                 var names = g.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
-                var edges = analysis.Edges.Where(e => names.Contains(e.From) && names.Contains(e.To)).ToList();
+                var edges = sa.Result.Edges.Where(e => names.Contains(e.From) && names.Contains(e.To)).ToList();
                 var types = g.ToList();
                 var layers = ServiceSummaryBuilder.Layers(types, edges);
                 if (layers.Count == 0) continue;
                 // корень папки микросервиса (для drill L1: /api/map по нему) — .../Services/<Name> или корень .sln
-                var root = g.Select(t => ServiceRootOf(t.File)).FirstOrDefault(r => r is not null) ?? svc.Root;
-                var endpoints = EndpointCollector.FromTypes(types); // HTTP-эндпоинты сервиса (L1-список; #71)
+                var root = g.Select(t => ServiceRootOf(t.File)).FirstOrDefault(r => r is not null) ?? sa.Service.Root;
+                var mini = miniByMs.TryGetValue(g.Key, out var m) ? m : [];
+                var endpoints = EndpointCollector.From(types, mini); // контроллеры + minimal API (L1-список; #71)
                 byKey[$"{location}::{Normalize(g.Key)}"] = new Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers, endpoints);
             }
         }

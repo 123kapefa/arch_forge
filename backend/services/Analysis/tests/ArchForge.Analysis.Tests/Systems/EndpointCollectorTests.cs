@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core;
 using ArchForge.Analysis.Core.Systems;
 using ArchForge.Analysis.Domain;
 
@@ -46,5 +47,20 @@ public class EndpointCollectorTests
     {
         var t = Type("Plain", new MemberInfo("Value", "property", "string"));
         Assert.Empty(EndpointCollector.FromTypes([t]));
+    }
+
+    [Fact]
+    public void Merges_controllers_and_minimal_sorted_with_source()
+    {
+        var t = Type("C", new MemberInfo("Get", "endpoint", HttpMethod: "GET", Route: "/z"));
+        var hits = new[] { new EndpointHit("POST", "api/a", "/f.cs", 1) }; // без ведущего слэша → нормализуется
+
+        var eps = EndpointCollector.From([t], hits);
+
+        Assert.Equal(2, eps.Count);
+        Assert.Equal("/api/a", eps[0].Route);   // route "/api/a" < "/z" по Ordinal
+        Assert.Equal("minimal", eps[0].Source);
+        Assert.Equal("/z", eps[1].Route);
+        Assert.Equal("controller", eps[1].Source);
     }
 }

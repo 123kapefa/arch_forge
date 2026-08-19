@@ -14,6 +14,7 @@ public static class Registration
             ActivatorUtilities.CreateInstance<RoslynSemanticTypeSource>(sp, sp.GetRequiredService<RoslynTypeSource>()));
         services.AddSingleton<IImportSource, CsprojImportSource>();
         services.AddSingleton<IConstructionSource, RoslynConstructionSource>(); // ось usage-графа (пока источник; потребитель — детектор далее)
+        services.AddSingleton<IEndpointSource, RoslynMinimalApiSource>();        // minimal-API эндпоинты для L1 (#71)
         return services;
     }
 }
