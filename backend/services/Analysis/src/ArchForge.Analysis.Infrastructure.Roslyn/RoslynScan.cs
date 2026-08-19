@@ -12,17 +12,25 @@ internal static class RoslynScan
     // аномалий; реальные сервисы (сотни–тысячи файлов) не задевает. Урезание видимо в логах вызывающего (adr/0008).
     internal const int MaxFilesPerScan = 20_000;
 
-    // .cs таргета, кроме генерённого/сборочного мусора (adr/0008) и гигантских файлов (робастность).
-    public static IEnumerable<string> EnumerateCs(string path) =>
-        Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
+    // .cs таргета, кроме генерённого/сборочного мусора (adr/0008), скрытых/служебных каталогов и гигантских файлов.
+    public static IEnumerable<string> EnumerateCs(string path)
+    {
+        var root = path.Replace('\\', '/').TrimEnd('/');
+        return Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
             .Where(f =>
             {
                 var n = f.Replace('\\', '/');
                 if (n.Contains("/obj/") || n.Contains("/bin/")
                     || n.EndsWith(".g.cs") || n.EndsWith(".Designer.cs")) return false;
+                // скрытые/служебные каталоги ВНУТРИ таргета (.git, .claude/worktrees, .vs, .idea) — копии/мусор,
+                // дублируют разбор (типы/рёбра/эндпоинты ×N). Точка-сегмент проверяем относительно корня, чтобы
+                // не отсеять сам таргет, если он лежит под скрытой папкой.
+                var rel = n.StartsWith(root, StringComparison.Ordinal) ? n[root.Length..] : n;
+                if (rel.Contains("/.", StringComparison.Ordinal)) return false;
                 try { return new FileInfo(f).Length <= MaxFileBytes; }
                 catch { return false; } // недоступный файл — пропускаем (изоляция ошибок)
             });
+    }
 
     /// <summary>Список .cs с капом числа файлов (backstop). <paramref name="capped"/> = список был урезан
     /// (пата-репо) → вызывающий логирует деградацию (adr/0008).</summary>
