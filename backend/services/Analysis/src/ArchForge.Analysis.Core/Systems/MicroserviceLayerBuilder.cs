@@ -20,7 +20,7 @@ public static class MicroserviceLayerBuilder
         // имя compose-сервиса (норм. alnum) → имя: для сопоставления сегмента пути кода вне /Services/ с узлом (#75)
         var byNorm = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (_, name) in composeServices ?? [])
-            byNorm[NormAlnum(name)] = name;
+            byNorm.TryAdd(NormAlnum(name), name); // при коллизии норм.-имён — первое (детерминизм по порядку узлов)
 
         var byKey = new Dictionary<string, Entry>(StringComparer.Ordinal);
         foreach (var sa in analyses)
@@ -75,15 +75,18 @@ public static class MicroserviceLayerBuilder
         return Last(location);
     }
 
-    // Кандидаты имени сервиса из пути: сегменты-папки после /src/ + их последняя dotted-часть
-    // («Kalmykov.ApiGateway» → «ApiGateway»). Для матчинга с именем compose-узла (#75).
+    // Кандидаты имени сервиса из пути: только ВЕРХНИЕ папки проекта после /src/ (+ их последняя dotted-часть,
+    // «Kalmykov.ApiGateway» → «ApiGateway»). Ограничение глубины — чтобы подпапки (напр. Routes/Catalog в gateway)
+    // не приписали код чужому сервису (#75). Для матчинга с именем compose-узла.
+    private const int MaxCandidateDepth = 2; // проект обычно /src/<Area>/<Project> — двух сегментов хватает
     private static IEnumerable<string> CandidateSegments(string file)
     {
         var p = file.Replace('\\', '/');
         var i = p.IndexOf("/src/", StringComparison.OrdinalIgnoreCase);
         var rest = i >= 0 ? p[(i + 5)..] : p;
         var parts = rest.Split('/');
-        for (var k = 0; k < parts.Length - 1; k++) // папки (последний сегмент — имя файла)
+        var limit = Math.Min(parts.Length - 1, MaxCandidateDepth); // без последнего сегмента-файла; только верх
+        for (var k = 0; k < limit; k++)
         {
             var seg = parts[k];
             if (seg.Length == 0) continue;

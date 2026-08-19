@@ -15,14 +15,20 @@ public class ServiceAnalyzerTests
         public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) => read(path);
     }
 
+    private sealed class StubEndpoints(Func<string, IReadOnlyList<EndpointHit>> read) : IEndpointSource
+    {
+        public IReadOnlyList<EndpointHit> Read(string root, CancellationToken ct = default) => read(root);
+    }
+
     private static readonly RawType[] Some = [new("Foo", "class", [], "()", "Application", "x.cs")];
 
     // сервис С compose (иначе анализатор его отфильтрует — нет узлов в графе)
     private static DiscoveredService Svc(string root, string name) =>
         new(name, Path.Combine(root, name), "docker-compose.yml");
 
-    private static ServiceAnalyzer Analyzer(IReadOnlyList<DiscoveredService> svcs, Func<string, IReadOnlyList<RawType>> read) =>
-        new(new StubDiscovery(svcs), new StubTypes(read), new TypeClassifier());
+    private static ServiceAnalyzer Analyzer(IReadOnlyList<DiscoveredService> svcs, Func<string, IReadOnlyList<RawType>> read,
+        IEndpointSource? endpoints = null) =>
+        new(new StubDiscovery(svcs), new StubTypes(read), new TypeClassifier(), endpoints);
 
     private static string TempRoot() =>
         Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "archforge_sa_" + Guid.NewGuid().ToString("N"))).FullName;
@@ -78,6 +84,34 @@ public class ServiceAnalyzerTests
         {
             var one = Assert.Single(Analyzer([Svc(root, "bad")], _ => throw new IOException("boom")).Analyze(root, ConventionPack.Default()));
             Assert.Null(one.Result); // изоляция ошибок: сбой → null (линза поднимет Coverage), а не исключение
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Collects_minimal_endpoints_per_service() // #71
+    {
+        var root = TempRoot();
+        try
+        {
+            var eps = new StubEndpoints(_ => [new EndpointHit("GET", "/x", "P.cs", 1)]);
+            var one = Assert.Single(Analyzer([Svc(root, "a")], _ => Some, eps).Analyze(root, ConventionPack.Default()));
+            Assert.Single(one.MinimalEndpoints);
+            Assert.Equal("/x", one.MinimalEndpoints[0].Route);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Failing_endpoint_scan_does_not_break_service_analysis() // #71: изоляция minimal-скана
+    {
+        var root = TempRoot();
+        try
+        {
+            var eps = new StubEndpoints(_ => throw new IOException("boom"));
+            var one = Assert.Single(Analyzer([Svc(root, "a")], _ => Some, eps).Analyze(root, ConventionPack.Default()));
+            Assert.NotNull(one.Result);         // разбор типов уцелел
+            Assert.Empty(one.MinimalEndpoints); // сбой скана → пусто, а не исключение
         }
         finally { Directory.Delete(root, recursive: true); }
     }

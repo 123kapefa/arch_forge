@@ -18,4 +18,12 @@ public class RoslynRouteTests
     [Fact]
     public void Both_empty_yields_null()
         => Assert.Null(RoslynSemanticTypeSource.CombineRoute(null, null));
+
+    [Theory]
+    [InlineData("/api/[controller]/list", "ProductsController", "List", "/api/Products/list")] // [controller] без суффикса
+    [InlineData("/api/[controller]/[action]", "OrdersController", "Create", "/api/Orders/Create")]
+    [InlineData("/api/[CONTROLLER]", "CartController", "Get", "/api/Cart")]                     // токен регистронезависим
+    [InlineData("/api/products", "ProductsController", "List", "/api/products")]                // нет токенов — без изменений
+    public void Expands_route_tokens(string route, string controller, string action, string expected)
+        => Assert.Equal(expected, RoslynSemanticTypeSource.ExpandTokens(route, controller, action));
 }

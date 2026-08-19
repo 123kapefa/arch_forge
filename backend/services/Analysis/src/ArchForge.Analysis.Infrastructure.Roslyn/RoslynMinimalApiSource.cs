@@ -19,15 +19,15 @@ public sealed class RoslynMinimalApiSource : IEndpointSource
     {
         if (!Directory.Exists(root)) return [];
         var hits = new List<EndpointHit>();
-        foreach (var file in RoslynScan.EnumerateCs(root))
+        foreach (var file in RoslynScan.EnumerateCsCapped(root, out _)) // тот же кап числа файлов, что и в семантике
         {
             ct.ThrowIfCancellationRequested();
             string text;
             try { text = File.ReadAllText(file); } catch { continue; } // недоступный файл — пропускаем
             if (!text.Contains(".Map", StringComparison.Ordinal)) continue; // быстрый отсев файлов без Map*-вызовов
-            var rel = file.Replace('\\', '/');
-            var root2 = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
-            foreach (var inv in root2.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            var path = file.Replace('\\', '/');
+            var treeRoot = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            foreach (var inv in treeRoot.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 if (inv.Expression is not MemberAccessExpressionSyntax ma) continue;
                 if (!Verbs.TryGetValue(ma.Name.Identifier.Text, out var verb)) continue;
@@ -36,7 +36,7 @@ public sealed class RoslynMinimalApiSource : IEndpointSource
                 // берём только литеральный маршрут — переменную/const без семантики не резолвим
                 if (args[0].Expression is not LiteralExpressionSyntax lit || !lit.IsKind(SyntaxKind.StringLiteralExpression)) continue;
                 var line = inv.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-                hits.Add(new EndpointHit(verb, lit.Token.ValueText, rel, line));
+                hits.Add(new EndpointHit(verb, lit.Token.ValueText, path, line));
             }
         }
         return hits;

@@ -198,7 +198,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
                     members.Add(new RawMember(p.Name, "property", p.Type.ToDisplayString(ShortType), Line: LineOf(p)));
                     break;
                 case IMethodSymbol { MethodKind: MethodKind.Ordinary, IsImplicitlyDeclared: false } method when !RecordSynth.Contains(method.Name):
-                    var (http, route) = isController ? HttpOf(method, classRoute) : (null, null);
+                    var (http, route) = isController ? HttpOf(method, classRoute, symbol.Name) : (null, null);
                     members.Add(new RawMember(method.Name, http is not null ? "endpoint" : "method",
                         MethodSig(method), http, route, LineOf(method)));
                     break;
@@ -217,8 +217,9 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         return $"({ps}) : {ret}";
     }
 
-    // Verb+route экшена по атрибутам ([HttpGet("...")], [Route("...")]); route склеивается с префиксом класса.
-    private static (string? Http, string? Route) HttpOf(IMethodSymbol m, string? classRoute)
+    // Verb+route экшена по атрибутам ([HttpGet("...")], [Route("...")]); route склеивается с префиксом класса
+    // и разворачивает токены [controller]/[action].
+    private static (string? Http, string? Route) HttpOf(IMethodSymbol m, string? classRoute, string controllerName)
     {
         string? http = null, methodRoute = null;
         foreach (var a in m.GetAttributes())
@@ -238,7 +239,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
                 methodRoute ??= rs;
             }
         }
-        return (http, http is null ? null : CombineRoute(classRoute, methodRoute));
+        return (http, http is null ? null : ExpandTokens(CombineRoute(classRoute, methodRoute), controllerName, m.Name));
     }
 
     // Route контроллера, если задан [Route("...")] на классе (константы резолвятся Roslyn'ом в строку).
@@ -250,8 +251,20 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         return null;
     }
 
+    // Разворот ASP.NET-токенов маршрута: [controller] → имя контроллера без суффикса Controller, [action] → имя
+    // метода. Прочие токены ([area] и т.п.) оставляем как есть (best-effort, без рантайм-роутинга).
+    internal static string? ExpandTokens(string? route, string controllerName, string actionName)
+    {
+        if (string.IsNullOrEmpty(route)) return route;
+        var ctrl = controllerName.EndsWith("Controller", StringComparison.Ordinal)
+            ? controllerName[..^"Controller".Length] : controllerName;
+        return route
+            .Replace("[controller]", ctrl, StringComparison.OrdinalIgnoreCase)
+            .Replace("[action]", actionName, StringComparison.OrdinalIgnoreCase);
+    }
+
     // Склейка маршрута: класс-[Route] + метод. Абсолютный метод-маршрут (ведущий '/' или '~/') отменяет префикс
-    // класса (семантика ASP.NET). Иначе — соединяем непустые сегменты через '/'. Токены ([controller]) не разворачиваем.
+    // класса (семантика ASP.NET). Иначе — соединяем непустые сегменты через '/'. Токены разворачивает ExpandTokens.
     internal static string? CombineRoute(string? classRoute, string? methodRoute)
     {
         var mr = methodRoute?.Trim();
