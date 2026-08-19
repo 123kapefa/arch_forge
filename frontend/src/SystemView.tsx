@@ -38,6 +38,21 @@ const MAGNET_SPEED = 0.05;
 
 export type FlowHandle = { save: () => void; reset: () => void; focus: (ids: string[]) => void };
 
+// Вьюпорт доски (зум+позиция камеры) L0 — сохраняем по ключу проекта, чтобы перезагрузка не сбрасывала
+// его в fitView (пользователь остаётся там, где был). Ключ = ключ раскладки + ':vp'.
+type Viewport = { x: number; y: number; zoom: number };
+function readViewport(layoutKey: string): Viewport | null {
+  try {
+    const raw = localStorage.getItem(layoutKey + ':vp');
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Viewport;
+    return Number.isFinite(v?.x) && Number.isFinite(v?.y) && Number.isFinite(v?.zoom) ? v : null;
+  } catch { return null; }
+}
+function writeViewport(layoutKey: string, v: Viewport): void {
+  try { localStorage.setItem(layoutKey + ':vp', JSON.stringify(v)); } catch { /* quota */ }
+}
+
 /**
  * Доска: узлы в state → перетаскиваемы (onNodesChange); пересев из flow + fitView при загрузке/фильтре.
  * Магнит к сетке — по инерции: тянешь медленно → snapToGrid включается, быстро → свободно.
@@ -65,6 +80,8 @@ const Flow = forwardRef<FlowHandle, {
   nodesRef.current = nodes;
   const rf = useReactFlow();
   const storeApi = useStoreApi();
+  // начальный вьюпорт L0 читаем один раз на маунте (не на каждый рендер) — для defaultViewport/onInit
+  const initialVp = useMemo(() => (storageKey ? readViewport(storageKey) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Централизованная маршрутизация всех рёбер + пучковая развязка — при новой раскладке и после drag-stop
   // (version), по измеренным позициям из nodeLookup. Наведение/выбор её не трогают.
@@ -123,15 +140,25 @@ const Flow = forwardRef<FlowHandle, {
       if (focusTargetRef) focusTargetRef.current = null; // цель достигнута — снять
       timers.push(setTimeout(() => setVersion((v) => v + 1), 80));
     } else {
-      timers.push(setTimeout(() => { rf.fitView({ padding: 0.2 }); setVersion((v) => v + 1); }, 70));
+      // L0 (storageKey задан): восстанавливаем сохранённый вьюпорт — reload/фильтр/возврат оставляют камеру
+      // там, где был пользователь (saved обновляется на каждый его пан/зум). Drill (storageKey='') → fitView.
+      // Re-assert несколько раз: React Flow делает внутренний fitView, когда контейнер получает размер
+      // (render-gate монтирует его с задержкой), иначе он затирает восстановление — как в центровке «к плашке».
+      const saved = storageKey ? readViewport(storageKey) : null;
+      if (saved) {
+        [70, 220, 450, 750].forEach((d) => timers.push(setTimeout(() => rf.setViewport(saved), d)));
+        timers.push(setTimeout(() => setVersion((v) => v + 1), 80));
+      } else {
+        timers.push(setTimeout(() => { rf.fitView({ padding: 0.2 }); setVersion((v) => v + 1); }, 70));
+      }
     }
     return () => timers.forEach(clearTimeout);
-  }, [flow, applySaved, setNodes, setEdges, rf, onDirty, focusTargetRef]);
+  }, [flow, applySaved, setNodes, setEdges, rf, onDirty, focusTargetRef, storageKey]);
 
   useImperativeHandle(ref, () => ({
     save() { persist(); },
     reset() {
-      if (storageKey) { try { localStorage.removeItem(storageKey); } catch { /* ignore */ } }
+      if (storageKey) { try { localStorage.removeItem(storageKey); localStorage.removeItem(storageKey + ':vp'); } catch { /* ignore */ } }
       setNodes(flow.nodes); // вернуть вычисленную раскладку (без сохранённых позиций)
       onDirty(true);
       setTimeout(() => rf.fitView({ padding: 0.2 }), 60);
@@ -183,6 +210,10 @@ const Flow = forwardRef<FlowHandle, {
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       minZoom={0.08}
+      // начальная камера L0 = сохранённый вьюпорт (переживает reload); onInit добивает, когда ReactFlow готов
+      // (render-gate монтирует его с задержкой — reseed-таймеры могут не застать). Drill: storageKey='' → fitView.
+      defaultViewport={initialVp ?? undefined}
+      onInit={() => { if (initialVp) rf.setViewport(initialVp); }}
       proOptions={{ hideAttribution: true }}
       nodesConnectable={false}
       elevateEdgesOnSelect
@@ -196,6 +227,7 @@ const Flow = forwardRef<FlowHandle, {
       onNodeClick={(_, n) => onSelect(n)}
       onNodeDoubleClick={(_, n) => onDoubleClick(n)}
       onPaneClick={onClear}
+      onMoveEnd={(e, vp) => { if (e && storageKey) writeViewport(storageKey, vp); }} // сохраняем только пользовательский пан/зум (event≠null), не программный fitView
     >
       <Background gap={GRID} />
       <Controls />
