@@ -28,11 +28,12 @@ public static class MicroserviceLayerBuilder
         {
             if (sa.Result is null) continue;
             var location = sa.Location;
-            // Одно-сервисный .sln (нет /src/Services/): весь код = один сервис. Несматченные проекты
+            // Одно-сервисный .sln (нет партиции /Services/): весь код = один сервис. Несматченные проекты
             // (Auth.Domain/Application/…) отправляем на ГЛАВНЫЙ узел location, иначе они падают в Last(location)
             // и теряются, а узел показывает лишь проект, совпавший по имени (auth-api ← Auth.API) — #81.
-            // В мульти-сервисном репо (есть /Services/) главного нет — catch-all остаётся общим (не привязываем чужой код).
-            var hasServices = sa.Result.Types.Any(t => t.File.Replace('\\', '/').Contains("/src/Services/", StringComparison.OrdinalIgnoreCase));
+            // Признак партиции — тот же MicroserviceOf, что и группировка (иначе ключи схлопнутся и данные потеряются).
+            // В мульти-сервисном репо главного нет — catch-all остаётся общим (не привязываем чужой код).
+            var hasServices = sa.Result.Types.Any(t => MicroserviceOf(t.File) is not null);
             var primary = hasServices ? null : PrimaryNode(sa.Result.Types, byNorm, sa.Service.Name);
             // minimal-API эндпоинты сервиса — по тому же ключу микросервиса, что и типы (#71)
             var miniByMs = sa.MinimalEndpoints
@@ -107,13 +108,16 @@ public static class MicroserviceLayerBuilder
         return primaryCatchAll ?? Last(location);
     }
 
-    // Сателлит-деплой (не несёт код сервиса): миграторы/сидеры/воркеры/крон-джобы — исключаем из кандидатов на «главного».
-    private static readonly string[] SatelliteMarkers = { "migrat", "seed", "worker", "init", "cron" };
+    // Сателлит-деплой (не несёт код сервиса): миграторы/сидеры/крон-джобы — исключаем из кандидатов на «главного».
+    // Только специфичные job-маркеры: «worker» намеренно НЕ включён — это легитимный тип сервиса (.NET Worker).
+    private static readonly string[] SatelliteMarkers = { "migrat", "seed", "cron" };
     private static bool IsSatellite(string name) => SatelliteMarkers.Any(m => name.Contains(m, StringComparison.OrdinalIgnoreCase));
 
-    // Главный узел одно-сервисного .sln (на него уходит весь код, #81). Из compose-узлов берём НЕ-сателлиты
-    // (по имени), среди них — с бóльшим числом совпавших проектов; при равенстве — узел, чьё имя ≈ имени .sln
-    // (auth-service ≡ AuthService), затем по имени. null — если не-сателлитов нет.
+    // Главный узел одно-сервисного .sln (на него уходит весь код, #81). Из compose-узлов берём НЕ-сателлиты,
+    // среди них — с бóльшим числом совпавших проектов; при равенстве — узел, чьё имя ≈ имени .sln (auth-service ≡
+    // AuthService). ВАЖНО: возвращаем узел только при ПОЛОЖИТЕЛЬНОМ сигнале (совпал проект ИЛИ имя ≈ .sln) — иначе
+    // не гадаем по алфавиту среди всех узлов системы (мог бы уехать на чужой sidecar вроде adminer); null → обычный
+    // catch-all (безопасная деградация к прежнему поведению).
     private static string? PrimaryNode(IReadOnlyList<TypeInfo> types, IReadOnlyDictionary<string, string> byNorm, string slnName)
     {
         var candidates = byNorm.Values.Where(n => !IsSatellite(n)).Distinct(StringComparer.Ordinal).ToList();
@@ -123,13 +127,16 @@ public static class MicroserviceLayerBuilder
             foreach (var cand in CandidateSegments(t.File))
                 if (byNorm.TryGetValue(NormAlnum(cand), out var name) && counts.ContainsKey(name)) { counts[name]++; break; }
         var slnNorm = NormAlnum(slnName);
-        return candidates
+        var best = candidates
             .OrderByDescending(n => counts[n])                                   // больше совпавших проектов
             .ThenByDescending(n => NameMatchesSln(NormAlnum(n), slnNorm) ? 1 : 0) // имя узла ≈ имя .sln
             .ThenBy(n => n, StringComparer.Ordinal)                              // детерминизм
             .First();
+        return counts[best] > 0 || NameMatchesSln(NormAlnum(best), slnNorm) ? best : null; // без сигнала — не гадаем
     }
 
+    // Имя узла ≈ имя .sln по NormAlnum (равно или одно содержит другое). Известное ограничение: подстрока без
+    // границ сегмента может дать ложное совпадение при слишком общих именах — тай-брейк, не основной сигнал.
     private static bool NameMatchesSln(string nodeNorm, string slnNorm) =>
         slnNorm.Length > 0 && nodeNorm.Length > 0 && (nodeNorm == slnNorm || nodeNorm.Contains(slnNorm) || slnNorm.Contains(nodeNorm));
 

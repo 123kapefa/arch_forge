@@ -188,6 +188,45 @@ public class MicroserviceLayerBuilderTests
     }
 
     [Fact]
+    public void Single_service_no_signal_does_not_guess_primary() // #81: без сигнала не гадаем (не уводим код на sidecar)
+    {
+        // .sln «Backend» не похож ни на один узел; проекты не совпадают по имени с узлами (adminer/api-x).
+        // Ни один узел не набирает сигнал → primary=null → код НЕ уезжает на чужой adminer.
+        RawType[] raw =
+        [
+            new("Ctrl", "class", [], "()", "Api", "/x/repo/src/Foo.Api/Ctrl.cs"),
+            new("Account", "class", [], "()", "Domain", "/x/repo/src/Foo.Domain/Account.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Backend", "/x/repo", "compose.yml"), ".",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("./adminer", "adminer"), ("./api-x", "api-x") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./adminer", "adminer"))); // не ложная атрибуция
+        Assert.False(map.ContainsKey(MicroserviceLayerBuilder.NodeKey("./api-x", "api-x")));
+    }
+
+    [Fact]
+    public void Nested_services_partition_disables_primary_no_key_collision() // #81 BLOCKER: /src/<Area>/Services/ — тоже партиция
+    {
+        // Services на уровень глубже src (/src/Backend/Services/Cart/…) — MicroserviceOf партиционирует → primary
+        // выключен, catch-all (SharedDto) не схлопывается с группой Cart (иначе Domain сервиса Cart стёрся бы).
+        RawType[] raw =
+        [
+            new("CartLine", "class", [], "()", "Domain", "/x/repo/src/Backend/Services/Cart/Cart.Domain/CartLine.cs"),
+            new("SharedDto", "class", [], "()", "Contracts", "/x/repo/src/Shared/SharedDto.cs"),
+        ];
+        var sa = new ServiceAnalysis(new DiscoveredService("Repo", "/x/repo", "compose.yml"), "repo",
+            Classifier.Classify(raw, ConventionPack.Default()));
+        var compose = new (string, string)[] { ("repo/cart-api", "cart-api") };
+
+        var map = MicroserviceLayerBuilder.Build([sa], compose);
+
+        Assert.Contains(map["repo::cart"].Layers, l => l.Name == "Domain"); // Cart сохранил Domain, не стёрт catch-all'ом
+    }
+
+    [Fact]
     public void Single_microservice_sln_keyed_by_namespace()
     {
         // нет Services/ → весь .sln = один сервис, ключ по имени namespace (auth-service → auth)
