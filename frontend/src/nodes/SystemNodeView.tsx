@@ -1,7 +1,7 @@
 import { useContext } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { SystemNodeData } from '../systemFlow';
-import { isInfra } from '../systemFlow';
+import { isInfra, nodeHasExposedPort } from '../systemFlow';
 import { namespaceOf } from '../systemModel';
 import { repoColor } from '../theme';
 import { HiddenLayersContext } from '../layersContext';
@@ -85,7 +85,10 @@ export function SystemNodeView({ data, selected }: NodeProps<SystemNodeType>) {
       )}
       <div className="sys-node__body">
         <span className="sys-node__name" title={node.id}>{node.name}</span>
-        <span className="sys-node__sub">{KIND_LABEL[node.kind] ?? node.kind}</span>
+        <span className="sys-node__sub">
+          {KIND_LABEL[node.kind] ?? node.kind}
+          {nodeHasExposedPort(node) && <span className="sys-node__flag" title="порт опубликован наружу (все интерфейсы)">⇱ наружу</span>}
+        </span>
       </div>
       {infra && <span className="sys-node__dot" style={{ background: HEALTH_DOT[health] ?? HEALTH_DOT.ok }} />}
       {lensBadge}

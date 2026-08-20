@@ -1,5 +1,5 @@
 import { MarkerType, Position, type Edge, type Node } from '@xyflow/react';
-import type { Problem, SystemGraph, SystemNode } from './system';
+import type { Problem, SystemGraph, SystemNode, SystemPort } from './system';
 import { problemsAt } from './systemModel';
 
 // Данные узла L0 (сервис/инфра — единая форма; рендер различается по node.kind).
@@ -37,6 +37,35 @@ export function edgeWidth(confidence: number, violation = false): number {
 const INFRA_KINDS = new Set(['datastore', 'topic', 'external']);
 export function isInfra(kind: string): boolean {
   return INFRA_KINDS.has(kind);
+}
+
+// --- Deploy (E9): выставленность портов. Зеркалит backend ExposedPortDetector.IsAllInterfaces. ---
+
+const ALL_INTERFACES = new Set(['', '0.0.0.0', '::']);
+/** Порт опубликован на ВСЕ интерфейсы (0.0.0.0 / :: / без host_ip) — доступен снаружи хоста. */
+export function isPortPublic(p: SystemPort): boolean {
+  return p.published && ALL_INTERFACES.has(p.hostIp ?? '');
+}
+
+// Классификация для UI: exposed — хранилище наружу (красный флаг, как в детекторе);
+// public — сервис/шлюз наружу (нормально); bound — привязан к конкретному IP (loopback/LAN); internal — не опубликован.
+export type PortExposure = 'exposed' | 'public' | 'bound' | 'internal';
+export function portExposure(p: SystemPort, kind: string): PortExposure {
+  if (!p.published) return 'internal';
+  if (isPortPublic(p)) return kind === 'datastore' ? 'exposed' : 'public';
+  return 'bound';
+}
+
+/** Текст порта: «host_ip:host → container» (что опубликовано) либо просто container (внутренний). */
+export function portLabel(p: SystemPort): string {
+  if (!p.published) return p.container;
+  const left = p.hostIp ? `${p.hostIp}:${p.host ?? '*'}` : (p.host ?? '*');
+  return `${left} → ${p.container}`;
+}
+
+/** Есть ли у узла порт-хранилища, торчащий наружу (для красного маркера на плашке; ловит #101). */
+export function nodeHasExposedPort(node: SystemNode): boolean {
+  return node.deploy?.ports.some((p) => portExposure(p, node.kind) === 'exposed') ?? false;
 }
 
 export interface SystemFilters {
