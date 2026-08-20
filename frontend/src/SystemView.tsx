@@ -15,7 +15,7 @@ import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto 
 import { isAbortError } from './http';
 import { ImportsScreen } from './ImportsScreen';
 import { ConventionsView } from './ConventionsView';
-import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, type SystemNodeData } from './systemFlow';
+import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, portExposure, portLabel, type SystemNodeData } from './systemFlow';
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
 import { gridLayout } from './gridLayout';
 import { OrthoEdge } from './OrthoEdge';
@@ -429,6 +429,33 @@ function SystemInspector({ node, graph, lens, onFocus }: {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {n.deploy && (
+        <div className="inspector__block">
+          <div className="inspector__sub">DEPLOY</div>
+          {n.deploy.ports.length > 0 && (
+            <ul className="deploy__ports">
+              {n.deploy.ports.map((p, i) => {
+                const ex = portExposure(p, n.kind);
+                const tag = ex === 'exposed' ? 'наружу' : ex === 'public' ? 'публичный'
+                  : ex === 'bound' ? (p.hostIp ?? 'bound') : 'внутр.';
+                return (
+                  <li key={`${p.container}-${i}`} className="deploy__port" title={portLabel(p)}>
+                    <span className="deploy__portmap">{portLabel(p)}</span>
+                    <span className={`dep-tag dep-tag--${ex}`}>{tag}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="deploy__meta">
+            <span className={`dep-hc dep-hc--${n.deploy.hasHealthcheck ? 'on' : 'off'}`}>
+              healthcheck {n.deploy.hasHealthcheck ? '✓' : '—'}
+            </span>
+            {n.deploy.networks.map((net, i) => <span key={`${net}-${i}`} className="dep-net">{net}</span>)}
+          </div>
         </div>
       )}
 

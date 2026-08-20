@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { SystemGraph } from './system';
-import { buildSystemFlow, edgeStyle, edgeWidth, isInfra, filterGraph, edgeKindsOf } from './systemFlow';
+import { buildSystemFlow, edgeStyle, edgeWidth, isInfra, filterGraph, edgeKindsOf,
+  isPortPublic, portExposure, portLabel, nodeHasExposedPort } from './systemFlow';
+import type { SystemPort } from './system';
 
 const graph: SystemGraph = {
   project: 'sys',
@@ -92,5 +94,46 @@ describe('isInfra / edgeStyle', () => {
     expect(edgeWidth(1)).toBeGreaterThan(edgeWidth(0.6));
     expect(edgeWidth(0.4)).toBeLessThan(edgeWidth(0.95));
     expect(edgeWidth(0.3, true)).toBeGreaterThanOrEqual(2); // слабое, но нарушение — всё равно заметно
+  });
+});
+
+describe('deploy — выставленность портов (зеркалит backend ExposedPortDetector)', () => {
+  const port = (p: Partial<SystemPort>): SystemPort =>
+    ({ container: '5432', published: true, ...p });
+
+  it('публичность: все интерфейсы (0.0.0.0 / :: / пусто / без host_ip) — да; localhost (v4/v6)/не опубликован — нет', () => {
+    expect(isPortPublic(port({ hostIp: undefined }))).toBe(true);
+    expect(isPortPublic(port({ hostIp: '' }))).toBe(true);        // пустая строка = все интерфейсы (как undefined)
+    expect(isPortPublic(port({ hostIp: '0.0.0.0' }))).toBe(true);
+    expect(isPortPublic(port({ hostIp: '::' }))).toBe(true);
+    expect(isPortPublic(port({ hostIp: '127.0.0.1' }))).toBe(false);
+    expect(isPortPublic(port({ hostIp: '::1' }))).toBe(false);    // IPv6 localhost
+    expect(isPortPublic(port({ published: false }))).toBe(false);
+  });
+
+  it('классификация: хранилище наружу → exposed, сервис наружу → public, конкретный IP → bound, не опубликован → internal', () => {
+    expect(portExposure(port({ hostIp: undefined }), 'datastore')).toBe('exposed');
+    expect(portExposure(port({ hostIp: undefined }), 'service')).toBe('public');
+    expect(portExposure(port({ hostIp: '127.0.0.1' }), 'datastore')).toBe('bound');
+    expect(portExposure(port({ hostIp: '::1' }), 'datastore')).toBe('bound');        // IPv6 localhost — bound, не exposed
+    expect(portExposure(port({ hostIp: '192.168.1.5' }), 'datastore')).toBe('bound'); // LAN-IP не теряется
+    expect(portExposure(port({ published: false }), 'datastore')).toBe('internal');
+  });
+
+  it('portLabel: опубликованный → «host → container», эфемерный без host → «* → container», внутренний → container', () => {
+    expect(portLabel(port({ host: '5432', hostIp: undefined }))).toBe('5432 → 5432');
+    expect(portLabel(port({ host: '15432', hostIp: '127.0.0.1' }))).toBe('127.0.0.1:15432 → 5432');
+    expect(portLabel(port({ host: undefined, hostIp: undefined }))).toBe('* → 5432'); // эфемерный: host назначит docker
+    expect(portLabel(port({ published: false, host: undefined }))).toBe('5432');
+  });
+
+  it('nodeHasExposedPort: хранилище с портом наружу → true; сервис/без deploy → false', () => {
+    expect(nodeHasExposedPort(
+      { id: 'd', name: 'db', kind: 'datastore', deploy: { ports: [port({ hostIp: undefined })], hasHealthcheck: false, networks: [] } },
+    )).toBe(true);
+    expect(nodeHasExposedPort(
+      { id: 's', name: 'api', kind: 'service', deploy: { ports: [port({ hostIp: undefined })], hasHealthcheck: false, networks: [] } },
+    )).toBe(false); // сервис наружу — это public, не exposed
+    expect(nodeHasExposedPort({ id: 'x', name: 'x', kind: 'datastore' })).toBe(false); // нет deploy
   });
 });
