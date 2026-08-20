@@ -51,7 +51,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             var local = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
             foreach (var svc in compose.Services)
             {
-                var node = new SystemNode($"{system}/{svc.Name}", svc.Name, Classify(svc.Image), svc.Image);
+                var deploy = new DeployInfo(svc.Ports, svc.HasHealthcheck, svc.Networks); // E9.1: порты/hc/сети
+                var node = new SystemNode($"{system}/{svc.Name}", svc.Name, Classify(svc.Image), svc.Image, deploy);
                 local[svc.Name] = node;
                 nodes[node.Id] = node;
             }

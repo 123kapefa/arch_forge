@@ -18,8 +18,20 @@ public static class ProblemCategory
     public const string Convention = "convention";      // отклонение от свода (дрейф) — только когда запрошено
 }
 
+/// <summary>Публикация порта (E9.1): контейнерный порт, хост-порт (если опубликован наружу), bind-IP.
+/// <c>Container</c>/<c>Host</c> — «сырые» строки из compose (могут быть диапазоном "8080-8090" или переменной),
+/// не гарантированно единичный int; детектор публичности учитывает это.</summary>
+/// <param name="Published">Опубликован на хост (доступен снаружи контейнера). <c>HostIp</c>=null → все интерфейсы (0.0.0.0).</param>
+public sealed record PortMapping(string Container, string? Host = null, string? HostIp = null, bool Published = false);
+
+/// <summary>DevOps-атрибуты сервиса из compose (E9.1): порты, наличие healthcheck, сети.</summary>
+public sealed record DeployInfo(
+    IReadOnlyList<PortMapping> Ports,
+    bool HasHealthcheck,
+    IReadOnlyList<string> Networks);
+
 /// <summary>Узел системы: сервис / хранилище / топик / внешний (отложенный) узел.</summary>
-public sealed record SystemNode(string Id, string Name, SystemNodeKind Kind, string? Image = null);
+public sealed record SystemNode(string Id, string Name, SystemNodeKind Kind, string? Image = null, DeployInfo? Deploy = null);
 
 /// <summary>
 /// Ребро системного уровня. <paramref name="Confidence"/> 0..1 (по источнику);
