@@ -97,6 +97,39 @@ public class ContractBackCompatTests
     }
 
     [Fact]
+    public void Node_deploy_round_trips()  // E9 / #89
+    {
+        var node = new NodeDto("s/db", "orders-db", "datastore", "", "", "", "", [],
+            Level: "system", Health: "warning",
+            Deploy: new DeployDto(
+                [new PortDto("5432", Host: "5432", HostIp: null, Published: true)],
+                HasHealthcheck: true, Networks: ["backend-net"]));
+
+        var back = JsonSerializer.Deserialize<NodeDto>(JsonSerializer.Serialize(node, Web), Web)!;
+
+        Assert.NotNull(back.Deploy);
+        Assert.True(back.Deploy!.HasHealthcheck);
+        Assert.Equal("backend-net", Assert.Single(back.Deploy.Networks));
+        var port = Assert.Single(back.Deploy.Ports);
+        Assert.Equal("5432", port.Container);
+        Assert.True(port.Published);
+        Assert.Null(port.HostIp);   // все интерфейсы: поле опущено
+    }
+
+    [Fact]
+    public void Deploy_and_host_ip_omitted_when_absent()  // Ф1-байт-совместимость
+    {
+        // узел без deploy → поле не пишется
+        Assert.DoesNotContain("deploy", JsonSerializer.Serialize(
+            new NodeDto("n", "N", "class", "Domain", "Aggregate", "marker", "N.cs", []), Web));
+
+        // порт без host_ip (все интерфейсы) → host_ip не пишется, но published остаётся
+        var json = JsonSerializer.Serialize(new PortDto("5432", Host: "5432", Published: true), Web);
+        Assert.DoesNotContain("hostIp", json);
+        Assert.Contains("\"published\":true", json);
+    }
+
+    [Fact]
     public void Environment_dto_round_trips()  // зарезервированная запись — smoke
     {
         var back = JsonSerializer.Deserialize<EnvironmentDto>(

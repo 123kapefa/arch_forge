@@ -55,7 +55,9 @@ public sealed record NodeDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     string? Root = null,                                   // папка микросервиса (drill L1: /api/map по нему)
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<EndpointDto>? Endpoints = null);         // HTTP-эндпоинты сервиса (L1-список + счётчик L0; #71)
+    IReadOnlyList<EndpointDto>? Endpoints = null,          // HTTP-эндпоинты сервиса (L1-список + счётчик L0; #71)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    DeployDto? Deploy = null);                             // DevOps-атрибуты из compose (E9): порты/healthcheck/сети — вид Deploy (#89)
 
 public sealed record EdgeDto(
     string Id,
@@ -131,6 +133,22 @@ public sealed record EndpointDto(
     string Source,     // controller | minimal
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Type = null,   // тип-владелец (контроллер)
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line = null);
+
+/// <summary>DevOps-атрибуты узла-сервиса (E9, из compose): порты, наличие healthcheck, сети. Провенанс — compose.
+/// Пустой (нет портов/сетей/hc) в узел не кладётся — поле остаётся null и не пишется.</summary>
+public sealed record DeployDto(
+    IReadOnlyList<PortDto> Ports,
+    bool HasHealthcheck,
+    IReadOnlyList<string> Networks);
+
+/// <summary>Публикация порта. <c>Container</c> — порт внутри контейнера; <c>Host</c>/<c>HostIp</c> — если опубликован
+/// наружу (иначе опущены). <c>Published</c>=true → доступен с хоста; при этом <c>HostIp</c>=null означает все
+/// интерфейсы (0.0.0.0) — сигнал «наружу» (см. ExposedPortDetector).</summary>
+public sealed record PortDto(
+    string Container,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Host = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HostIp = null,
+    bool Published = false);
 
 /// <summary>Слой сервиса в L0-сводке: имя, здоровье, краткая заметка, число типов (превью L1).</summary>
 public sealed record LayerSummaryDto(

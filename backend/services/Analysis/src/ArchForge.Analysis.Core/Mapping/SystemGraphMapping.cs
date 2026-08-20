@@ -44,8 +44,17 @@ public static class SystemGraphMapping
         var health = layers is null ? problemHealth : Worse(problemHealth, layers.Health);
         var endpoints = layers?.Endpoints is { Count: > 0 } eps ? eps : null; // пустой список → не шлём (#71)
         return new NodeDto(n.Id, n.Name, KindString(n.Kind), Layer: "", Role: "", Via: "", File: "", Drift: [],
-            Level: LevelOf(n.Kind), Health: health, Layers: layers?.Layers, Root: layers?.Root, Endpoints: endpoints);
+            Level: LevelOf(n.Kind), Health: health, Layers: layers?.Layers, Root: layers?.Root, Endpoints: endpoints,
+            Deploy: n.Deploy.ToDeployDto());
     }
+
+    /// <summary>DeployInfo → DeployDto. Пустой (нет портов/сетей/hc) или null → null (поле не пишется, как Endpoints).</summary>
+    public static DeployDto? ToDeployDto(this DeployInfo? d) =>
+        d is null || (d.Ports.Count == 0 && d.Networks.Count == 0 && !d.HasHealthcheck)
+            ? null
+            : new DeployDto(
+                d.Ports.Select(p => new PortDto(p.Container, p.Host, p.HostIp, p.Published)).ToList(),
+                d.HasHealthcheck, d.Networks);
 
     /// <summary>Системное ребро → EdgeDto (id, провенанс Via, уверенность).</summary>
     public static EdgeDto ToEdgeDto(this SystemEdge e) => new(
