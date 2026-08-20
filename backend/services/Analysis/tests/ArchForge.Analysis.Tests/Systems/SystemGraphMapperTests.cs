@@ -44,6 +44,31 @@ public class SystemGraphMapperTests
     }
 
     [Fact]
+    public void Maps_deploy_when_present_and_omits_when_empty()  // E9 / #89
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("s/db", "db", SystemNodeKind.Datastore, "postgres:17",
+                    new DeployInfo([new PortMapping("5432", "5432", null, Published: true)],
+                        HasHealthcheck: true, Networks: ["backend-net"])),
+                new SystemNode("s/plain", "plain", SystemNodeKind.Service, "app:1"),           // Deploy == null
+                new SystemNode("s/empty", "empty", SystemNodeKind.Service, "app:1",
+                    new DeployInfo([], HasHealthcheck: false, Networks: [])),                  // Deploy пустой
+            ], [], []);
+
+        var dto = g.ToGraphDto("sys");
+
+        var db = dto.Nodes.Single(n => n.Id == "s/db");
+        Assert.NotNull(db.Deploy);
+        Assert.True(db.Deploy!.HasHealthcheck);
+        Assert.Equal("5432", Assert.Single(db.Deploy.Ports).Container);
+        Assert.Equal("backend-net", Assert.Single(db.Deploy.Networks));
+
+        Assert.Null(dto.Nodes.Single(n => n.Id == "s/plain").Deploy);  // нет секции → null
+        Assert.Null(dto.Nodes.Single(n => n.Id == "s/empty").Deploy);  // пустой deploy → null (не шлём)
+    }
+
+    [Fact]
     public void Warning_problem_maps_to_warning_health()
     {
         var g = new SystemGraph(

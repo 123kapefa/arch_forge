@@ -29,6 +29,22 @@ export interface SystemNode {
   layers?: LayerSummary[]; // слои сервиса-узла (L0: «внутри сервиса — слои»)
   root?: string;           // папка микросервиса (drill L1: /api/map по нему)
   endpoints?: SystemEndpoint[]; // HTTP-эндпоинты сервиса (L1-список + счётчик L0; #71)
+  deploy?: SystemDeploy;        // DevOps-атрибуты из compose (E9): порты/healthcheck/сети — вид Deploy (#89)
+}
+
+/** DevOps-атрибуты узла (E9, из compose). Бэкенд опускает поле, если нет ни портов, ни сетей, ни healthcheck. */
+export interface SystemDeploy {
+  ports: SystemPort[];
+  hasHealthcheck: boolean;
+  networks: string[];
+}
+
+/** Публикация порта. host/hostIp приходят, только если порт опубликован наружу; published=true + без hostIp = все интерфейсы. */
+export interface SystemPort {
+  container: string;
+  host?: string;
+  hostIp?: string;
+  published: boolean;
 }
 
 /** HTTP-эндпоинт сервиса (L1). Source: controller | minimal. Route — полный путь, насколько разрешим статически. */
