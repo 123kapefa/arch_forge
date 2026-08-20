@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core.Systems;
 using YamlDotNet.Serialization;
 
 namespace ArchForge.Analysis.Infrastructure.Manifests;
@@ -6,7 +7,10 @@ internal sealed record ComposeService(
     string Name,
     string? Image,
     IReadOnlyDictionary<string, string> Environment,
-    IReadOnlyList<string> DependsOn);
+    IReadOnlyList<string> DependsOn,
+    IReadOnlyList<PortMapping> Ports,
+    bool HasHealthcheck,
+    IReadOnlyList<string> Networks);
 
 internal sealed record ComposeFile(string? Name, IReadOnlyList<ComposeService> Services);
 
@@ -31,7 +35,10 @@ internal static class ComposeParser
                     svcName,
                     string.IsNullOrEmpty(image) ? null : image,
                     ReadEnv(Get(svc, "environment")),
-                    ReadDependsOn(Get(svc, "depends_on"))));
+                    ReadDependsOn(Get(svc, "depends_on")),
+                    ReadPorts(Get(svc, "ports")),
+                    ReadHealthcheck(Get(svc, "healthcheck")),
+                    ReadNetworks(Get(svc, "networks"))));
             }
 
         return new ComposeFile(name, services);
@@ -68,6 +75,63 @@ internal static class ComposeParser
                 foreach (var kv in map) if (kv.Key?.ToString() is { } k) list.Add(k);
                 break;
             case IEnumerable<object> items:             // ["x", …]
+                foreach (var it in items) if (it?.ToString() is { } s) list.Add(s);
+                break;
+        }
+        return list;
+    }
+
+    // ports: короткая форма ("host:cont", "ip:host:cont", "cont", с /proto) и длинная ({target, published, host_ip}).
+    // Published=true → порт опубликован на хост (доступен снаружи); это вход для детектора «порт наружу в prod» (E9.2).
+    private static IReadOnlyList<PortMapping> ReadPorts(object? ports)
+    {
+        var list = new List<PortMapping>();
+        if (ports is not IEnumerable<object> items) return list;
+        foreach (var item in items)
+        {
+            if (item is IDictionary<object, object> map) // длинная форма
+            {
+                var target = Str(map, "target");
+                if (string.IsNullOrEmpty(target)) continue;
+                var published = Str(map, "published");
+                var hostIp = Str(map, "host_ip");
+                list.Add(new PortMapping(target,
+                    string.IsNullOrEmpty(published) ? null : published,
+                    string.IsNullOrEmpty(hostIp) ? null : hostIp,
+                    Published: !string.IsNullOrEmpty(published)));
+                continue;
+            }
+            var s = Interpolation.Resolve(item?.ToString());
+            if (string.IsNullOrWhiteSpace(s)) continue;
+            var slash = s.IndexOf('/'); if (slash >= 0) s = s[..slash]; // отбросить /tcp|/udp
+            var parts = s.Split(':');
+            string? hostIp2 = null, host = null; string container;
+            switch (parts.Length)
+            {
+                case 1: container = parts[0]; break;                       // "8080" (публикуется на эфемерный хост-порт)
+                case 2: host = parts[0]; container = parts[1]; break;      // "8080:80"
+                default: hostIp2 = parts[0]; host = parts[1]; container = parts[2]; break; // "127.0.0.1:8080:80"
+            }
+            list.Add(new PortMapping(container.Trim(), host, hostIp2, Published: true));
+        }
+        return list;
+    }
+
+    // healthcheck: наличие секции (и не отключён `disable: true`).
+    private static bool ReadHealthcheck(object? hc) =>
+        hc is IDictionary<object, object> map &&
+        !string.Equals(Str(map, "disable"), "true", StringComparison.OrdinalIgnoreCase);
+
+    // networks: список или map (берём ключи-имена сетей).
+    private static IReadOnlyList<string> ReadNetworks(object? nets)
+    {
+        var list = new List<string>();
+        switch (nets)
+        {
+            case IDictionary<object, object> map:
+                foreach (var kv in map) if (kv.Key?.ToString() is { } k) list.Add(k);
+                break;
+            case IEnumerable<object> items:
                 foreach (var it in items) if (it?.ToString() is { } s) list.Add(s);
                 break;
         }
