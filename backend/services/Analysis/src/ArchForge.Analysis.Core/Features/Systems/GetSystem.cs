@@ -13,17 +13,17 @@ namespace ArchForge.Analysis.Core.Features.Systems;
 
 // Линзы, требующие КОДА (тяжелее: разбор per-service): drift — «дрейф от свода» (convention);
 // layers — «нарушение направления слоёв» (architecture). Обе opt-in, независимы (фронт включает нужную линзе).
-public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false);
+public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false, string? Env = null);
 
 public sealed class GetSystemEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapGet("/api/system", (string path, bool? drift, bool? layers,
+        app.MapGet("/api/system", (string path, bool? drift, bool? layers, string? env,
             GetSystemHandler handler, ILogger<GetSystemEndpoint> log, CancellationToken ct) =>
         {
             try
             {
-                GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false), ct);
+                GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false, env), ct);
                 return graph is null
                     ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
                     : Results.Ok(graph);
@@ -45,7 +45,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         if (string.IsNullOrWhiteSpace(query.Path) ||
             !(Directory.Exists(query.Path) || File.Exists(query.Path))) return null;
 
-        SystemGraph graph = source.Read(query.Path, ct);
+        SystemGraph graph = source.Read(query.Path, query.Env, ct);
 
         // Свод: из файла проекта (если есть), иначе встроенный. Нужен и для линз, и чтобы показать источник во фронте.
         var pack = Directory.Exists(query.Path) ? ConventionPack.Load(query.Path) : ConventionPack.Default();

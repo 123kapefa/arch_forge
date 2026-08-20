@@ -4,5 +4,6 @@ namespace ArchForge.Analysis.Core.Systems;
 // в спайке P1.5-0 реализация читает docker-compose. Реализация — в Infrastructure.Manifests.
 public interface ISystemSource
 {
-    SystemGraph Read(string root, CancellationToken ct = default);
+    // env — выбранная среда (E9.1 слой 2): null/"default" → base (+override.yml); именованная → base + <env>-оверлей.
+    SystemGraph Read(string root, string? env = null, CancellationToken ct = default);
 }

@@ -24,11 +24,17 @@ public static class SystemGraphMapping
             : g.Problems.Any(p => p.Severity == ProblemSeverity.Warning) ? "warning"
             : "ok";
 
+        // среды развёртывания (E9.1 слой 2): compose-Kind, флаг активной; пусто → поле опускаем
+        var environments = g.Environments is { Count: > 0 } envs
+            ? envs.Select(e => new EnvironmentDto(e.Name, e.Name, "compose", Active: e.Active)).ToList()
+            : null;
+
         // TODO(P1.5-G): системное покрытие — заглушка (total=узлы); настоящая агрегация per-service — позже.
         return new GraphDto(project, nodes, edges,
             new CoverageDto(0, 0, 0, nodes.Count), Drift: [],
             Health: health,
             Problems: problems.Count > 0 ? problems : null,
+            Environments: environments,
             Conventions: pack?.ToConventionsDto());
     }
 

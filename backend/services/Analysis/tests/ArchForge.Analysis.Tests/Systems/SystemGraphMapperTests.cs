@@ -69,6 +69,23 @@ public class SystemGraphMapperTests
     }
 
     [Fact]
+    public void Maps_environments_when_present_and_omits_when_absent()  // E9.1 слой 2
+    {
+        var g = new SystemGraph(
+            [new SystemNode("s/api", "api", SystemNodeKind.Service, "api:1")], [], [],
+            Environments: [new SystemEnvironment("default", Active: true), new SystemEnvironment("prod", Active: false)]);
+
+        var dto = g.ToGraphDto("sys");
+
+        Assert.NotNull(dto.Environments);
+        Assert.Equal(new[] { "default", "prod" }, dto.Environments!.Select(e => e.Name).ToArray());
+        Assert.Contains(dto.Environments!, e => e is { Name: "default", Kind: "compose", Active: true });
+
+        // нет сред (null) → поле опущено
+        Assert.Null(new SystemGraph([], [], []).ToGraphDto("sys").Environments);
+    }
+
+    [Fact]
     public void Warning_problem_maps_to_warning_health()
     {
         var g = new SystemGraph(

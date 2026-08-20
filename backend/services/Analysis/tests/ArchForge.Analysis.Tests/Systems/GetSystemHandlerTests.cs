@@ -9,7 +9,12 @@ public class GetSystemHandlerTests
 {
     private sealed class FakeSource(SystemGraph graph) : ISystemSource
     {
-        public SystemGraph Read(string root, CancellationToken ct = default) => graph;
+        public string? LastEnv { get; private set; }
+        public SystemGraph Read(string root, string? env = null, CancellationToken ct = default)
+        {
+            LastEnv = env;
+            return graph;
+        }
     }
 
     private sealed class FakeDiscovery(IReadOnlyList<DiscoveredService> svcs) : IServiceDiscoverySource
@@ -82,6 +87,20 @@ public class GetSystemHandlerTests
             var dto = new GetSystemHandler(new ComposeSystemSource()).Handle(new GetSystemQuery(f));
             Assert.NotNull(dto);
             Assert.Contains(dto!.Nodes, n => n.Name == "api");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    // E9.1 слой 2: выбранная среда из запроса доходит до источника.
+    [Fact]
+    public void Env_is_forwarded_to_source()
+    {
+        var dir = TempDir("sysenv");
+        try
+        {
+            var src = new FakeSource(OneService());
+            new GetSystemHandler(src).Handle(new GetSystemQuery(dir, Env: "prod"));
+            Assert.Equal("prod", src.LastEnv);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
