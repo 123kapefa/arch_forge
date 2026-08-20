@@ -18,11 +18,16 @@ internal sealed record ComposeFile(string? Name, IReadOnlyList<ComposeService> S
 // (${VAR:-def}). environment и depends_on поддерживают обе формы (map и list).
 internal static class ComposeParser
 {
-    public static ComposeFile Parse(string yamlText)
-    {
-        if (new DeserializerBuilder().Build().Deserialize<object?>(yamlText) is not IDictionary<object, object> root)
-            return new ComposeFile(null, []);
+    /// <summary>Разобрать YAML-текст в корневой словарь compose (для merge оверрайдов). null — если не словарь.</summary>
+    public static IDictionary<object, object>? Deserialize(string yamlText) =>
+        new DeserializerBuilder().Build().Deserialize<object?>(yamlText) as IDictionary<object, object>;
 
+    public static ComposeFile Parse(string yamlText) =>
+        Deserialize(yamlText) is { } root ? Parse(root) : new ComposeFile(null, []);
+
+    // Разбор из уже готового корневого словаря — точка входа после merge base+override (E9.1 слой 2).
+    public static ComposeFile Parse(IDictionary<object, object> root)
+    {
         var name = Str(root, "name");
         var services = new List<ComposeService>();
 
