@@ -130,4 +130,66 @@ public class ComposeDeployTests
         Assert.Empty(api.Deploy!.Networks);
         Assert.False(api.Deploy!.HasHealthcheck);
     }
+
+    [Fact]
+    public void Parses_ipv6_host_ip_in_short_form()
+    {
+        var api = ReadSvc("""
+            services:
+              api:
+                image: app-api
+                ports:
+                  - "[::1]:8080:80"
+            """, "api");
+        Assert.Contains(api.Deploy!.Ports, x => x.Container == "80" && x.Host == "8080" && x.HostIp == "::1" && x.Published);
+    }
+
+    [Fact]
+    public void Healthcheck_test_none_counts_as_disabled()
+    {
+        Assert.False(ReadSvc("""
+            services:
+              api:
+                image: app-api
+                healthcheck:
+                  test: ["NONE"]
+            """, "api").Deploy!.HasHealthcheck);
+
+        Assert.False(ReadSvc("""
+            services:
+              api:
+                image: app-api
+                healthcheck:
+                  test: NONE
+            """, "api").Deploy!.HasHealthcheck);
+    }
+
+    [Fact]
+    public void Empty_container_port_is_skipped()
+    {
+        var api = ReadSvc("""
+            services:
+              api:
+                image: app-api
+                ports:
+                  - "8080:"
+                  - "9090:90"
+            """, "api");
+        Assert.DoesNotContain(api.Deploy!.Ports, x => x.Host == "8080"); // битый "8080:" пропущен
+        Assert.Contains(api.Deploy!.Ports, x => x.Host == "9090" && x.Container == "90");
+    }
+
+    [Fact]
+    public void Long_form_port_interpolates_published()
+    {
+        var api = ReadSvc("""
+            services:
+              api:
+                image: app-api
+                ports:
+                  - target: 80
+                    published: "${API_PORT:-8080}"
+            """, "api");
+        Assert.Contains(api.Deploy!.Ports, x => x.Container == "80" && x.Host == "8080" && x.Published);
+    }
 }

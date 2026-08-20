@@ -81,8 +81,9 @@ internal static class ComposeParser
         return list;
     }
 
-    // ports: короткая форма ("host:cont", "ip:host:cont", "cont", с /proto) и длинная ({target, published, host_ip}).
-    // Published=true → порт опубликован на хост (доступен снаружи); это вход для детектора «порт наружу в prod» (E9.2).
+    // ports: короткая форма ("cont", "host:cont", "ip:host:cont", "[ipv6]:host:cont", с /proto)
+    // и длинная ({target, published, host_ip}). Published=true → порт опубликован на хост (доступен
+    // снаружи); это вход для детектора «порт наружу в prod» (E9.2). Значения интерполируем как везде.
     private static IReadOnlyList<PortMapping> ReadPorts(object? ports)
     {
         var list = new List<PortMapping>();
@@ -91,10 +92,10 @@ internal static class ComposeParser
         {
             if (item is IDictionary<object, object> map) // длинная форма
             {
-                var target = Str(map, "target");
+                var target = Interpolation.Resolve(Str(map, "target"));
                 if (string.IsNullOrEmpty(target)) continue;
-                var published = Str(map, "published");
-                var hostIp = Str(map, "host_ip");
+                var published = Interpolation.Resolve(Str(map, "published"));
+                var hostIp = Interpolation.Resolve(Str(map, "host_ip"));
                 list.Add(new PortMapping(target,
                     string.IsNullOrEmpty(published) ? null : published,
                     string.IsNullOrEmpty(hostIp) ? null : hostIp,
@@ -104,23 +105,50 @@ internal static class ComposeParser
             var s = Interpolation.Resolve(item?.ToString());
             if (string.IsNullOrWhiteSpace(s)) continue;
             var slash = s.IndexOf('/'); if (slash >= 0) s = s[..slash]; // отбросить /tcp|/udp
-            var parts = s.Split(':');
-            string? hostIp2 = null, host = null; string container;
-            switch (parts.Length)
-            {
-                case 1: container = parts[0]; break;                       // "8080" (публикуется на эфемерный хост-порт)
-                case 2: host = parts[0]; container = parts[1]; break;      // "8080:80"
-                default: hostIp2 = parts[0]; host = parts[1]; container = parts[2]; break; // "127.0.0.1:8080:80"
-            }
-            list.Add(new PortMapping(container.Trim(), host, hostIp2, Published: true));
+            if (ParseShortPort(s) is { } pm) list.Add(pm);
         }
         return list;
     }
 
-    // healthcheck: наличие секции (и не отключён `disable: true`).
-    private static bool ReadHealthcheck(object? hc) =>
-        hc is IDictionary<object, object> map &&
-        !string.Equals(Str(map, "disable"), "true", StringComparison.OrdinalIgnoreCase);
+    // Короткая форма порта. IPv6 host_ip идёт в скобках: "[::1]:8080:80" — его нельзя резать по ':'
+    // как IPv4, поэтому вытаскиваем [..] отдельно. Пустой контейнерный порт (битый файл) → пропускаем.
+    private static PortMapping? ParseShortPort(string s)
+    {
+        string? hostIp = null;
+        if (s.StartsWith('['))                       // "[ipv6]:host:cont" | "[ipv6]:cont"
+        {
+            var close = s.IndexOf(']');
+            if (close <= 0) return null;
+            hostIp = s[1..close];
+            s = s[(close + 1)..].TrimStart(':');     // остаток: "host:cont" | "cont"
+        }
+        var parts = s.Split(':');
+        string? host = null; string container;
+        switch (parts.Length)
+        {
+            case 1: container = parts[0]; break;                              // "8080" (эфемерный хост-порт)
+            case 2: host = parts[0]; container = parts[1]; break;             // "host:cont" (или остаток IPv6)
+            default: hostIp = parts[0]; host = parts[1]; container = parts[2]; break; // IPv4 "ip:host:cont"
+        }
+        container = container.Trim();
+        if (container.Length == 0) return null;      // невалидно (напр. "8080:") — не выдумываем
+        return new PortMapping(container, string.IsNullOrEmpty(host) ? null : host, hostIp, Published: true);
+    }
+
+    // healthcheck: наличие секции и не отключён (`disable: true` либо `test: NONE`/`["NONE"]` — эквивалент).
+    private static bool ReadHealthcheck(object? hc)
+    {
+        if (hc is not IDictionary<object, object> map) return false;
+        if (string.Equals(Str(map, "disable"), "true", StringComparison.OrdinalIgnoreCase)) return false;
+        var test = Get(map, "test");
+        if (string.Equals(test?.ToString(), "NONE", StringComparison.Ordinal)) return false;
+        if (test is IEnumerable<object> tl)          // ["NONE"] — первый элемент
+        {
+            using var e = tl.GetEnumerator();
+            if (e.MoveNext() && e.Current?.ToString() == "NONE") return false;
+        }
+        return true;
+    }
 
     // networks: список или map (берём ключи-имена сетей).
     private static IReadOnlyList<string> ReadNetworks(object? nets)

@@ -18,7 +18,9 @@ public static class ProblemCategory
     public const string Convention = "convention";      // отклонение от свода (дрейф) — только когда запрошено
 }
 
-/// <summary>Публикация порта (E9.1): контейнерный порт, хост-порт (если опубликован наружу), bind-IP.</summary>
+/// <summary>Публикация порта (E9.1): контейнерный порт, хост-порт (если опубликован наружу), bind-IP.
+/// <c>Container</c>/<c>Host</c> — «сырые» строки из compose (могут быть диапазоном "8080-8090" или переменной),
+/// не гарантированно единичный int; детектор публичности учитывает это.</summary>
 /// <param name="Published">Опубликован на хост (доступен снаружи контейнера). <c>HostIp</c>=null → все интерфейсы (0.0.0.0).</param>
 public sealed record PortMapping(string Container, string? Host = null, string? HostIp = null, bool Published = false);
 
