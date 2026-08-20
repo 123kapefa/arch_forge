@@ -71,4 +71,18 @@ public class AnalysisClientTests
         Assert.DoesNotContain("drift", cap.LastUrl!);   // по умолчанию — лёгкий скан, без флагов
         Assert.DoesNotContain("layers", cap.LastUrl!);
     }
+
+    // E9.1 слой 2: выбранная среда доходит до Analysis query-string; по умолчанию — без env.
+    [Fact]
+    public async Task GetSystemAsync_passes_env()
+    {
+        var cap = new CapturingHandler();
+        var client = new AnalysisClient(new HttpClient(cap) { BaseAddress = new Uri("http://analysis") });
+
+        await client.GetSystemAsync("/root", env: "prod");
+        Assert.Contains("env=prod", cap.LastUrl);
+
+        await client.GetSystemAsync("/root");
+        Assert.DoesNotContain("env=", cap.LastUrl!);
+    }
 }

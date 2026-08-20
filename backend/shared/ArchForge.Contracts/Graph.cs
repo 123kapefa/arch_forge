@@ -110,8 +110,12 @@ public sealed record ProblemItemDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? File = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line = null);
 
-/// <summary>Контур окружения. Зарезервировано под P1.5 (топология/инстанс/профиль); в Фазе 1.5 не заполняется.</summary>
-public sealed record EnvironmentDto(string Id, string Name, string Kind); // topology | instance | profile
+/// <summary>Среда развёртывания (E9.1 слой 2): <c>Kind</c>=compose (из override/named compose-файлов).
+/// <c>Active</c> — какая среда сейчас применена (по ней собран граф/deploy). Для будущих источников
+/// <c>Kind</c> может расширяться (topology/instance/profile).</summary>
+public sealed record EnvironmentDto(
+    string Id, string Name, string Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Active = null);
 
 /// <summary>Свод конвенций, применённый при анализе: источник + сам пак (маркеры/fallback/правила) для просмотра.</summary>
 public sealed record ConventionsDto(

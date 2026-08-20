@@ -55,7 +55,13 @@ public sealed record SystemProblem(
 // File/Line — где живёт тип (переход «к файлу/плашке»); File пуст, если источник не дал путь.
 public sealed record ProblemItem(string Name, string Layer, string Note, string File = "", int? Line = null);
 
+/// <summary>Среда развёртывания (E9.1 слой 2): имя (default / dev / stage / prod…) + активна ли она сейчас.
+/// «default» = base (+ docker-compose.override.yml); именованные = base + docker-compose.&lt;env&gt;.yml.</summary>
+public sealed record SystemEnvironment(string Name, bool Active);
+
 public sealed record SystemGraph(
     IReadOnlyList<SystemNode> Nodes,
     IReadOnlyList<SystemEdge> Edges,
-    IReadOnlyList<SystemProblem> Problems);
+    IReadOnlyList<SystemProblem> Problems,
+    // E9.1 слой 2: доступные среды (из override/named compose-файлов). null → выбора сред нет (одна base).
+    IReadOnlyList<SystemEnvironment>? Environments = null);

@@ -130,12 +130,16 @@ public class ContractBackCompatTests
     }
 
     [Fact]
-    public void Environment_dto_round_trips()  // зарезервированная запись — smoke
+    public void Environment_dto_round_trips_with_active()  // E9.1 слой 2
     {
-        var back = JsonSerializer.Deserialize<EnvironmentDto>(
-            JsonSerializer.Serialize(new EnvironmentDto("prod", "Production", "instance"), Web), Web)!;
-        Assert.Equal("Production", back.Name);
-        Assert.Equal("instance", back.Kind);
+        var active = JsonSerializer.Deserialize<EnvironmentDto>(
+            JsonSerializer.Serialize(new EnvironmentDto("prod", "prod", "compose", Active: true), Web), Web)!;
+        Assert.Equal("prod", active.Name);
+        Assert.Equal("compose", active.Kind);
+        Assert.True(active.Active);
+
+        // Active опускается при null (Ф1-байт-совместимость: старый EnvironmentDto без флага валиден)
+        Assert.DoesNotContain("active", JsonSerializer.Serialize(new EnvironmentDto("dev", "dev", "compose"), Web));
     }
 
     [Fact]

@@ -116,11 +116,12 @@ export interface ServiceSummary {
   layers: LayerSummary[];
 }
 
-/** Контур окружения (topology | instance | profile) — зарезервировано; бэкенд Фазы 1.5 пока не заполняет. */
+/** Среда развёртывания (E9.1 слой 2): kind=compose (из override/named compose-файлов). active — какая применена сейчас. */
 export interface EnvironmentDto {
   id: string;
   name: string;
   kind: string;
+  active?: boolean;
 }
 
 /** Применённый свод конвенций: источник + сам пак (для просмотра в UI). */
@@ -155,6 +156,8 @@ export interface SystemQuery {
   drift?: boolean;
   /** линза «нарушение направления слоёв» (architecture) — тоже разбор кода per-service */
   layers?: boolean;
+  /** выбранная среда развёртывания (E9.1 слой 2): merge docker-compose.<env>.yml; пусто → default */
+  env?: string;
 }
 
 // Код-линзы гоняют Roslyn по каждому сервису — дольше структурного скана; но не бесконечно.
@@ -165,6 +168,7 @@ export async function fetchSystem(q: SystemQuery, signal?: AbortSignal): Promise
   const params = new URLSearchParams({ path: q.path });
   if (q.drift) params.set('drift', 'true');
   if (q.layers) params.set('layers', 'true');
+  if (q.env) params.set('env', q.env);
 
   const res = await fetchWithTimeout(`/api/system?${params.toString()}`, TIMEOUT_MS, signal);
   if (!res.ok) {

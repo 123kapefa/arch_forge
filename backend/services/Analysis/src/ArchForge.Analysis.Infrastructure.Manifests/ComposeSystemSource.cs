@@ -35,17 +35,36 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         ["redpanda"] = SystemNodeKind.Topic, ["nats"] = SystemNodeKind.Topic,
     };
 
-    public SystemGraph Read(string root, CancellationToken ct = default)
+    public SystemGraph Read(string root, string? env = null, CancellationToken ct = default)
     {
         var nodes = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
         var edges = new List<SystemEdge>();
         var httpIntents = new List<(string SourceId, string TargetHost)>();
 
-        foreach (var (system, composePath) in ComposesToParse(root))
+        // Оверлеи каждого compose + набор именованных сред (E9.1 слой 2). Материализуем список: проходим дважды
+        // (сбор сред → сборка графа), а discovery источников не обязан быть многоразовым.
+        var composes = ComposesToParse(root).ToList();
+        var overlaysByPath = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
+        var named = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var (_, cp) in composes)
+        {
+            var ov = ComposeOverlays.Discover(cp);
+            overlaysByPath[cp] = ov;
+            // "override" — дефолтный оверлей (не отдельная среда); "default" зарезервирован под base-среду —
+            // файл docker-compose.default.yml не должен задвоить/переопределить сентинел default.
+            foreach (var k in ov.Keys)
+                if (k != ComposeOverlays.Default && k != DefaultEnv) named.Add(k);
+        }
+        var available = new List<string> { DefaultEnv };
+        available.AddRange(named);
+        // выбранная среда: непустая и известная → она; иначе default (не выдумываем несуществующую среду)
+        var activeEnv = !string.IsNullOrWhiteSpace(env) && available.Contains(env.Trim()) ? env.Trim() : DefaultEnv;
+
+        foreach (var (system, composePath) in composes)
         {
             ct.ThrowIfCancellationRequested();
             ComposeFile compose;
-            try { compose = LoadCompose(composePath); }
+            try { compose = LoadCompose(composePath, overlaysByPath[composePath], activeEnv); }
             catch { continue; } // битый/нечитаемый compose — пропускаем (робастность)
 
             var local = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
@@ -120,10 +139,18 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
         var httpProblems = ResolveHttpCalls(nodes, edges, httpIntents, ct);
 
-        var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), []);
+        // Среды показываем, только если есть выбор (>1: default + именованные) — иначе поле опускаем (как Deploy/Endpoints).
+        IReadOnlyList<SystemEnvironment>? environments = available.Count > 1
+            ? available.Select(n => new SystemEnvironment(n, n == activeEnv)).ToList()
+            : null;
+
+        var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), [], environments);
         var problems = SystemProblemDetector.Detect(graph).Concat(httpProblems).ToList();
         return graph with { Problems = problems };
     }
+
+    // Имя среды по умолчанию (base + docker-compose.override.yml). Именованные среды — из <env>-оверлеев.
+    private const string DefaultEnv = "default";
 
     // Резолвим цель http-call по имени узла (среди ВСЕХ узлов, не только Service — иначе http-URL к
     // известному брокеру/БД создал бы узел-дубль). DNS docker-compose локален для сети ОДНОГО compose:
@@ -175,24 +202,25 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         return i > 0 ? id[..i] : "";
     }
 
-    // Загрузка compose с наложением дефолтного overlay (docker-compose.override.yml) — как делает сам
-    // docker compose (E9.1 слой 2). Merge на «сыром» словаре → влияет и на deploy, и на рёбра (env).
-    // Именованные среды (dev/stage/prod) — часть 2 слоя (выбор через параметр); тут только дефолт.
-    private static ComposeFile LoadCompose(string composePath)
+    // Загрузка compose с наложением оверлея выбранной среды (E9.1 слой 2). Merge на «сыром» словаре →
+    // влияет и на deploy, и на рёбра (env). Выбор оверлея:
+    //  • default → docker-compose.override.yml (как сам docker compose применяет его поверх base);
+    //  • именованная среда (dev/stage/prod) → docker-compose.<env>.yml (БЕЗ override.yml — как `docker compose -f base -f <env>`).
+    private static ComposeFile LoadCompose(string composePath, IReadOnlyDictionary<string, string> overlays, string activeEnv)
     {
         var root = ComposeParser.Deserialize(File.ReadAllText(composePath));
         if (root is null) return new ComposeFile(null, []);
 
-        // Наложение override ИЗОЛИРОВАНО: битый/нечитаемый/несовместимый override (синтаксис, спец-теги
-        // compose вроде !reset) не должен рушить разбор валидного base — деградируем до «override проигнорирован».
-        var overlays = ComposeOverlays.Discover(composePath);
-        if (overlays.TryGetValue(ComposeOverlays.Default, out var overridePath))
+        var overlayKey = activeEnv == DefaultEnv ? ComposeOverlays.Default : activeEnv;
+        // Наложение ИЗОЛИРОВАНО: битый/нечитаемый/несовместимый оверлей (синтаксис, спец-теги вроде !reset)
+        // не должен рушить разбор валидного base — деградируем до «оверлей проигнорирован».
+        if (overlays.TryGetValue(overlayKey, out var overlayPath))
             try
             {
-                if (ComposeParser.Deserialize(File.ReadAllText(overridePath)) is { } overrideRoot)
-                    root = ComposeMerge.Merge(root, overrideRoot);
+                if (ComposeParser.Deserialize(File.ReadAllText(overlayPath)) is { } overlayRoot)
+                    root = ComposeMerge.Merge(root, overlayRoot);
             }
-            catch { /* override невалиден → оставляем base как есть (робастность, как для самого base) */ }
+            catch { /* оверлей невалиден → оставляем base как есть (робастность, как для самого base) */ }
 
         return ComposeParser.Parse(root);
     }
