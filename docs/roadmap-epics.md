@@ -142,6 +142,9 @@
 - **Что.** Разобрать `docker-compose.yml` + `docker-compose.<env>.yml`/override → **per-env модель**: сервисы, образы, **порты** (published vs internal), **сети**, **healthcheck**, `depends_on`, ключи `environment`.
 - **Зачем.** Это данные для всего DevOps-слоя (Deploy, Сравнение сред, детекторы портов). Сейчас парсер читает сервисы/образы/env/depends — не хватает портов/сетей/hc и merge по средам.
 - **Как.** Merge override-файлов по правилам compose для выбранной среды; распарсить `ports`, `networks`, `healthcheck`. Отдать в IR как атрибуты узла-сервиса, зависящие от среды.
+- **Сделано (слой 1).** Парсинг `ports`/`networks`/`healthcheck` → `DeployInfo` (E9.1 слой 1).
+- **Сделано (слой 2, ч.1).** Движок merge (`ComposeMerge` на «сыром» словаре) + автоприменение `docker-compose.override.yml` — как сам docker compose; влияет и на deploy, и на рёбра (env).
+- **Осталось (слой 2, ч.2).** Выбор именованной среды (`?env=dev|stage|prod` → merge `docker-compose.<env>.yml`) + список сред в контракте + переключатель на фронте.
 - **Готово когда.** Для product-site по dev/stage/prod отдаются **разные** порты/сети/hc, видимые в Deploy и в дифе сред.
 
 ### E9.2 Публичность портов / границы сетей `◧ [A]`  (часть 1/2 — сделан детектор без среды)

@@ -45,7 +45,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         {
             ct.ThrowIfCancellationRequested();
             ComposeFile compose;
-            try { compose = ComposeParser.Parse(File.ReadAllText(composePath)); }
+            try { compose = LoadCompose(composePath); }
             catch { continue; } // битый/нечитаемый compose — пропускаем (робастность)
 
             var local = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
@@ -173,6 +173,28 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     {
         var i = id.LastIndexOf('/');
         return i > 0 ? id[..i] : "";
+    }
+
+    // Загрузка compose с наложением дефолтного overlay (docker-compose.override.yml) — как делает сам
+    // docker compose (E9.1 слой 2). Merge на «сыром» словаре → влияет и на deploy, и на рёбра (env).
+    // Именованные среды (dev/stage/prod) — часть 2 слоя (выбор через параметр); тут только дефолт.
+    private static ComposeFile LoadCompose(string composePath)
+    {
+        var root = ComposeParser.Deserialize(File.ReadAllText(composePath));
+        if (root is null) return new ComposeFile(null, []);
+
+        // Наложение override ИЗОЛИРОВАНО: битый/нечитаемый/несовместимый override (синтаксис, спец-теги
+        // compose вроде !reset) не должен рушить разбор валидного base — деградируем до «override проигнорирован».
+        var overlays = ComposeOverlays.Discover(composePath);
+        if (overlays.TryGetValue(ComposeOverlays.Default, out var overridePath))
+            try
+            {
+                if (ComposeParser.Deserialize(File.ReadAllText(overridePath)) is { } overrideRoot)
+                    root = ComposeMerge.Merge(root, overrideRoot);
+            }
+            catch { /* override невалиден → оставляем base как есть (робастность, как для самого base) */ }
+
+        return ComposeParser.Parse(root);
     }
 
     private IEnumerable<(string System, string ComposePath)> ComposesToParse(string root)
