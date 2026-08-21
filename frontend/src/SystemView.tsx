@@ -17,7 +17,7 @@ import { ImportsScreen } from './ImportsScreen';
 import { ConventionsView } from './ConventionsView';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, portExposure, portLabel, type SystemNodeData } from './systemFlow';
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
-import { gridLayout } from './gridLayout';
+import { dagreLayout } from './dagreLayout';
 import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
@@ -959,7 +959,7 @@ export function SystemView() {
     () => (graph ? buildSystemFlow(graph) : { nodes: [] as Node[], edges: [] as Edge[] }),
     [graph],
   );
-  const laid = useMemo(() => gridLayout(fullFlow.nodes, fullFlow.edges), [fullFlow]);
+  const laid = useMemo(() => dagreLayout(fullFlow.nodes, fullFlow.edges), [fullFlow]);
 
   // Фильтр вида поверх готовой раскладки — мгновенно, без перераскладки.
   const flow = useMemo(
