@@ -225,7 +225,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             }
             catch { /* оверлей невалиден → оставляем base как есть (робастность, как для самого base) */ }
 
-        return ComposeParser.Parse(root);
+        // Каталог compose нужен для G4: .env и env_file резолвятся относительно него.
+        return ComposeParser.Parse(root, Path.GetDirectoryName(composePath));
     }
 
     private IEnumerable<(string System, string ComposePath)> ComposesToParse(string root)
