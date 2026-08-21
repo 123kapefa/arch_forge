@@ -237,7 +237,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             if (svc.ComposePath is { } cp) { anyPerService = true; yield return (Rel(root, svc.Root), cp); }
         if (anyPerService) yield break;
 
-        // Иначе — монорепо с ОДНИМ корневым compose (сервисы найдены по .csproj, но своего compose у них нет):
+        // Иначе — монорепо с ОДНИМ корневым compose (сервисы найдены по .sln, но своего compose у них нет):
         // откатываемся на корневые compose-файлы, иначе анализ по папке дал бы 0 узлов (G2).
         foreach (var f in FallbackComposeFiles(root))
             yield return (DirNameOf(f), f);
