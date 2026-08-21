@@ -110,4 +110,56 @@ public class SharedDbDetectorTests
 
         Assert.Empty(SharedDbDetector.Detect(g)); // report-exporter исключён → один писатель → не флагаем
     }
+
+    [Fact]
+    public void Fires_for_build_services_without_image_by_name()  // G3
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("a", "comment-service", SystemNodeKind.Service),   // image=null (build:)
+                new SystemNode("b", "tag-service", SystemNodeKind.Service),
+                new SystemNode("db", "db", SystemNodeKind.Datastore, "postgres:16"),
+            ],
+            [
+                new SystemEdge("a", "db", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("b", "db", "rw-db", EdgeVia.Config, 0.9),
+            ], []);
+
+        Assert.Contains(SharedDbDetector.Detect(g), p => p.Kind == "shared-db" && p.Location == "db");
+    }
+
+    [Fact]
+    public void Build_service_and_its_migrations_count_as_one_app()  // G3
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("a", "comment-service", SystemNodeKind.Service),
+                new SystemNode("m", "comment-service-migrations", SystemNodeKind.Service),
+                new SystemNode("db", "db", SystemNodeKind.Datastore, "postgres:16"),
+            ],
+            [
+                new SystemEdge("a", "db", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("m", "db", "rw-db", EdgeVia.Compose, 0.7),
+            ], []);
+
+        Assert.Empty(SharedDbDetector.Detect(g)); // сервис + его миграции = одно приложение
+    }
+
+    [Fact]
+    public void Pgvector_shared_is_primary_db_critical()  // G1
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("a", "a", SystemNodeKind.Service, "app-a"),
+                new SystemNode("b", "b", SystemNodeKind.Service, "app-b"),
+                new SystemNode("db", "postgres", SystemNodeKind.Datastore, "pgvector/pgvector:pg16"),
+            ],
+            [
+                new SystemEdge("a", "db", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("b", "db", "rw-db", EdgeVia.Config, 0.9),
+            ], []);
+
+        Assert.Contains(SharedDbDetector.Detect(g),
+            p => p.Kind == "shared-db" && p.Severity == ProblemSeverity.Critical); // pgvector = postgres
+    }
 }
