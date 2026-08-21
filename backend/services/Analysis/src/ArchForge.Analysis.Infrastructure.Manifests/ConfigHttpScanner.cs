@@ -16,10 +16,25 @@ internal static class ConfigHttpScanner
         var intents = new List<(string, string)>();
         if (!Directory.Exists(root)) return intents;
 
-        var services = nodes.Where(n => n.Kind == SystemNodeKind.Service)
+        // Кандидаты «владельца» файла: полное норм-имя сервиса + его стем (без суффикса -service/-api/…).
+        // Стем нужен, когда имя compose-сервиса ≠ имя папки кода (education-service ↔ EducationContentService, G5):
+        // «education» найдётся в пути, а «educationservice» — нет. Стемы добавляем только ОДНОЗНАЧНЫЕ (у одного
+        // сервиса), иначе привязали бы файл наугад. OwnerOf берёт самую длинную подстроку → полное имя в приоритете.
+        var serviceNodes = nodes.Where(n => n.Kind == SystemNodeKind.Service).ToList();
+        var services = serviceNodes
             .Select(n => (Norm: Normalize(n.Name), n.Id))
             .Where(x => x.Norm.Length >= 3)
             .ToList();
+        var stemGroups = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var n in serviceNodes)
+        {
+            var stem = Normalize(StripServiceSuffix(n.Name));
+            // ≥4: короткие родовые остатки (web/job/bff) слишком легко совпадают как подстрока с чужой папкой.
+            if (stem.Length < 4 || stem == Normalize(n.Name)) continue;
+            (stemGroups.TryGetValue(stem, out var l) ? l : stemGroups[stem] = []).Add(n.Id);
+        }
+        foreach (var (stem, ids) in stemGroups)
+            if (ids.Count == 1) services.Add((stem, ids[0])); // однозначный стем → безопасно
         var known = new HashSet<string>(nodes.Select(n => n.Name.ToLowerInvariant()), StringComparer.Ordinal);
 
         var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
@@ -90,6 +105,17 @@ internal static class ConfigHttpScanner
     private static bool IsTestPath(string file) =>
         file.Contains($"{Path.DirectorySeparatorChar}tests{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
         file.Contains(".Tests", StringComparison.OrdinalIgnoreCase);
+
+    // Стем сервиса: имя без хвостового -service/-api/… (education-service → education). Для сопоставления
+    // с папкой кода, названной иначе (EducationContentService). Снимаем один суффикс.
+    private static readonly string[] ServiceSuffixes = { "-service", "-svc", "-api", "-worker", "-gateway", "-app" };
+    private static string StripServiceSuffix(string name)
+    {
+        var b = (name ?? "").Trim();
+        foreach (var s in ServiceSuffixes)
+            if (b.EndsWith(s, StringComparison.OrdinalIgnoreCase)) return b[..^s.Length];
+        return b;
+    }
 
     // Имя → нормализованная форма: только строчные буквы/цифры (убираем -, ., _, пробелы, разделители пути).
     private static string Normalize(string s) =>
