@@ -87,7 +87,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                 foreach (var (key, value) in svc.Environment)
                 {
                     // rw-db / uses-bus из строк подключения
-                    if (key.StartsWith("ConnectionStrings__", StringComparison.Ordinal) &&
+                    // регистронезависимо: в .env/env_file ключи обычно UPPERCASE (CONNECTIONSTRINGS__DATABASE)
+                    if (key.StartsWith("ConnectionStrings__", StringComparison.OrdinalIgnoreCase) &&
                         ConnectionString.ExtractHost(value) is { } host)
                     {
                         if (Interpolation.IsDeferred(host))
