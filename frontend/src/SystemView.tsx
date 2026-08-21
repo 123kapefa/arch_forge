@@ -752,6 +752,7 @@ export function SystemView() {
   const flowRef = useRef<FlowHandle>(null);
   const flagsRef = useRef({ layers: true, drift: true }); // текущие флаги анализа (для стабильного load)
   flagsRef.current = { layers: runLayers, drift: runDrift };
+  const envRef = useRef<string | undefined>(undefined); // выбранная среда (E9.1 слой 2); undefined → default
   const loadAbortRef = useRef<AbortController | null>(null); // текущий тяжёлый анализ — рвём при вытеснении
 
   // Гейт рендера графа: монтируем ReactFlow только когда контейнер .sysview__flow измерен (>0×0) — иначе на
@@ -772,10 +773,11 @@ export function SystemView() {
     const path = rawPath.trim();
     if (!path) return;
     const { drift, layers } = flagsRef.current; // какие код-анализы гнать (выбор пользователя)
+    const env = envRef.current;                 // выбранная среда развёртывания (E9.1 слой 2)
     // Кэш на перезагрузку (#64): при restore берём готовый граф, не гоняем полный разбор.
     // Свежий разбор — «Пере-анализировать» и смена флагов (там cache не передаётся).
     if (opts?.cache) {
-      const cached = readGraphCache(path, drift, layers);
+      const cached = readGraphCache(path, drift, layers, env);
       if (cached) {
         setGraph(cached);
         setLoadedPath(path);
@@ -794,12 +796,12 @@ export function SystemView() {
     setDrill2(null);
     setImports(null); // новый проект — сбросить кеш импортов (перезагрузятся при открытии экрана)
     try {
-      const g = await fetchSystem({ path, drift, layers }, ctrl.signal);
+      const g = await fetchSystem({ path, drift, layers, env }, ctrl.signal);
       if (loadAbortRef.current !== ctrl) return; // нас вытеснили/закрыли, пока ждали — не воскрешаем состояние
       setGraph(g);
       setLoadedPath(path);
       setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
-      writeGraphCache(path, drift, layers, g); // обновить кэш на следующую перезагрузку (#64)
+      writeGraphCache(path, drift, layers, g, env); // обновить кэш на следующую перезагрузку (#64)
       setRecents((prev) => pushRecent(prev, { path, name: g.project, nodes: g.nodes.length, at: Date.now() }));
       void fetchGitBranch(path).then(setBranch); // git-ветка для статус-бара (не блокирует)
       try { localStorage.setItem('af_path', path); } catch { /* quota */ }
@@ -820,9 +822,24 @@ export function SystemView() {
     if (loadedPath) void load(loadedPath);
   }, [loadedPath, load]);
 
+  // Выбрать среду развёртывания (E9.1 слой 2) → пере-запросить систему с ?env= (граф/deploy зависят от среды).
+  const chooseEnv = useCallback((name: string) => {
+    const next = name === 'default' ? undefined : name;
+    if (next === envRef.current) return; // среда уже активна — не гоняем повторный анализ впустую
+    envRef.current = next;
+    if (loadedPath) void load(loadedPath);
+  }, [loadedPath, load]);
+
+  // Открыть НОВЫЙ проект: среду сбрасываем на default (у другого проекта свой набор сред).
+  const openFresh = useCallback((path: string) => {
+    envRef.current = undefined;
+    void load(path);
+  }, [load]);
+
   const closeProject = useCallback(() => {
     loadAbortRef.current?.abort(); // закрыли проект во время анализа → рвём запрос
     loadAbortRef.current = null;
+    envRef.current = undefined;    // сброс выбранной среды
     setGraph(null);
     setLoadedPath('');
     setBranch(null);
@@ -1154,7 +1171,7 @@ export function SystemView() {
                   closeProject,
                 }}
                 onBrowse={() => setPickerOpen(true)}
-                onPick={(r) => void load(r.path)}
+                onPick={(r) => openFresh(r.path)}
               />
             </>
           )}
@@ -1180,6 +1197,23 @@ export function SystemView() {
           )}
         </nav>
         <div className="sysview__right">
+          {graph?.environments && graph.environments.length > 1 && !importsOpen && (
+            <div className="envsw" role="group" aria-label="Среда развёртывания">
+              <span className="envsw__label">СРЕДА</span>
+              {graph.environments.map((e) => (
+                <button
+                  key={e.id}
+                  className={`envsw__opt ${e.active ? 'is-active' : ''}`}
+                  aria-pressed={e.active ?? false}
+                  onClick={() => chooseEnv(e.name)}
+                  disabled={loading}
+                  title={`Собрать систему для среды «${e.name}»`}
+                >
+                  {e.name}
+                </button>
+              ))}
+            </div>
+          )}
           {graph && !importsOpen && (
             <span className={`saved ${saved ? 'saved--ok' : 'saved--dirty'}`}>
               {saved ? '✓ сохранено' : '● есть изменения'}
@@ -1468,7 +1502,7 @@ export function SystemView() {
       {pickerOpen && (
         <FolderPicker
           initial={loadedPath || undefined}
-          onSelect={(p) => { setPickerOpen(false); void load(p); }}
+          onSelect={(p) => { setPickerOpen(false); openFresh(p); }}
           onClose={() => setPickerOpen(false)}
         />
       )}

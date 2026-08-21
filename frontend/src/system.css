@@ -244,6 +244,16 @@
 .saved { font-size: 12px; display: inline-flex; align-items: center; }
 .saved--ok { color: var(--ok); }
 .saved--dirty { color: var(--warn); }
+/* переключатель среды развёртывания (E9.1 слой 2): сегменты в шапке, активная подсвечена */
+.envsw { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--card-line); border-radius: 8px; }
+.envsw__label { font-size: 9px; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; padding: 0 5px; }
+.envsw__opt {
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 11px; padding: 2px 9px; border-radius: 6px; white-space: nowrap;
+}
+.envsw__opt:hover:not(:disabled) { color: var(--text); }
+.envsw__opt.is-active { background: rgba(108, 140, 255, 0.16); color: var(--accent); }
+.envsw__opt:disabled { cursor: default; opacity: .6; }
 /* кнопка-навигация в шапке (Импорты ⇄ Карта) */
 .sysview__nav {
   display: inline-flex; align-items: center; gap: 6px;
