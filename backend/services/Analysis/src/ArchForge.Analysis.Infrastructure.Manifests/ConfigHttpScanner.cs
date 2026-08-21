@@ -29,7 +29,8 @@ internal static class ConfigHttpScanner
         foreach (var n in serviceNodes)
         {
             var stem = Normalize(StripServiceSuffix(n.Name));
-            if (stem.Length < 3 || stem == Normalize(n.Name)) continue;
+            // ≥4: короткие родовые остатки (web/job/bff) слишком легко совпадают как подстрока с чужой папкой.
+            if (stem.Length < 4 || stem == Normalize(n.Name)) continue;
             (stemGroups.TryGetValue(stem, out var l) ? l : stemGroups[stem] = []).Add(n.Id);
         }
         foreach (var (stem, ids) in stemGroups)

@@ -35,4 +35,29 @@ public class ConfigHttpScannerStemTests
         // и как следствие — цикл сервисов
         Assert.Contains(g.Problems, p => p.Kind == "service-cycle");
     }
+
+    [Fact]
+    public void Ambiguous_stem_is_not_attributed()
+    {
+        // стем «report» у ДВУХ сервисов (report-api, report-worker) → неоднозначен → не добавляем;
+        // файл под ReportGenerator/ не должен привязаться и создать ложное ребро к catalog.
+        var dir = Path.Combine(Path.GetTempPath(), "archforge_g5amb_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(dir, "ReportGenerator"));
+        File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
+            services:
+              report-api:
+                image: app-a
+              report-worker:
+                image: app-b
+              catalog-service:
+                image: app-c
+            """);
+        File.WriteAllText(Path.Combine(dir, "ReportGenerator", "appsettings.Docker.json"),
+            """{ "CatalogOptions": { "Url": "http://catalog-service:8080" } }""");
+
+        var g = new ComposeSystemSource().Read(dir);
+
+        Assert.DoesNotContain(g.Edges, e => e.Target.EndsWith("/catalog-service", StringComparison.Ordinal)
+            && e.Kind == "http-call"); // неоднозначный стем не привязал файл наугад
+    }
 }
