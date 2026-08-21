@@ -88,6 +88,8 @@ internal static class ComposeParser
     }
 
     // G4a: env_file (строка или список путей относительно каталога compose) → литеральные KEY=value.
+    // Значения НЕ интерполируются (как в docker compose: ${...} внутри env_file остаётся литералом);
+    // если такое встретится — IsDeferred ниже честно пометит его «отложенным», а не пустотой.
     private static IReadOnlyDictionary<string, string> ReadEnvFile(object? envFile, string? dir)
     {
         var dict = new Dictionary<string, string>(StringComparer.Ordinal);

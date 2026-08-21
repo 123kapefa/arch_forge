@@ -100,6 +100,77 @@ public class ComposeEnvFileTests
     }
 
     [Fact]
+    public void EnvFile_as_string_form()  // env_file: path (строка, не список)
+    {
+        var g = Read(
+            ("docker-compose.yml", """
+                services:
+                  orders-api:
+                    image: app-api
+                    env_file: api.env
+                  orders-db:
+                    image: postgres:16
+                """),
+            ("api.env", "ConnectionStrings__Orders=Host=orders-db\n"));
+        Assert.True(HasRwDb(g, "orders-api", "orders-db"));
+    }
+
+    [Fact]
+    public void EnvFile_object_form_with_path()  // env_file: [{path: …}]
+    {
+        var g = Read(
+            ("docker-compose.yml", """
+                services:
+                  orders-api:
+                    image: app-api
+                    env_file:
+                      - path: api.env
+                  orders-db:
+                    image: postgres:16
+                """),
+            ("api.env", "ConnectionStrings__Orders=Host=orders-db\n"));
+        Assert.True(HasRwDb(g, "orders-api", "orders-db"));
+    }
+
+    [Fact]
+    public void Multiple_env_files_later_wins()  // список env_file: последний перекрывает
+    {
+        var g = Read(
+            ("docker-compose.yml", """
+                services:
+                  orders-api:
+                    image: app-api
+                    env_file:
+                      - a.env
+                      - b.env
+                  orders-db:
+                    image: postgres:16
+                """),
+            ("a.env", "ConnectionStrings__Orders=Host=wrong-db\n"),
+            ("b.env", "ConnectionStrings__Orders=Host=orders-db\n")); // позже → побеждает
+        Assert.True(HasRwDb(g, "orders-api", "orders-db"));
+        Assert.DoesNotContain(g.Nodes, n => n.Name == "wrong-db");
+    }
+
+    [Fact]
+    public void DotEnv_overrides_default()  // .env перекрывает ${VAR:-default}
+    {
+        var g = Read(
+            ("docker-compose.yml", """
+                services:
+                  orders-api:
+                    image: app-api
+                    environment:
+                      ConnectionStrings__Orders: "${ORDERS_CONN:-Host=default-db}"
+                  orders-db:
+                    image: postgres:16
+                """),
+            (".env", "ORDERS_CONN=Host=orders-db\n")); // .env приоритетнее дефолта
+        Assert.True(HasRwDb(g, "orders-api", "orders-db"));
+        Assert.DoesNotContain(g.Nodes, n => n.Name == "default-db");
+    }
+
+    [Fact]
     public void Missing_env_files_do_not_crash()  // робастность
     {
         var g = Read(("docker-compose.yml", """
