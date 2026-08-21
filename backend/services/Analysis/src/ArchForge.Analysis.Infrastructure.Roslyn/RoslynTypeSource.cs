@@ -11,7 +11,7 @@ public sealed class RoslynTypeSource : ITypeSource
     public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default)
     {
         var result = new List<RawType>();
-        foreach (var file in RoslynScan.EnumerateCs(path))
+        foreach (var file in RoslynScan.EnumerateCsCapped(path, out _)) // тот же кап, что и в семантике (backstop)
         {
             ct.ThrowIfCancellationRequested(); // abort клиента → перестаём парсить, а не досчитываем впустую
             string text;

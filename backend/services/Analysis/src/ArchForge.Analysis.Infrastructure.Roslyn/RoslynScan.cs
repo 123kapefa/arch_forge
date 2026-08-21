@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace ArchForge.Analysis.Infrastructure.Roslyn;
@@ -8,17 +9,33 @@ internal static class RoslynScan
     // Хэндвритен .cs редко >2 МБ; крупнее — почти всегда генерённое/данные (парсить дорого, толку нет).
     private const long MaxFileBytes = 2_000_000;
 
-    // .cs таргета, кроме генерённого/сборочного мусора (adr/0008) и гигантских файлов (робастность).
+    // Кап числа .cs на один разбор: пата-репо (десятки тысяч файлов) душат парсер/память. Backstop против
+    // аномалий; реальные сервисы (сотни–тысячи файлов) не задевает. Урезание видимо в логах вызывающего (adr/0008).
+    internal const int MaxFilesPerScan = 20_000;
+
+    // .cs таргета, кроме генерённого мусора (.g.cs/.Designer.cs), шумовых каталогов (bin/obj, копии/дампы,
+    // скрытые .git/.claude/worktrees — единый PathFilter) и гигантских файлов (adr/0008).
     public static IEnumerable<string> EnumerateCs(string path) =>
         Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
             .Where(f =>
             {
+                if (PathFilter.IsNoise(path, f)) return false; // копии из .claude/worktrees и т.п. дублируют разбор
                 var n = f.Replace('\\', '/');
-                if (n.Contains("/obj/") || n.Contains("/bin/")
-                    || n.EndsWith(".g.cs") || n.EndsWith(".Designer.cs")) return false;
+                if (n.EndsWith(".g.cs") || n.EndsWith(".Designer.cs")) return false;
                 try { return new FileInfo(f).Length <= MaxFileBytes; }
                 catch { return false; } // недоступный файл — пропускаем (изоляция ошибок)
             });
+
+    /// <summary>Список .cs с капом числа файлов (backstop). <paramref name="capped"/> = список был урезан
+    /// (пата-репо) → вызывающий логирует деградацию (adr/0008).</summary>
+    internal static IReadOnlyList<string> EnumerateCsCapped(string path, out bool capped)
+    {
+        var files = EnumerateCs(path).ToList();
+        capped = files.Count > MaxFilesPerScan;
+        if (!capped) return files;
+        files.Sort(StringComparer.Ordinal); // порядок EnumerateFiles не гарантирован → сортируем, чтобы усечение было детерминированным
+        return files.Take(MaxFilesPerScan).ToList();
+    }
 
     public static bool IsTypeName(string name) =>
         name.Length > 0 && (char.IsUpper(name[0]) || name[0] == '_');
@@ -40,13 +57,19 @@ internal static class RoslynScan
     public static string Layer(string path)
     {
         var p = path.Replace('\\', '/');
-        if (p.Contains("Test")) return "tests";
-        if (p.Contains(".Domain")) return "Domain";
-        if (p.Contains(".Application") || p.Contains(".Core")) return "Application";
-        if (p.Contains(".Infrastructure") || p.Contains(".Persistence")) return "Infrastructure";
-        if (p.Contains(".Contracts")) return "Contracts";
-        if (p.Contains(".Migrator")) return "Tooling";
-        if (p.Contains(".Api") || p.Contains(".Web") || p.Contains(".Host")) return "Api";
+        // Сегменты проектов сравниваем без учёта регистра: «Catalog.API» ≡ «.Api» (иначе весь API-проект → unknown).
+        bool Has(string s) => p.Contains(s, StringComparison.OrdinalIgnoreCase);
+        if (Has("Test")) return "tests";
+        // общий kernel (Kalmykov.Shared.*: SharedKernel/Core/Framework/Authentication/…) — отдельный сквозной
+        // слой, а не «unknown» и не слой конкретного сервиса. Ловим по dotted-сегменту, чтобы не задеть
+        // внутрисервисные папки вида Catalog.Application/Shared. Раньше маркеров слоя (Shared.Contracts → Shared).
+        if (Has(".Shared.")) return "Shared";
+        if (Has(".Domain")) return "Domain";
+        if (Has(".Application") || Has(".Core")) return "Application";
+        if (Has(".Infrastructure") || Has(".Persistence")) return "Infrastructure";
+        if (Has(".Contracts")) return "Contracts";
+        if (Has(".Migrator")) return "Tooling";
+        if (Has(".Api") || Has(".Web") || Has(".Host")) return "Api";
         return "unknown";
     }
 }

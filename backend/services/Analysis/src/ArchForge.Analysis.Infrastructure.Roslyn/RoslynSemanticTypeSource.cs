@@ -45,8 +45,13 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
 
     private IReadOnlyList<RawType>? ReadSemantic(string path, CancellationToken ct)
     {
+        var files = RoslynScan.EnumerateCsCapped(path, out var capped);
+        if (capped)
+            _log.LogWarning("Сервис крупнее капа: > {Max} .cs — разбираем первые {Max} (робастность): {Path}",
+                RoslynScan.MaxFilesPerScan, RoslynScan.MaxFilesPerScan, path);
+
         var trees = new List<SyntaxTree>();
-        foreach (var file in RoslynScan.EnumerateCs(path))
+        foreach (var file in files)
         {
             ct.ThrowIfCancellationRequested(); // abort клиента → перестаём парсить
             try { trees.Add(CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file)); }
@@ -90,10 +95,15 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
 
                 var bases = Merge(SemanticBases(symbol), syntactic); // семантика ⊇ синтаксис
                 var refs = ResolveRefs(symbol, decl, model, own);
-                result.Add(new RawType(name, decl.Keyword.Text, bases, decl.ParameterList?.ToString() ?? "", layer, tree.FilePath) { Refs = refs });
+                result.Add(new RawType(name, decl.Keyword.Text, bases, decl.ParameterList?.ToString() ?? "", layer, tree.FilePath)
+                    { Refs = refs, Members = ExtractMembers(symbol) });
             }
             foreach (var en in root.DescendantNodes().OfType<EnumDeclarationSyntax>())
-                result.Add(new RawType(en.Identifier.Text, "enum", [], "", layer, tree.FilePath));
+            {
+                var values = en.Members.Select(mm => new RawMember(mm.Identifier.Text, "field",
+                    Line: mm.GetLocation().GetLineSpan().StartLinePosition.Line + 1)).ToList();
+                result.Add(new RawType(en.Identifier.Text, "enum", [], "", layer, tree.FilePath) { Members = values });
+            }
         }
         return result;
     }
@@ -167,6 +177,121 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         return best.Select(kv => new Ref(kv.Key, kv.Value)).ToList();
     }
 
+    // Короткое имя типа (с дженериками, без неймспейса): «Task<Product>», «Guid».
+    private static readonly SymbolDisplayFormat ShortType = SymbolDisplayFormat.MinimallyQualifiedFormat;
+    // Синтезированные компилятором члены record — не показываем как «настоящие».
+    private static readonly HashSet<string> RecordSynth = new(StringComparer.Ordinal)
+        { "Equals", "GetHashCode", "ToString", "Deconstruct", "PrintMembers" };
+
+    /// <summary>Члены типа для L3: свойства, поля, методы; у контроллеров экшены → endpoint с verb/route.</summary>
+    private static IReadOnlyList<RawMember> ExtractMembers(INamedTypeSymbol symbol)
+    {
+        var isController = InheritsController(symbol) || symbol.Name.EndsWith("Controller", StringComparison.Ordinal);
+        var classRoute = isController ? ClassRouteOf(symbol) : null; // префикс [Route] на контроллере — склеиваем с методом
+        var members = new List<RawMember>();
+        foreach (var m in symbol.GetMembers())
+        {
+            if (m.DeclaredAccessibility == Accessibility.Private) continue;
+            switch (m)
+            {
+                case IPropertySymbol { IsIndexer: false } p when p.Name != "EqualityContract":
+                    members.Add(new RawMember(p.Name, "property", p.Type.ToDisplayString(ShortType), Line: LineOf(p)));
+                    break;
+                case IMethodSymbol { MethodKind: MethodKind.Ordinary, IsImplicitlyDeclared: false } method when !RecordSynth.Contains(method.Name):
+                    var (http, route) = isController ? HttpOf(method, classRoute, symbol.Name) : (null, null);
+                    members.Add(new RawMember(method.Name, http is not null ? "endpoint" : "method",
+                        MethodSig(method), http, route, LineOf(method)));
+                    break;
+                case IFieldSymbol { IsImplicitlyDeclared: false, IsConst: false } field:
+                    members.Add(new RawMember(field.Name, "field", field.Type.ToDisplayString(ShortType), Line: LineOf(field)));
+                    break;
+            }
+        }
+        return members;
+    }
+
+    private static string MethodSig(IMethodSymbol m)
+    {
+        var ps = string.Join(", ", m.Parameters.Select(p => p.Type.ToDisplayString(ShortType)));
+        var ret = m.ReturnsVoid ? "void" : m.ReturnType.ToDisplayString(ShortType);
+        return $"({ps}) : {ret}";
+    }
+
+    // Verb+route экшена по атрибутам ([HttpGet("...")], [Route("...")]); route склеивается с префиксом класса
+    // и разворачивает токены [controller]/[action].
+    private static (string? Http, string? Route) HttpOf(IMethodSymbol m, string? classRoute, string controllerName)
+    {
+        string? http = null, methodRoute = null;
+        foreach (var a in m.GetAttributes())
+        {
+            var verb = (a.AttributeClass?.Name) switch
+            {
+                "HttpGetAttribute" => "GET", "HttpPostAttribute" => "POST", "HttpPutAttribute" => "PUT",
+                "HttpDeleteAttribute" => "DELETE", "HttpPatchAttribute" => "PATCH", _ => null,
+            };
+            if (verb is not null)
+            {
+                http = verb;
+                if (a.ConstructorArguments.FirstOrDefault().Value is string s) methodRoute = s;
+            }
+            else if (a.AttributeClass?.Name == "RouteAttribute" && a.ConstructorArguments.FirstOrDefault().Value is string rs)
+            {
+                methodRoute ??= rs;
+            }
+        }
+        return (http, http is null ? null : ExpandTokens(CombineRoute(classRoute, methodRoute), controllerName, m.Name));
+    }
+
+    // Route контроллера, если задан [Route("...")] на классе (константы резолвятся Roslyn'ом в строку).
+    private static string? ClassRouteOf(INamedTypeSymbol symbol)
+    {
+        foreach (var a in symbol.GetAttributes())
+            if (a.AttributeClass?.Name == "RouteAttribute" && a.ConstructorArguments.FirstOrDefault().Value is string rs)
+                return rs;
+        return null;
+    }
+
+    // Разворот ASP.NET-токенов маршрута: [controller] → имя контроллера без суффикса Controller, [action] → имя
+    // метода. Прочие токены ([area] и т.п.) оставляем как есть (best-effort, без рантайм-роутинга).
+    internal static string? ExpandTokens(string? route, string controllerName, string actionName)
+    {
+        if (string.IsNullOrEmpty(route)) return route;
+        var ctrl = controllerName.EndsWith("Controller", StringComparison.Ordinal)
+            ? controllerName[..^"Controller".Length] : controllerName;
+        return route
+            .Replace("[controller]", ctrl, StringComparison.OrdinalIgnoreCase)
+            .Replace("[action]", actionName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Склейка маршрута: класс-[Route] + метод. Абсолютный метод-маршрут (ведущий '/' или '~/') отменяет префикс
+    // класса (семантика ASP.NET). Иначе — соединяем непустые сегменты через '/'. Токены разворачивает ExpandTokens.
+    internal static string? CombineRoute(string? classRoute, string? methodRoute)
+    {
+        var mr = methodRoute?.Trim();
+        if (!string.IsNullOrEmpty(mr) && (mr.StartsWith('/') || mr.StartsWith("~/")))
+            return "/" + TrimSlash(mr.StartsWith("~/") ? mr[2..] : mr);
+        var parts = new[] { classRoute, mr }
+            .Select(TrimSlash)
+            .Where(p => p.Length > 0)
+            .ToArray();
+        return parts.Length == 0 ? null : "/" + string.Join("/", parts);
+    }
+
+    private static string TrimSlash(string? s) => s?.Trim().Trim('/') ?? "";
+
+    private static bool InheritsController(INamedTypeSymbol symbol)
+    {
+        for (var b = symbol.BaseType; b is not null; b = b.BaseType)
+            if (b.Name is "ControllerBase" or "Controller") return true;
+        return false;
+    }
+
+    private static int? LineOf(ISymbol s)
+    {
+        var loc = s.Locations.FirstOrDefault(l => l.IsInSource);
+        return loc is null ? null : loc.GetLineSpan().StartLinePosition.Line + 1;
+    }
+
     /// <summary>Собирает простые имена СВОИХ именованных типов внутри type (включая аргументы дженериков/элементы массивов).</summary>
     private static void CollectOwn(ITypeSymbol? type, IAssemblySymbol own, ISet<string> acc)
     {
@@ -206,11 +331,14 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
 
         // Свои проекты таргета берём из исходников, а не из bin/ (иначе дубль-определения символов).
         var ownProjects = Directory.EnumerateFiles(targetPath, "*.csproj", SearchOption.AllDirectories)
+            .Where(p => !PathFilter.IsHiddenOrCopy(targetPath, p))
             .Select(p => Path.GetFileNameWithoutExtension(p)!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var dll in Directory.EnumerateFiles(targetPath, "*.dll", SearchOption.AllDirectories))
         {
+            // bin/ здесь НУЖЕН (reference-сборки), поэтому исключаем только копии/скрытое, а не сам bin/
+            if (PathFilter.IsHiddenOrCopy(targetPath, dll)) continue; // .dll из копии (.claude/worktrees) → чужой/устаревший символ
             if (!dll.Replace('\\', '/').Contains("/bin/")) continue;
             if (ownProjects.Contains(Path.GetFileNameWithoutExtension(dll))) continue;
             if (seen.Add(Path.GetFileName(dll))) TryAdd(references, dll);

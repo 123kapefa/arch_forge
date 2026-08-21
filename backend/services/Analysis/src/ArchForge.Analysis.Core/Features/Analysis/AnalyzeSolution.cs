@@ -30,8 +30,9 @@ public sealed class AnalyzeSolutionHandler(ITypeSource source, TypeClassifier cl
     {
         if (string.IsNullOrWhiteSpace(query.Path) || !Directory.Exists(query.Path)) return null;
 
-        AnalysisResult result = classifier.Classify(source.Read(query.Path, ct));
+        var pack = ConventionPack.Load(query.Path);
+        AnalysisResult result = classifier.Classify(source.Read(query.Path, ct), pack);
         string project = new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
-        return GraphMapper.ToDto(result, project);
+        return result.ToGraphDto(project);
     }
 }

@@ -1,0 +1,602 @@
+using ArchForge.Analysis.Core.Systems;
+using ArchForge.Analysis.Infrastructure.Manifests;
+using Xunit.Abstractions;
+
+namespace ArchForge.Analysis.Tests.Systems;
+
+public class ComposeSystemSourceTests(ITestOutputHelper output)
+{
+    private const string Workspace = "/Users/123kapefa/Documents/projects/product-site-workspace";
+    private const string RealAuthCompose = Workspace + "/auth-service/docker-compose.yml";
+
+    // ---- helpers ----
+
+    private static string WriteCompose(string yaml)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "archforge_compose_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var f = Path.Combine(dir, "docker-compose.yml");
+        File.WriteAllText(f, yaml);
+        return f;
+    }
+
+    // Ребро по ИМЕНАМ узлов (id теперь namespaced — <system>/<svc>).
+    private static bool HasEdge(SystemGraph g, string srcName, string dstName, string kind)
+    {
+        var byId = g.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
+        return g.Edges.Any(e => e.Kind == kind
+            && byId.TryGetValue(e.Source, out var s) && s.Name == srcName
+            && byId.TryGetValue(e.Target, out var d) && d.Name == dstName);
+    }
+
+    // ---- unit-фикстуры ----
+
+    [Fact]
+    public void Builds_services_datastores_and_rwdb_edges()
+    {
+        var f = WriteCompose("""
+            services:
+              api:
+                image: ghcr.io/ns/app-api:${TAG:-stage}
+                environment:
+                  ConnectionStrings__Db: >-
+                    Host=app-db;Port=5432;Database=${DB:-app};Password=${PW:?set}
+                depends_on:
+                  app-db:
+                    condition: service_healthy
+              app-db:
+                image: postgres:17-alpine
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Name == "api" && n.Kind == SystemNodeKind.Service);
+            Assert.Contains(g.Nodes, n => n.Name == "app-db" && n.Kind == SystemNodeKind.Datastore);
+            Assert.True(HasEdge(g, "api", "app-db", "rw-db"));
+            Assert.Empty(g.Problems); // один писатель
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Detects_service_cycle_through_pipeline()
+    {
+        // два сервиса зовут друг друга по HTTP → цикл (нет чёткого направления зависимостей).
+        // Проверяем, что детектор проведён сквозь весь конвейер Read, а не только юнит.
+        var f = WriteCompose("""
+            services:
+              svc-a:
+                image: ns/svc-a:1
+                environment: { SvcB__Url: "http://svc-b:8080" }
+              svc-b:
+                image: ns/svc-b:1
+                environment: { SvcA__Url: "http://svc-a:8080" }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "svc-a", "svc-b", "http-call"));
+            Assert.True(HasEdge(g, "svc-b", "svc-a", "http-call"));
+            // ровно одна проблема — сам цикл, без посторонних (shared-db/ambiguous)
+            var problem = Assert.Single(g.Problems);
+            Assert.Equal("service-cycle", problem.Kind);
+            Assert.Equal(ProblemSeverity.Critical, problem.Severity);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Регресс к находке ревью #20 (Critical): две НЕСВЯЗАННЫЕ системы с сервисами, зовущими друг друга по
+    // HTTP, не образуют ложный service-cycle — межкомпозное разрешение имени неуверенно (0.5), не Critical.
+    [Fact]
+    public void Cross_system_name_match_is_not_a_false_cycle()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_xsys_" + Guid.NewGuid().ToString("N"));
+        MakeCallingSvc(root, "checkout-service", "Checkout.slnx", "checkout", "payments");
+        MakeCallingSvc(root, "payments-service", "Payments.slnx", "payments", "checkout");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.True(HasEdge(g, "checkout", "payments", "http-call")); // рёбра честно есть...
+            Assert.True(HasEdge(g, "payments", "checkout", "http-call"));
+            Assert.DoesNotContain(g.Problems, p => p.Kind == "service-cycle"); // ...но не громкий ложный Critical
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Detects_shared_db_when_two_apps_write_one()
+    {
+        var f = WriteCompose("""
+            services:
+              api-a:
+                image: ghcr.io/ns/a:1
+                environment: { ConnectionStrings__Db: "Host=shared-db;Database=x" }
+              api-b:
+                image: ghcr.io/ns/b:1
+                environment: { ConnectionStrings__Db: "Host=shared-db;Database=x" }
+              shared-db:
+                image: postgres:16
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Problems, p =>
+                p.Kind == "shared-db" && g.Nodes.Any(n => n.Id == p.Location && n.Name == "shared-db"));
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Deferred_connection_becomes_external_node()
+    {
+        var f = WriteCompose("""
+            services:
+              api:
+                image: app:1
+                environment:
+                  - ConnectionStrings__Db=${CATALOG_DB_CONNECTION}
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Kind == SystemNodeKind.External && n.Name == "${CATALOG_DB_CONNECTION}");
+            Assert.True(HasEdge(g, "api", "${CATALOG_DB_CONNECTION}", "rw-db"));
+            Assert.Contains(g.Edges, e => e is { Deferred: true, Target: "${CATALOG_DB_CONNECTION}" });
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Находка ревью #1: одинаковые имена сервисов в РАЗНЫХ compose не должны сливаться в один узел.
+    [Fact]
+    public void Same_service_names_in_different_composes_do_not_merge()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_multi_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "sysA"));
+        Directory.CreateDirectory(Path.Combine(root, "sysB"));
+        File.WriteAllText(Path.Combine(root, "sysA", "docker-compose.yml"), """
+            services:
+              api: { image: ghcr.io/ns/app-a:1, environment: { ConnectionStrings__Db: "Host=db" } }
+              db:  { image: postgres:16 }
+            """);
+        File.WriteAllText(Path.Combine(root, "sysB", "docker-compose.yml"), """
+            services:
+              api: { image: ghcr.io/ns/app-b:1, environment: { ConnectionStrings__Db: "Host=db" } }
+              db:  { image: postgres:16 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.Equal(2, g.Nodes.Count(n => n.Name == "api")); // две разные системы — два узла
+            Assert.Equal(2, g.Nodes.Count(n => n.Name == "db"));
+            Assert.Empty(g.Problems); // каждый api пишет в СВОЮ db → не общая
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // Находка ревью #4: exporter-образ (postgres-exporter) — это сервис мониторинга, а не Datastore.
+    [Fact]
+    public void Exporter_image_is_not_classified_as_datastore()
+    {
+        var f = WriteCompose("""
+            services:
+              pg-exporter: { image: quay.io/community/postgres-exporter:v0.17.1 }
+              db:          { image: postgres:16 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Name == "pg-exporter" && n.Kind == SystemNodeKind.Service);
+            Assert.Contains(g.Nodes, n => n.Name == "db" && n.Kind == SystemNodeKind.Datastore);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Находка ревью #3: два build-only сервиса (без образа) в одну БД → НЕ выдумываем общую БД.
+    [Fact]
+    public void Build_only_writers_do_not_fabricate_shared_db()
+    {
+        var f = WriteCompose("""
+            services:
+              api:     { build: ., environment: { ConnectionStrings__Db: "Host=db" } }
+              migrate: { build: ., environment: { ConnectionStrings__Db: "Host=db" } }
+              db:      { image: postgres:16 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Empty(g.Problems); // образов нет → идентичность неизвестна → не выдумываем
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // ---- реальный таргет (де-риск, локально; на CI скипается) ----
+
+    [SkippableFact]
+    public void Real_target_auth_service_honest_graph()
+    {
+        Skip.IfNot(File.Exists(RealAuthCompose), "таргет product-site-workspace не найден");
+
+        var g = new ComposeSystemSource().Read(RealAuthCompose);
+
+        Assert.Contains(g.Nodes, n => n.Name == "auth-api" && n.Kind == SystemNodeKind.Service);
+        Assert.Contains(g.Nodes, n => n.Name == "postgres-auth" && n.Kind == SystemNodeKind.Datastore);
+        Assert.Contains(g.Nodes, n => n.Name == "redis-auth" && n.Kind == SystemNodeKind.Datastore);
+        Assert.True(HasEdge(g, "auth-api", "postgres-auth", "rw-db"));
+        Assert.True(HasEdge(g, "auth-api", "redis-auth", "rw-db"));
+        // auth-api + auth-migrate — один образ → это НЕ общая БД (детектор не выдумывает)
+        Assert.DoesNotContain(g.Problems, p => p.Kind == "shared-db");
+    }
+
+    [SkippableFact]
+    public void Real_workspace_multi_service_discovery()
+    {
+        Skip.IfNot(Directory.Exists(Workspace), "таргет product-site-workspace не найден");
+
+        var g = new ComposeSystemSource().Read(Workspace);
+        var services = g.Nodes.Count(n => n.Kind == SystemNodeKind.Service);
+        var stores = g.Nodes.Count(n => n.Kind == SystemNodeKind.Datastore);
+        output.WriteLine($"сервисов={services} хранилищ={stores} рёбер={g.Edges.Count} проблем={g.Problems.Count}");
+        foreach (var p in g.Problems) output.WriteLine($"  ⚠ {p.Severity} {p.Kind}: {p.Title}");
+
+        Assert.True(services >= 2 && stores >= 2); // мульти-сервисный discovery без падения
+        // Честно: общих РЕЛЯЦИОННЫХ БД нет (у каждого сервиса своя postgres, exporter'ы исключены) —
+        // ни одного Critical; но несколько сервисов делят один redis → shared-store (Warning), не прячем.
+        Assert.DoesNotContain(g.Problems, p => p.Severity == ProblemSeverity.Critical);
+        Assert.Contains(g.Problems, p => p.Kind == "shared-store"); // общий redis
+    }
+
+    // Находка ревью #1: два сервиса с ОДИНАКОВЫМ именем solution (Server.slnx) в разных папках не сливаются.
+    [Fact]
+    public void Same_solution_name_in_different_folders_do_not_merge()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_slncol_" + Guid.NewGuid().ToString("N"));
+        MakeSvc(root, "svc-a", "Server.slnx", "ghcr.io/ns/svc-a:1");
+        MakeSvc(root, "svc-b", "Server.slnx", "ghcr.io/ns/svc-b:1");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.Equal(2, g.Nodes.Count(n => n.Name == "api")); // namespace по папке → два разных узла
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // ---- P1.5-D: http-call ----
+
+    [Fact]
+    public void Http_call_edge_from_service_url_env()
+    {
+        var f = WriteCompose("""
+            services:
+              web:
+                image: ghcr.io/ns/web:1
+                environment: { Backend__Url: "http://api:8080", ConnectionStrings__Db: "Host=db" }
+              api: { image: ghcr.io/ns/api:1 }
+              db:  { image: postgres:16 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "web", "api", "http-call")); // цель резолвится по имени сервиса
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Http_call_to_unknown_service_is_external()
+    {
+        var f = WriteCompose("""
+            services:
+              web: { image: web:1, environment: { Sms__Url: "http://sms-api:8080" } }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Kind == SystemNodeKind.External && n.Name == "sms-api");
+            Assert.True(HasEdge(g, "web", "sms-api", "http-call")); // неизвестный сервис → внешний узел (честно)
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Public_and_localhost_urls_are_ignored()
+    {
+        var f = WriteCompose("""
+            services:
+              web:
+                image: web:1
+                environment:
+                  Turnstile__Url: "https://challenges.cloudflare.com/x"
+                  Self__Url: "http://localhost:5000"
+                  ASPNETCORE_URLS: "http://+:8080"
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");
+            Assert.DoesNotContain(g.Nodes, n => n.Kind == SystemNodeKind.External);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Connection_to_topic_is_uses_bus_not_rwdb()
+    {
+        var f = WriteCompose("""
+            services:
+              app:   { image: app:1, environment: { ConnectionStrings__Bus: "Host=kafka" } }
+              kafka: { image: bitnami/kafka:3 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Name == "kafka" && n.Kind == SystemNodeKind.Topic);
+            Assert.True(HasEdge(g, "app", "kafka", "uses-bus")); // подключение к шине, направление неизвестно
+            Assert.False(HasEdge(g, "app", "kafka", "rw-db"));   // топик — не БД
+            Assert.False(HasEdge(g, "app", "kafka", "publishes")); // направление pub/sub из compose НЕ выдаём
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Часть 1 «честная шина»: config-ключи вне connection strings (RabbitMQ__Host, Kafka__BootstrapServers)
+    // связывают сервис с шиной того же compose неориентированным uses-bus.
+    [Fact]
+    public void Bus_host_config_keys_connect_service_to_bus()
+    {
+        var f = WriteCompose("""
+            services:
+              orders:
+                image: ns/orders:1
+                environment:
+                  RabbitMQ__Host: "rabbitmq"
+                  Kafka__BootstrapServers: "kafka:9092"
+              rabbitmq: { image: rabbitmq:3-management-alpine }
+              kafka:    { image: bitnami/kafka:3 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "orders", "rabbitmq", "uses-bus"));
+            Assert.True(HasEdge(g, "orders", "kafka", "uses-bus"));
+            Assert.DoesNotContain(g.Edges, e => e.Kind is "publishes" or "subscribes"); // направление не выдумываем
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Bus_host_amqp_url_with_userinfo_and_port_resolves()
+    {
+        var f = WriteCompose("""
+            services:
+              worker: { image: ns/worker:1, environment: { RabbitMQ__Uri: "amqp://guest:guest@rabbitmq:5672/vhost" } }
+              rabbitmq: { image: rabbitmq:3 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "worker", "rabbitmq", "uses-bus")); // хост = rabbitmq (без схемы/userinfo/порта)
+            Assert.DoesNotContain(g.Nodes, n => n.Name == "guest");
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Ревью #21 M3: bus-host ключ с http-значением (management URL брокера) НЕ даёт двойного ребра
+    // (uses-bus + http-call) — строка учтена как подключение к шине.
+    [Fact]
+    public void Bus_host_http_uri_does_not_create_duplicate_http_call()
+    {
+        var f = WriteCompose("""
+            services:
+              app: { image: ns/app:1, environment: { RabbitMQ__Uri: "http://rabbitmq:15672" } }
+              rabbitmq: { image: rabbitmq:3-management-alpine }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "app", "rabbitmq", "uses-bus"));
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call"); // не двоим ту же строку в http-call
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // Ревью #21 M4: брокер вне compose (managed/облачный) виден честным внешним узлом, а не молча пропадает.
+    [Fact]
+    public void External_broker_becomes_external_node()
+    {
+        var f = WriteCompose("""
+            services:
+              app: { image: ns/app:1, environment: { Kafka__BootstrapServers: "pkc-xyz.eu.confluent.cloud:9092" } }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Contains(g.Nodes, n => n.Kind == SystemNodeKind.External && n.Name == "pkc-xyz");
+            Assert.True(HasEdge(g, "app", "pkc-xyz", "uses-bus"));
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [SkippableFact]
+    public void Real_workspace_has_http_call_edges()
+    {
+        Skip.IfNot(Directory.Exists(Workspace), "таргет product-site-workspace не найден");
+
+        var g = new ComposeSystemSource().Read(Workspace);
+        var byId = g.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
+        var httpCalls = g.Edges.Where(e => e.Kind == "http-call").ToList();
+        output.WriteLine($"http-call рёбер={httpCalls.Count}");
+        foreach (var e in httpCalls.Take(12))
+            output.WriteLine($"  {byId[e.Source].Name} → {(byId.TryGetValue(e.Target, out var t) ? t.Name : e.Target)}");
+
+        Assert.NotEmpty(httpCalls);                              // межсервисные вызовы product_site
+        Assert.True(HasEdge(g, "orders-api", "catalog-api", "http-call")); // конкретная реальная связь
+    }
+
+    [SkippableFact]
+    public void Real_workspace_bus_is_connected_not_dangling()
+    {
+        Skip.IfNot(Directory.Exists(Workspace), "таргет product-site-workspace не найден");
+
+        var g = new ComposeSystemSource().Read(Workspace);
+        var topics = g.Nodes.Where(n => n.Kind == SystemNodeKind.Topic).ToList();
+        Skip.If(topics.Count == 0, "в выбранном compose таргета нет шины");
+
+        // rabbitmq реально используется (RabbitMQ__Host у нескольких сервисов) → uses-bus рёбра есть,
+        // значит НЕ isolated-topic. Направление pub/sub из compose неизвестно → и НЕ dangling/orphaned (честно).
+        foreach (var t in topics)
+            Assert.Contains(g.Edges, e => e.Kind == "uses-bus" && (e.Source == t.Id || e.Target == t.Id));
+        Assert.DoesNotContain(g.Problems, p => p.Kind is "isolated-topic" or "dangling-event" or "orphaned-subscription");
+    }
+
+    [Fact]
+    public void Http_url_with_userinfo_resolves_real_host()
+    {
+        var f = WriteCompose("""
+            services:
+              web:    { image: web:1, environment: { Es__Url: "http://user:pass@search:9200" } }
+              search: { image: search:1 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.True(HasEdge(g, "web", "search", "http-call")); // хост = search, не «user»
+            Assert.DoesNotContain(g.Nodes, n => n.Name == "user");
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Ambiguous_http_target_reports_coverage_not_silence()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_amb_" + Guid.NewGuid().ToString("N"));
+        MakeSvc(root, "sysA", "A.slnx", "ghcr.io/ns/a:1"); // сервис «api»
+        MakeSvc(root, "sysB", "B.slnx", "ghcr.io/ns/b:1"); // ещё один одноимённый «api»
+        var c = Directory.CreateDirectory(Path.Combine(root, "sysC")).FullName;
+        File.WriteAllText(Path.Combine(c, "C.slnx"), "<Solution/>");
+        File.WriteAllText(Path.Combine(c, "docker-compose.yml"),
+            "services:\n  web: { image: web:1, environment: { Backend__Url: \"http://api:8080\" } }\n");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.Contains(g.Problems, p => p.Kind == "ambiguous-target"); // не молчим (adr/0008)
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");     // но и не выдумываем цель
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Http_url_to_known_broker_does_not_duplicate_node()
+    {
+        var f = WriteCompose("""
+            services:
+              worker: { image: worker:1, environment: { Broker__AdminUrl: "http://kafka:8082" } }
+              kafka:  { image: bitnami/kafka:3 }
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.Equal(1, g.Nodes.Count(n => n.Name == "kafka"));  // не двоится (Topic + External)
+            Assert.True(HasEdge(g, "worker", "kafka", "http-call")); // ребро к существующему узлу
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    [Fact]
+    public void Ip_literals_and_case_dedup_are_handled()
+    {
+        var f = WriteCompose("""
+            services:
+              web:
+                image: web:1
+                environment:
+                  A__Url: "http://10.0.0.5:8080"
+                  B__Url: "http://[::1]:9000"
+                  C__Url: "http://sms-api:8080"
+                  D__Url: "http://SMS-API:8080"
+            """);
+        try
+        {
+            var g = new ComposeSystemSource().Read(f);
+            Assert.DoesNotContain(g.Edges, e => e.Target.Contains("10.0.0") || e.Target.Contains("::1")); // IP не узел
+            Assert.Equal(1, g.Nodes.Count(n => n.Kind == SystemNodeKind.External));                       // один sms-api
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(f)!, recursive: true); }
+    }
+
+    // ---- http-call из appsettings (детектор reverse-proxy/gateway) ----
+
+    [Fact]
+    public void Http_call_from_appsettings_services_map()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "archforge_cfg_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "docker-compose.yml"), """
+            services:
+              api-gateway: { image: ns/gateway:1 }
+              catalog-api: { image: ns/catalog:1 }
+              cart-api:    { image: ns/cart:1 }
+            """);
+        // владелец файла определяется по имени папки (api-gateway ↔ узел api-gateway)
+        var gw = Directory.CreateDirectory(Path.Combine(root, "api-gateway")).FullName;
+        File.WriteAllText(Path.Combine(gw, "appsettings.Docker.json"),
+            """{ "Services": { "Catalog": "http://catalog-api:8080", "Cart": "http://cart-api:8080", "Self": "http://localhost:9000" } }""");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.True(HasEdge(g, "api-gateway", "catalog-api", "http-call")); // маршрут reverse-proxy из appsettings
+            Assert.True(HasEdge(g, "api-gateway", "cart-api", "http-call"));
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call" && e.Target.Contains("localhost")); // localhost — не сервис
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Appsettings_url_to_unknown_host_is_ignored()
+    {
+        // config-URL на хост вне скана (telemetry/collector) НЕ плодит внешний узел — только внутренние сервисы.
+        var root = Path.Combine(Path.GetTempPath(), "archforge_cfgext_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "docker-compose.yml"), """
+            services:
+              catalog-api: { image: ns/catalog:1 }
+            """);
+        var svc = Directory.CreateDirectory(Path.Combine(root, "catalog-api")).FullName;
+        File.WriteAllText(Path.Combine(svc, "appsettings.json"),
+            """{ "Otel": { "Endpoint": "http://otel-collector:4317" } }""");
+        try
+        {
+            var g = new ComposeSystemSource().Read(root);
+            Assert.DoesNotContain(g.Nodes, n => n.Name == "otel-collector"); // неизвестный хост из config не даёт узла
+            Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [SkippableFact]
+    public void Real_gateway_routes_to_services_via_appsettings()
+    {
+        var productSite = Workspace + "/product_site";
+        Skip.IfNot(Directory.Exists(productSite), "таргет product_site не найден");
+
+        var g = new ComposeSystemSource().Read(productSite);
+        // YARP-gateway маршрутизирует на сервисы (appsettings.Docker.json «Services»-мапа) — точка входа
+        Assert.True(HasEdge(g, "api-gateway", "catalog-api", "http-call"));
+        Assert.True(HasEdge(g, "api-gateway", "orders-api", "http-call"));
+    }
+
+    private static void MakeSvc(string root, string dir, string sln, string apiImage)
+    {
+        var p = Directory.CreateDirectory(Path.Combine(root, dir)).FullName;
+        File.WriteAllText(Path.Combine(p, sln), "<Solution/>");
+        File.WriteAllText(Path.Combine(p, "docker-compose.yml"),
+            $"services:\n  api: {{ image: {apiImage}, environment: {{ ConnectionStrings__Db: \"Host=db\" }} }}\n  db: {{ image: postgres:16 }}\n");
+    }
+
+    // отдельный сервис-репозиторий (свой solution + compose), где <svc> зовёт <target> по HTTP
+    private static void MakeCallingSvc(string root, string dir, string sln, string svc, string target)
+    {
+        var p = Directory.CreateDirectory(Path.Combine(root, dir)).FullName;
+        File.WriteAllText(Path.Combine(p, sln), "<Solution/>");
+        File.WriteAllText(Path.Combine(p, "docker-compose.yml"),
+            $"services:\n  {svc}: {{ image: ghcr.io/ns/{svc}:1, environment: {{ Target__Url: \"http://{target}:8080\" }} }}\n");
+    }
+}

@@ -6,6 +6,7 @@
     <Project Path="services/Analysis/src/ArchForge.Analysis.Core/ArchForge.Analysis.Core.csproj" />
     <Project Path="services/Analysis/src/ArchForge.Analysis.Domain/ArchForge.Analysis.Domain.csproj" />
     <Project Path="services/Analysis/src/ArchForge.Analysis.Infrastructure.Roslyn/ArchForge.Analysis.Infrastructure.Roslyn.csproj" />
+    <Project Path="services/Analysis/src/ArchForge.Analysis.Infrastructure.Manifests/ArchForge.Analysis.Infrastructure.Manifests.csproj" />
     <Project Path="services/Analysis/src/ArchForge.Analysis.Web/ArchForge.Analysis.Web.csproj" />
   </Folder>
   <Folder Name="/services/Analysis/tests/">
