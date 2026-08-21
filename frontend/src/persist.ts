@@ -33,23 +33,26 @@ export const setSS = (key: string, val: string) => { try { sessionStorage.setIte
 // --- Кэш системного графа на перезагрузку (#64): sessionStorage, ключ = версия + флаги + путь ---
 
 // Версия ключа инвалидирует кэш при смене формы контракта (вкладка пережила деплой) — как v3 у раскладки.
-const GCACHE_V = 'v1';
+// v2: контракт получил Environments/Deploy и граф стал зависеть от среды (env в ключе).
+const GCACHE_V = 'v2';
 const gcachePrefix = `af_gcache:${GCACHE_V}:`;
-export const gcacheKey = (path: string, drift: boolean, layers: boolean) => `${gcachePrefix}${drift ? 1 : 0}${layers ? 1 : 0}:${path}`;
+// env перед путём (не после) — чтобы cleanup по endsWith(":path") в writeGraphCache продолжал работать.
+export const gcacheKey = (path: string, drift: boolean, layers: boolean, env?: string) =>
+  `${gcachePrefix}${drift ? 1 : 0}${layers ? 1 : 0}:${env ?? ''}:${path}`;
 
-export function readGraphCache(path: string, drift: boolean, layers: boolean): SystemGraph | null {
+export function readGraphCache(path: string, drift: boolean, layers: boolean, env?: string): SystemGraph | null {
   try {
-    const s = sessionStorage.getItem(gcacheKey(path, drift, layers));
+    const s = sessionStorage.getItem(gcacheKey(path, drift, layers, env));
     if (!s) return null;
     const g = JSON.parse(s) as SystemGraph;
     // валидируем форму: устаревший/битый кэш не отправляем в рендер (иначе TypeError на g.nodes и т.п.)
     return g && typeof g.project === 'string' && Array.isArray(g.nodes) && Array.isArray(g.edges) ? g : null;
   } catch { return null; }
 }
-export function writeGraphCache(path: string, drift: boolean, layers: boolean, g: SystemGraph): void {
-  // на путь держим один свежий кэш: чистим прежние комбинации флагов того же проекта
+export function writeGraphCache(path: string, drift: boolean, layers: boolean, g: SystemGraph, env?: string): void {
+  // на путь держим один свежий кэш: чистим прежние комбинации флагов/сред того же проекта
   // (иначе записи копятся без вытеснения → рост sessionStorage до QuotaExceeded).
-  const keep = gcacheKey(path, drift, layers);
+  const keep = gcacheKey(path, drift, layers, env);
   try {
     for (let i = sessionStorage.length - 1; i >= 0; i--) {
       const k = sessionStorage.key(i);
