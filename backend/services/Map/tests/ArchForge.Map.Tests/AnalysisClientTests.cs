@@ -72,6 +72,20 @@ public class AnalysisClientTests
         Assert.DoesNotContain("layers", cap.LastUrl!);
     }
 
+    // E3.1: флаг call-graph доходит до Analysis query-string; по умолчанию — без него.
+    [Fact]
+    public async Task GetSystemAsync_passes_calls_flag()
+    {
+        var cap = new CapturingHandler();
+        var client = new AnalysisClient(new HttpClient(cap) { BaseAddress = new Uri("http://analysis") });
+
+        await client.GetSystemAsync("/root", calls: true);
+        Assert.Contains("calls=true", cap.LastUrl);
+
+        await client.GetSystemAsync("/root");
+        Assert.DoesNotContain("calls", cap.LastUrl!);
+    }
+
     // E9.1 слой 2: выбранная среда доходит до Analysis query-string; по умолчанию — без env.
     [Fact]
     public async Task GetSystemAsync_passes_env()

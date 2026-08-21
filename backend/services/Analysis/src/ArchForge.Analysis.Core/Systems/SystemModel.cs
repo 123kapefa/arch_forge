@@ -43,7 +43,21 @@ public sealed record SystemEdge(
     string Kind,
     EdgeVia Via,
     double Confidence,
-    bool Deferred = false);
+    bool Deferred = false,
+    // E3.1: конкретные HTTP-вызовы, атрибутированные этому ребру (call-graph из кода). null — call-graph не строился.
+    IReadOnlyList<HttpCall>? Calls = null);
+
+/// <summary>Конкретный HTTP-вызов, атрибутированный ребру (E3.1). <paramref name="Confidence"/> 0..1 — по виду
+/// резолва цели (свой compose выше, чужой единственный ниже). <paramref name="Matched"/>: true — маршрут сопоставлен
+/// с эндпоинтом цели; false — цель есть, эндпоинт не найден; null — сопоставление не проводилось. Route/Evidence — без query.</summary>
+public sealed record HttpCall(
+    string Method,
+    string Route,
+    double Confidence,
+    bool? Matched = null,
+    string? File = null,
+    int? Line = null,
+    string? Evidence = null);
 
 /// <summary>Обнаруженная проблема с провенансом, местом и линзой (по умолчанию — арх-проблема).</summary>
 public sealed record SystemProblem(

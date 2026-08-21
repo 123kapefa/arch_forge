@@ -13,17 +13,18 @@ namespace ArchForge.Analysis.Core.Features.Systems;
 
 // Линзы, требующие КОДА (тяжелее: разбор per-service): drift — «дрейф от свода» (convention);
 // layers — «нарушение направления слоёв» (architecture). Обе opt-in, независимы (фронт включает нужную линзе).
-public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false, string? Env = null);
+// calls — «call-graph»: конкретные HTTP-вызовы между сервисами из кода (E3.1). Как drift/layers — opt-in, требует Roslyn.
+public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false, string? Env = null, bool Calls = false);
 
 public sealed class GetSystemEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapGet("/api/system", (string path, bool? drift, bool? layers, string? env,
+        app.MapGet("/api/system", (string path, bool? drift, bool? layers, string? env, bool? calls,
             GetSystemHandler handler, ILogger<GetSystemEndpoint> log, CancellationToken ct) =>
         {
             try
             {
-                GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false, env), ct);
+                GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false, env, calls ?? false), ct);
                 return graph is null
                     ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
                     : Results.Ok(graph);
@@ -55,7 +56,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         IReadOnlyList<ServiceSummaryDto> services = [];
         IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null;
         List<string> degradations = []; // P1.5-H: что пропущено при разборе → «карта неполная» (видимо в контракте/UI)
-        if ((query.Drift || query.Layers) && analyzer is not null && Directory.Exists(query.Path))
+        if ((query.Drift || query.Layers || query.Calls) && analyzer is not null && Directory.Exists(query.Path))
         {
             var analyses = analyzer.Analyze(query.Path, pack, ct);
             // сервис не разобрался (изоляция ошибок) → его типы/связи отсутствуют: честно помечаем деградацию
@@ -87,6 +88,11 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
                     [MicroserviceLayerBuilder.NodeKey(sk.Node.Id, sk.Node.Name)] = sk.Entry,
                 };
             }
+
+            // call-graph (E3.1): конкретные http-вызовы из кода → на рёбра. ПОСЛЕ дедупа (граф из source уже сведён)
+            // и после nodeLayers (нужны эндпоинты цели для RouteMatch). Дополняем рёбра, не заменяем (adr/0008).
+            if (query.Calls)
+                graph = HttpCallGraphBuilder.Enrich(graph, analyses, nodeLayers);
         }
 
         string project = File.Exists(query.Path)

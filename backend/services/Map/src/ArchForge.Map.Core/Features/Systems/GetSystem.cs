@@ -15,9 +15,9 @@ namespace ArchForge.Map.Core.Features.Systems;
 public sealed class GetSystemEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapGet("/api/system", async (string path, bool? drift, bool? layers, string? env, AnalysisClient analysis, CancellationToken ct) =>
+        app.MapGet("/api/system", async (string path, bool? drift, bool? layers, string? env, bool? calls, AnalysisClient analysis, CancellationToken ct) =>
         {
-            GraphDto? graph = await analysis.GetSystemAsync(path, drift ?? false, layers ?? false, env, ct);
+            GraphDto? graph = await analysis.GetSystemAsync(path, drift ?? false, layers ?? false, env, calls ?? false, ct);
             return graph is null
                 ? Results.BadRequest(new { error = "Analysis не смог собрать систему" })
                 : Results.Ok(graph);
