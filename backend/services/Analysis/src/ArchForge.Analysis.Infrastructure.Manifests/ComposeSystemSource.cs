@@ -230,14 +230,15 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         if (File.Exists(root)) { yield return (DirNameOf(root), root); yield break; }
         if (!Directory.Exists(root)) yield break;
 
+        // Пер-сервисные compose (multi-repo, у каждого сервиса свой файл).
         var discovered = _discovery.Discover(root);
-        if (discovered.Count > 0)
-        {
-            foreach (var svc in discovered)
-                if (svc.ComposePath is { } cp) yield return (Rel(root, svc.Root), cp);
-            yield break;
-        }
+        var anyPerService = false;
+        foreach (var svc in discovered)
+            if (svc.ComposePath is { } cp) { anyPerService = true; yield return (Rel(root, svc.Root), cp); }
+        if (anyPerService) yield break;
 
+        // Иначе — монорепо с ОДНИМ корневым compose (сервисы найдены по .csproj, но своего compose у них нет):
+        // откатываемся на корневые compose-файлы, иначе анализ по папке дал бы 0 узлов (G2).
         foreach (var f in FallbackComposeFiles(root))
             yield return (DirNameOf(f), f);
     }
