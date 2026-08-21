@@ -824,7 +824,9 @@ export function SystemView() {
 
   // Выбрать среду развёртывания (E9.1 слой 2) → пере-запросить систему с ?env= (граф/deploy зависят от среды).
   const chooseEnv = useCallback((name: string) => {
-    envRef.current = name === 'default' ? undefined : name;
+    const next = name === 'default' ? undefined : name;
+    if (next === envRef.current) return; // среда уже активна — не гоняем повторный анализ впустую
+    envRef.current = next;
     if (loadedPath) void load(loadedPath);
   }, [loadedPath, load]);
 
@@ -1202,6 +1204,7 @@ export function SystemView() {
                 <button
                   key={e.id}
                   className={`envsw__opt ${e.active ? 'is-active' : ''}`}
+                  aria-pressed={e.active ?? false}
                   onClick={() => chooseEnv(e.name)}
                   disabled={loading}
                   title={`Собрать систему для среды «${e.name}»`}

@@ -92,6 +92,16 @@ describe('readGraphCache / writeGraphCache', () => {
   it('разные флаги дают разные ключи (нет коллизии кэша)', () => {
     expect(gcacheKey('/p', true, false)).not.toBe(gcacheKey('/p', false, true));
   });
+  it('разные среды дают разные ключи (смена env не отдаёт чужой кэш)', () => {
+    expect(gcacheKey('/p', true, false, 'prod')).not.toBe(gcacheKey('/p', true, false, 'dev'));
+    expect(gcacheKey('/p', true, false)).not.toBe(gcacheKey('/p', true, false, 'prod')); // default vs именованная
+  });
+  it('запись под новой средой вытесняет прежнюю среду того же пути/флагов', () => {
+    writeGraphCache('/p', true, true, graph(), 'dev');
+    writeGraphCache('/p', true, true, graph(), 'prod'); // тот же путь/флаги, другая среда → вытесняет dev
+    expect(sessionStorage.getItem(gcacheKey('/p', true, true, 'dev'))).toBeNull();
+    expect(sessionStorage.getItem(gcacheKey('/p', true, true, 'prod'))).not.toBeNull();
+  });
   it('запись вытесняет прежние комбинации флагов ТОГО ЖЕ пути, но не другие проекты', () => {
     writeGraphCache('/p', true, true, graph());   // /p под флагами 11
     writeGraphCache('/other', true, true, graph()); // другой проект
