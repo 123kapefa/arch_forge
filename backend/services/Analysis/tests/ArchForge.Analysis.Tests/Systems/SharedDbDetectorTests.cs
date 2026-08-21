@@ -146,6 +146,40 @@ public class SharedDbDetectorTests
     }
 
     [Fact]
+    public void Same_name_build_services_in_different_systems_not_collapsed()  // G3 — namespace в идентичности
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("sysA/api", "api", SystemNodeKind.Service),   // build, без образа
+                new SystemNode("sysB/api", "api", SystemNodeKind.Service),   // ДРУГАЯ система, то же имя
+                new SystemNode("sysA/db", "db", SystemNodeKind.Datastore, "postgres:16"),
+            ],
+            [
+                new SystemEdge("sysA/api", "sysA/db", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("sysB/api", "sysA/db", "rw-db", EdgeVia.Config, 0.9),
+            ], []);
+
+        Assert.Contains(SharedDbDetector.Detect(g), p => p.Kind == "shared-db"); // 2 разных приложения (разные системы)
+    }
+
+    [Fact]
+    public void Api_and_short_migrate_count_as_one_app()  // G3 — «auth-api» + «auth-migrate» = одно приложение
+    {
+        var g = new SystemGraph(
+            [
+                new SystemNode("s/auth-api", "auth-api", SystemNodeKind.Service),
+                new SystemNode("s/auth-migrate", "auth-migrate", SystemNodeKind.Service),
+                new SystemNode("s/db", "db", SystemNodeKind.Datastore, "postgres:16"),
+            ],
+            [
+                new SystemEdge("s/auth-api", "s/db", "rw-db", EdgeVia.Config, 0.9),
+                new SystemEdge("s/auth-migrate", "s/db", "rw-db", EdgeVia.Compose, 0.7),
+            ], []);
+
+        Assert.Empty(SharedDbDetector.Detect(g)); // общая база «auth» → одно приложение, не общая БД
+    }
+
+    [Fact]
     public void Pgvector_shared_is_primary_db_critical()  // G1
     {
         var g = new SystemGraph(

@@ -8,9 +8,10 @@ namespace ArchForge.Analysis.Core.Systems;
 //
 // Честность (adr/0008) — что НЕ считаем пишущим:
 //  • различаем по нормализованному образу (api+migrate одного образа = одно приложение);
-//  • писателя без образа (build:) различаем по БАЗОВОМУ имени сервиса (без суффиксов миграций) — G3:
-//    иначе на build-монорепо (все сервисы build:) shared-db никогда не срабатывал бы; при этом «svc» и
-//    «svc-migrations» остаются ОДНИМ приложением, а разные сервисы — разными;
+//  • писателя без образа (build:) различаем по СИСТЕМЕ + базовому имени сервиса (без суффиксов миграций/типа) — G3:
+//    иначе на build-монорепо (все сервисы build:) shared-db никогда не срабатывал бы; при этом «svc»+«svc-migrations»
+//    и «auth-api»+«auth-migrate» остаются ОДНИМ приложением, разные сервисы — разными, а одноимённые из РАЗНЫХ
+//    систем не сливаются;
 //  • отложенные (Deferred) рёбра не считаем — target не разрешён;
 //  • мониторинг-экспортёры (*-exporter) — не приложения (скрейпят метрики). Компромисс: бизнес-сервис,
 //    случайно названный *-exporter, будет пропущен (см. тест) — приоритет чистоте сигнала.
@@ -58,13 +59,29 @@ public static class SharedDbDetector
     // build-сервис без образа — по базовому имени сервиса (без суффикса миграций), с префиксом «name:»,
     // чтобы имя-идентичность не столкнулась с образом-идентичностью.
     private static readonly string[] MigrationSuffixes = { "-migrations", "-migration", "-migrate" };
+    private static readonly string[] TypeSuffixes = { "-service", "-svc", "-api", "-worker", "-gateway", "-app" };
+
+    // Идентичность «пишущего приложения»:
+    //  • по образу — общий образ = одно приложение (api+migrate одного образа сходятся);
+    //  • build-сервис без образа — по СИСТЕМЕ (namespace id «{system}/{svc}») + базовому имени (без суффиксов
+    //    миграций И типа). Namespace: одноимённые сервисы в РАЗНЫХ системах (sysA/api vs sysB/api) не сливаются.
+    //    Двойное снятие суффикса: «auth-api» и «auth-migrate» сходятся в общую базу «auth».
     private static string WriterIdentity(SystemNode n) =>
-        NormalizeImage(n.Image) is { } img ? img : "name:" + AppBaseName(n.Name);
+        NormalizeImage(n.Image) is { } img ? img : $"name:{SystemOf(n.Id)}:{AppBaseName(n.Name)}";
+
+    // Система узла = namespace-префикс id ({system}/{svc}); внешние/инфра-id без '/' → пустая строка.
+    private static string SystemOf(string id)
+    {
+        var i = id.LastIndexOf('/');
+        return i > 0 ? id[..i] : "";
+    }
 
     private static string AppBaseName(string name)
     {
         var b = (name ?? "").Trim();
         foreach (var s in MigrationSuffixes)
+            if (b.EndsWith(s, StringComparison.OrdinalIgnoreCase)) { b = b[..^s.Length]; break; }
+        foreach (var s in TypeSuffixes)
             if (b.EndsWith(s, StringComparison.OrdinalIgnoreCase)) { b = b[..^s.Length]; break; }
         return b.ToLowerInvariant();
     }
