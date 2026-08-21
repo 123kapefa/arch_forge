@@ -28,9 +28,12 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     private static readonly Dictionary<string, SystemNodeKind> InfraByBaseImage = new(StringComparer.OrdinalIgnoreCase)
     {
         ["postgres"] = SystemNodeKind.Datastore, ["postgresql"] = SystemNodeKind.Datastore,
+        ["pgvector"] = SystemNodeKind.Datastore, // postgres+pgvector (образ pgvector/pgvector) — та же БД (G1)
         ["redis"] = SystemNodeKind.Datastore, ["mysql"] = SystemNodeKind.Datastore,
         ["mariadb"] = SystemNodeKind.Datastore, ["mongo"] = SystemNodeKind.Datastore,
         ["mongodb"] = SystemNodeKind.Datastore, ["minio"] = SystemNodeKind.Datastore,
+        ["elasticsearch"] = SystemNodeKind.Datastore, ["opensearch"] = SystemNodeKind.Datastore,
+        ["typesense"] = SystemNodeKind.Datastore, ["clickhouse"] = SystemNodeKind.Datastore,
         ["rabbitmq"] = SystemNodeKind.Topic, ["kafka"] = SystemNodeKind.Topic,
         ["redpanda"] = SystemNodeKind.Topic, ["nats"] = SystemNodeKind.Topic,
     };
