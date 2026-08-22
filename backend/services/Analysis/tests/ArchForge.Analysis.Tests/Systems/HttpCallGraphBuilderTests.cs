@@ -107,6 +107,60 @@ public class HttpCallGraphBuilderTests
     }
 
     [Fact]
+    public void Ambiguous_target_raises_coverage_problem_not_edge()  // P2 (adr/0008): не выдумываем, но сигналим
+    {
+        var graph = new SystemGraph(
+            [
+                new SystemNode("sys/orders", "orders", SystemNodeKind.Service),
+                new SystemNode("sys/catalog", "catalog", SystemNodeKind.Service),
+                new SystemNode("sys/catalog-2", "catalog", SystemNodeKind.Service),  // тёзка → неоднозначность цели
+            ], [], []);
+        var sa = new ServiceAnalysis(new DiscoveredService("Orders", "/repo/orders", "c.yml"), "sys", null)
+        { HttpCalls = [Call("GET", "http://catalog/api/items"), Call("POST", "http://catalog/api/items")] };
+
+        var g = HttpCallGraphBuilder.Enrich(graph, [sa]);
+
+        Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");                  // цель неоднозначна → ребро не рисуем
+        var p = Assert.Single(g.Problems, x => x.Kind == "ambiguous-target");        // но и не молчим (дедуп по паре)
+        Assert.Equal(ProblemSeverity.Coverage, p.Severity);
+        Assert.Equal("sys/orders", p.Location);
+    }
+
+    [Fact]
+    public void Unattributed_source_raises_coverage_problem()  // P2: вызовы есть, но источник не размещён
+    {
+        var graph = new SystemGraph(
+            [
+                new SystemNode("sys/alpha", "alpha", SystemNodeKind.Service),
+                new SystemNode("sys/beta", "beta", SystemNodeKind.Service),          // 2 app-узла в системе, имя .sln не совпало
+                new SystemNode("cat/catalog", "catalog", SystemNodeKind.Service),
+            ], [], []);
+        var sa = new ServiceAnalysis(new DiscoveredService("Gamma", "/repo/gamma", "c.yml"), "sys", null)
+        { HttpCalls = [Call("GET", "http://catalog/api/items")] };
+
+        var g = HttpCallGraphBuilder.Enrich(graph, [sa]);
+
+        Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");
+        Assert.Contains(g.Problems, x => x.Kind == "unattributed-calls" && x.Severity == ProblemSeverity.Coverage);
+    }
+
+    [Fact]
+    public void External_node_collision_stays_external_not_inferred()  // P3: не 0.6-Inferred на синтетический external
+    {
+        var graph = new SystemGraph(
+            [
+                new SystemNode("sys/orders", "orders", SystemNodeKind.Service),
+                new SystemNode("http://legacy-host", "legacy-host", SystemNodeKind.External), // синтетический external от config
+            ], [], []);
+        var sa = new ServiceAnalysis(new DiscoveredService("Orders", "/repo/orders", "c.yml"), "sys", null)
+        { HttpCalls = [Call("GET", "http://legacy-host/api")] };
+
+        var g = HttpCallGraphBuilder.Enrich(graph, [sa]);
+
+        Assert.DoesNotContain(g.Edges, e => e.Kind == "http-call");  // хост вне скана → external → дроп, не Inferred-ребро
+    }
+
+    [Fact]
     public void No_calls_returns_graph_unchanged()
     {
         var g0 = TwoServices();

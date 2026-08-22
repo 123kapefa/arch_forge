@@ -23,7 +23,9 @@ public static class HttpCallGraphBuilder
     {
         if (analyses.Count == 0) return graph;
 
-        var resolver = new HttpTargetResolver(graph.Nodes);
+        // External-узлы (синтетические "http://host" от нерезолвленных compose/config-URL) НЕ цели резолва: иначе
+        // код-вызов на тот же хост схлопнулся бы в Inferred(0.6) вместо честного External (P3 ревью #114).
+        var resolver = new HttpTargetResolver(graph.Nodes.Where(n => n.Kind != SystemNodeKind.External));
         // сервис-узлы по системе (namespace-префикс id) — для атрибуции анализа к его узлу.
         var bySystem = graph.Nodes
             .Where(n => n.Kind == SystemNodeKind.Service)
@@ -43,18 +45,34 @@ public static class HttpCallGraphBuilder
                     endpointsById[id] = entry.Endpoints;
         }
 
-        // сгруппировать найденные вызовы по (source,target) → список HttpCall
+        // сгруппировать найденные вызовы по (source,target) → список HttpCall; параллельно — Coverage-проблемы
+        // о неатрибутируемом (adr/0008: «не гадаем, но и не молчим» — как ResolveHttpCalls в ComposeSystemSource).
         var byEdge = new Dictionary<(string Src, string Tgt), List<HttpCall>>();
+        var problems = new List<SystemProblem>();
+        var ambiguousSeen = new HashSet<string>(StringComparer.Ordinal); // дедуп «srcId|host» — одна проблема на пару
         foreach (var sa in analyses)
         {
             if (sa.HttpCalls.Count == 0) continue;
             var srcId = SourceNodeId(sa, bySystem);
-            if (srcId is null) continue;                                  // источник не привязался к узлу — пропуск (не гадаем)
+            if (srcId is null)
+            {
+                // источник не привязался к узлу (2+ app-узла в системе, тай-брейк не сошёлся) — вызовы есть, но не размещены
+                problems.Add(new SystemProblem(ProblemSeverity.Coverage, "unattributed-calls",
+                    $"исходящие http-вызовы сервиса «{sa.Service.Name}» не привязаны к узлу системы — карта неполная", ""));
+                continue;
+            }
             foreach (var hit in sa.HttpCalls)
             {
                 if (!Uri.TryCreate(hit.Url, UriKind.Absolute, out var uri)) continue;
                 var t = resolver.Resolve(srcId, uri.Host);
-                if (t.NodeId is null) continue;                           // external/ambiguous/self — не ребро (срез 1)
+                if (t.Kind == HttpTargetKind.Ambiguous)                    // ≥2 одноимённых цели — не выдумываем, но сигналим
+                {
+                    if (ambiguousSeen.Add($"{srcId}|{uri.Host.ToLowerInvariant()}"))
+                        problems.Add(new SystemProblem(ProblemSeverity.Coverage, "ambiguous-target",
+                            $"неоднозначная цель http-call «{uri.Host}» из кода — {t.Candidates} одноимённых узла", srcId));
+                    continue;
+                }
+                if (t.NodeId is null) continue;                           // external/self — вне scope среза 1 (не «пробел»)
                 var conf = t.Kind == HttpTargetKind.SameSystem ? SameSystemConfidence : InferredConfidence;
                 bool? matched = endpointsById.TryGetValue(t.NodeId, out var eps)
                     ? RouteMatch.Matches(hit.Method, uri.AbsolutePath, eps)
@@ -65,7 +83,7 @@ public static class HttpCallGraphBuilder
                 list.Add(call);
             }
         }
-        if (byEdge.Count == 0) return graph;
+        if (byEdge.Count == 0 && problems.Count == 0) return graph;
 
         // слить на существующее http-call ребро (post-dedup) или добавить новое (провенанс code)
         var edges = graph.Edges.ToList();
@@ -82,7 +100,11 @@ public static class HttpCallGraphBuilder
                 edges.Add(new SystemEdge(key.Src, key.Tgt, "http-call", EdgeVia.Code,
                     ordered.Max(c => c.Confidence), Calls: ordered));
         }
-        return graph with { Edges = edges };
+        return graph with
+        {
+            Edges = edges,
+            Problems = problems.Count > 0 ? [.. graph.Problems, .. problems] : graph.Problems,
+        };
     }
 
     // Узел-источник для анализа: сервис-узлы его системы (SystemOf(id) == location). Один → он; иначе снимаем

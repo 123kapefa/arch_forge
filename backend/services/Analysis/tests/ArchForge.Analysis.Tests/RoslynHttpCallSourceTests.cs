@@ -90,6 +90,22 @@ public class RoslynHttpCallSourceTests
     }
 
     [Fact]
+    public void Strips_query_string_in_send_async_branch_too()  // secrets-config: обе ветки идут через общий Add()
+    {
+        var hits = Scan("""
+            using System.Net.Http;
+            class C {
+                async Task M(HttpClient http) =>
+                    await http.SendAsync(new HttpRequestMessage(HttpMethod.Post, "http://auth-service/token?client_secret=s3cret"));
+            }
+            """);
+
+        var hit = Assert.Single(hits);
+        Assert.Equal("http://auth-service/token", hit.Url);
+        Assert.DoesNotContain("s3cret", hit.Evidence, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Ignores_relative_and_non_literal_urls()  // срез 1 — только абсолютные литералы
     {
         var hits = Scan("""
