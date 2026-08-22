@@ -72,7 +72,24 @@ public sealed record EdgeDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     bool? Violation = null,                                // связь-нарушение (подсветка)
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? Problem = null);                               // id проблемы (для навигации)
+    string? Problem = null,                                // id проблемы (для навигации)
+    // --- E3.1: call-graph ---
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<HttpCallDto>? Calls = null);             // конкретные HTTP-вызовы этого ребра (из кода); null → флаг calls не запрашивался
+
+/// <summary>Конкретный HTTP-вызов между сервисами (E3.1): метод + маршрут + провенанс/уверенность + место в коде.
+/// <c>Matched</c>=true — маршрут сопоставлен с эндпоинтом цели; false — цель есть, но эндпоинт не найден (честно
+/// видно, adr/0008); null — сопоставление не проводилось (эндпоинты цели неизвестны). <c>Evidence</c> — нормализованная
+/// строка вызова без query (секреты не тащим, secrets-config).</summary>
+public sealed record HttpCallDto(
+    string Method,     // GET | POST | PUT | DELETE | PATCH
+    string Route,      // путь запроса (из абсолютного URL — срез 1)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Via = null,        // config | code (провенанс вызова)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Confidence = null, // 0..1 по виду резолва цели
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Matched = null,      // маршрут ↔ эндпоинт цели
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? File = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Evidence = null);
 
 public sealed record CoverageDto(int Marker, int Heuristic, int Unknown, int Total);
 

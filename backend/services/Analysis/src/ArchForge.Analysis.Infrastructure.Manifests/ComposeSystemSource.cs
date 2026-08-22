@@ -166,44 +166,34 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         List<(string SourceId, string TargetHost)> intents, CancellationToken ct)
     {
         var problems = new List<SystemProblem>();
-        var byName = nodes.Values
-            .GroupBy(n => n.Name.ToLowerInvariant(), StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Select(n => n.Id).ToList(), StringComparer.Ordinal);
+        var resolver = new HttpTargetResolver(nodes.Values); // общий резолвер host→узел (E3.1 срез 0)
 
         foreach (var (sourceId, host) in intents.Distinct())
         {
             ct.ThrowIfCancellationRequested();
-            var key = host.ToLowerInvariant();
-
-            if (byName.TryGetValue(key, out var ids))
+            var t = resolver.Resolve(sourceId, host);
+            switch (t.Kind)
             {
-                var others = ids.Where(id => id != sourceId).ToList();
-                if (others.Count == 0) continue; // только сам себя → self-call, пропускаем
-
-                var sameSystem = others.Where(id => SystemOf(id) == SystemOf(sourceId)).ToList();
-                if (sameSystem.Count == 1)                       // достоверно (DNS того же compose)
-                    edges.Add(new SystemEdge(sourceId, sameSystem[0], "http-call", EdgeVia.Config, HttpConfident));
-                else if (sameSystem.Count == 0 && others.Count == 1) // единственная цель в чужом compose — inferred
-                    edges.Add(new SystemEdge(sourceId, others[0], "http-call", EdgeVia.Config, HttpInferred));
-                else                                              // ≥2 кандидата (в своей или чужих системах) — неоднозначно
+                case HttpTargetKind.SameSystem:                  // достоверно (DNS того же compose)
+                    edges.Add(new SystemEdge(sourceId, t.NodeId!, "http-call", EdgeVia.Config, HttpConfident));
+                    break;
+                case HttpTargetKind.Inferred:                    // единственная цель в чужом compose — inferred
+                    edges.Add(new SystemEdge(sourceId, t.NodeId!, "http-call", EdgeVia.Config, HttpInferred));
+                    break;
+                case HttpTargetKind.Ambiguous:                   // ≥2 одноимённых — не выдумываем
                     problems.Add(new SystemProblem(ProblemSeverity.Coverage, "ambiguous-target",
-                        $"неоднозначная цель http-call «{host}» — {(sameSystem.Count > 1 ? sameSystem.Count : others.Count)} одноимённых узла", sourceId));
-            }
-            else
-            {
-                var extId = "http://" + key; // регистр нормализован → нет дублей внешнего хоста
-                nodes.TryAdd(extId, new SystemNode(extId, key, SystemNodeKind.External));
-                edges.Add(new SystemEdge(sourceId, extId, "http-call", EdgeVia.Config, HttpExternal));
+                        $"неоднозначная цель http-call «{host}» — {t.Candidates} одноимённых узла", sourceId));
+                    break;
+                case HttpTargetKind.External:                    // хост вне скана — честный внешний узел
+                    var extId = "http://" + host.ToLowerInvariant(); // регистр нормализован → нет дублей
+                    nodes.TryAdd(extId, new SystemNode(extId, host.ToLowerInvariant(), SystemNodeKind.External));
+                    edges.Add(new SystemEdge(sourceId, extId, "http-call", EdgeVia.Config, HttpExternal));
+                    break;
+                case HttpTargetKind.SelfOnly:                    // только сам себя — пропускаем
+                    break;
             }
         }
         return problems;
-    }
-
-    // «Система» узла = namespace-префикс id ({system}/{svc}); внешние/инфра-id без '/' → пустая строка.
-    private static string SystemOf(string id)
-    {
-        var i = id.LastIndexOf('/');
-        return i > 0 ? id[..i] : "";
     }
 
     // Загрузка compose с наложением оверлея выбранной среды (E9.1 слой 2). Merge на «сыром» словаре →

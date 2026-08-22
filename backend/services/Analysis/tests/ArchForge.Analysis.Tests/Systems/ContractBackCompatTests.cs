@@ -198,6 +198,25 @@ public class ContractBackCompatTests
     }
 
     [Fact]
+    public void Edge_calls_round_trip_and_omitted_when_null()  // E3.1 call-graph — аддитивно
+    {
+        var edge = new EdgeDto("e1", "sys/orders", "sys/catalog", "http-call",
+            Via: "code", Confidence: 0.9,
+            Calls: [new HttpCallDto("GET", "/api/items", Via: "code", Confidence: 0.9, Matched: true,
+                File: "Client.cs", Line: 12, Evidence: "GET http://catalog/api/items")]);
+
+        var back = JsonSerializer.Deserialize<EdgeDto>(JsonSerializer.Serialize(edge, Web), Web)!;
+        var call = Assert.Single(back.Calls!);
+        Assert.Equal("GET", call.Method);
+        Assert.Equal("/api/items", call.Route);
+        Assert.True(call.Matched);
+        Assert.Equal(12, call.Line);
+
+        // null → поле опущено (Ф1-байт-совместимость: старый EdgeDto без calls валиден)
+        Assert.DoesNotContain("calls", JsonSerializer.Serialize(new EdgeDto("e", "1", "2", "holds"), Web));
+    }
+
+    [Fact]
     public void Problem_category_is_additive()
     {
         // линза сериализуется; отсутствие (null) опускается → старый JSON без category валиден

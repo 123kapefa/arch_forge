@@ -197,6 +197,36 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    // считает чтения http-источника — проверяем, что флаг calls реально доводит вертикаль до сбора вызовов.
+    private sealed class SpyHttpCalls : IHttpCallSource
+    {
+        public int Reads { get; private set; }
+        public IReadOnlyList<HttpCallHit> Read(string root, CancellationToken ct = default) { Reads++; return []; }
+    }
+
+    // E3.1: флаг calls запускает код-разбор и читает исходящие вызовы (сквозная проводка), без флага — нет.
+    [Fact]
+    public void Calls_flag_triggers_analysis_and_reads_http_calls()
+    {
+        var dir = TempDir("syscalls");
+        try
+        {
+            var spy = new SpyHttpCalls();
+            var analyzer = new ServiceAnalyzer(
+                new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
+                new FakeTypes([Drift]), new TypeClassifier(), httpCalls: spy);
+            var handler = new GetSystemHandler(new FakeSource(OneService()), analyzer);
+
+            handler.Handle(new GetSystemQuery(dir));                 // без флагов — лёгкий скан, http-источник не читается
+            Assert.Equal(0, spy.Reads);
+
+            var dto = handler.Handle(new GetSystemQuery(dir, Calls: true));
+            Assert.True(spy.Reads > 0);                              // calls=true — вызовы собраны
+            Assert.NotNull(dto);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     private sealed class ThrowingTypes : ITypeSource
     {
         public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) => throw new IOException("boom");

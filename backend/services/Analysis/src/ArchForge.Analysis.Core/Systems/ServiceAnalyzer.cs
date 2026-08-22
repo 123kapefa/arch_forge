@@ -7,6 +7,9 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
 {
     // minimal-API эндпоинты сервиса (app.MapGet/…); контроллеры идут через Result.Types[].Members. #71
     public IReadOnlyList<EndpointHit> MinimalEndpoints { get; init; } = [];
+
+    // исходящие HTTP-вызовы сервиса (HttpClient.GetAsync/… с абсолютным URL) — питает call-graph (E3.1).
+    public IReadOnlyList<HttpCallHit> HttpCalls { get; init; } = [];
 }
 
 /// <summary>Хелперы над результатами разбора — единая точка понятия «сервис не разобрался».</summary>
@@ -21,7 +24,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -54,7 +57,11 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { mini = endpoints?.Read(svc.Root, ct) ?? []; }
             catch (OperationCanceledException) { throw; }
             catch { mini = []; }
-            results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini };
+            IReadOnlyList<HttpCallHit> calls = [];         // исходящие http-вызовы (E3.1) — свой try: их сбой не роняет разбор
+            try { calls = httpCalls?.Read(svc.Root, ct) ?? []; }
+            catch (OperationCanceledException) { throw; }
+            catch { calls = []; }
+            results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini, HttpCalls = calls };
         });
         return results;
     }

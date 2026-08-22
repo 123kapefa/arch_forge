@@ -62,10 +62,16 @@ public static class SystemGraphMapping
                 d.Ports.Select(p => new PortDto(p.Container, p.Host, p.HostIp, p.Published)).ToList(),
                 d.HasHealthcheck, d.Networks);
 
-    /// <summary>Системное ребро → EdgeDto (id, провенанс Via, уверенность).</summary>
+    /// <summary>Системное ребро → EdgeDto (id, провенанс Via, уверенность, конкретные вызовы call-graph).</summary>
     public static EdgeDto ToEdgeDto(this SystemEdge e) => new(
         $"{e.Source}-{e.Kind}->{e.Target}", e.Source, e.Target, e.Kind,
-        Via: ViaString(e.Via), Confidence: e.Confidence);
+        Via: ViaString(e.Via), Confidence: e.Confidence,
+        Calls: e.Calls is { Count: > 0 } cs ? cs.Select(ToHttpCallDto).ToList() : null); // пусто/нет → поле опускаем
+
+    /// <summary>HTTP-вызов IR → DTO (E3.1). Провенанс вызова в срезе 1 всегда code (из RoslynHttpCallSource).</summary>
+    private static HttpCallDto ToHttpCallDto(HttpCall c) => new(
+        c.Method, c.Route, Via: "code", Confidence: c.Confidence,
+        Matched: c.Matched, File: c.File, Line: c.Line, Evidence: c.Evidence);
 
     /// <summary>Системная проблема → ProblemDto (id «p{index}», категория-линза, факты, подсказка «как чинить»).</summary>
     public static ProblemDto ToProblemDto(this SystemProblem p, int index) => new(
