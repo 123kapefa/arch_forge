@@ -99,4 +99,63 @@ public class AnalysisClientTests
         await client.GetSystemAsync("/root");
         Assert.DoesNotContain("env=", cap.LastUrl!);
     }
+
+    // ── профиль (adr/0012) ──
+
+    private sealed class RecordingHandler : HttpMessageHandler
+    {
+        public HttpMethod? Method { get; private set; }
+        public string? Url { get; private set; }
+        public string? Body { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Method = request.Method;
+            Url = request.RequestUri?.AbsoluteUri;
+            Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new GraphDto("sys", [], [], new CoverageDto(0, 0, 0, 0), [], Health: "ok")),
+            };
+        }
+    }
+
+    [Fact]
+    public async Task GetSystemWithProfileAsync_posts_profile_body_and_keeps_flags()
+    {
+        var rec = new RecordingHandler();
+        var client = new AnalysisClient(new HttpClient(rec) { BaseAddress = new Uri("http://analysis") });
+        var profile = new ProfileDto("Simple", new Dictionary<string, string> { ["drift"] = "Warning" });
+
+        var g = await client.GetSystemWithProfileAsync("/root x", profile, drift: true, env: "stage");
+
+        Assert.Equal("sys", g!.Project);
+        Assert.Equal(HttpMethod.Post, rec.Method);
+        Assert.Contains("/api/system?path=%2Froot%20x", rec.Url);              // путь экранирован
+        Assert.Contains("drift=true", rec.Url);
+        Assert.Contains("env=stage", rec.Url);
+        Assert.Contains("\"level\":\"Simple\"", rec.Body);
+        Assert.Contains("Warning", rec.Body);
+    }
+
+    [Fact]
+    public async Task GetSystemWithProfileAsync_null_when_analysis_rejects_profile()
+    {
+        var g = await Client(HttpStatusCode.BadRequest, null).GetSystemWithProfileAsync("/root", new ProfileDto("Nope"));
+
+        Assert.Null(g);
+    }
+
+    [Fact]
+    public async Task GetRulesAsync_reads_catalog_and_null_on_error()
+    {
+        var dto = new RuleCatalogDto("2026.11", [new RuleDto("drift", "convention", "t", "n", new Dictionary<string, string?> { ["Simple"] = "Off" })]);
+
+        var ok = await Client(HttpStatusCode.OK, dto).GetRulesAsync();
+        var bad = await Client(HttpStatusCode.InternalServerError, null).GetRulesAsync();
+
+        Assert.Equal("2026.11", ok!.Version);
+        Assert.Equal("Off", ok.Rules[0].Defaults["Simple"]);
+        Assert.Null(bad);
+    }
 }
+

@@ -46,4 +46,30 @@ public sealed class AnalysisClient(HttpClient http)
             return null;
         return await response.Content.ReadFromJsonAsync<GraphDto>(ct);
     }
+
+    /// <summary>То же, что <see cref="GetSystemAsync"/>, но с профилем проекта (adr/0012): POST с профилем в теле.
+    /// null — если Analysis не смог или не принял профиль.</summary>
+    public async Task<GraphDto?> GetSystemWithProfileAsync(
+        string path, ProfileDto profile, bool drift = false, bool layers = false, string? env = null, bool calls = false,
+        CancellationToken ct = default)
+    {
+        string url = $"/api/system?path={Uri.EscapeDataString(path)}";
+        if (drift) url += "&drift=true";
+        if (layers) url += "&layers=true";
+        if (!string.IsNullOrWhiteSpace(env)) url += $"&env={Uri.EscapeDataString(env)}";
+        if (calls) url += "&calls=true";
+        using HttpResponseMessage response = await http.PostAsJsonAsync(url, profile, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+        return await response.Content.ReadFromJsonAsync<GraphDto>(ct);
+    }
+
+    /// <summary>Каталог правил анализатора (adr/0012). null — если Analysis не смог.</summary>
+    public async Task<RuleCatalogDto?> GetRulesAsync(CancellationToken ct = default)
+    {
+        using HttpResponseMessage response = await http.GetAsync("/api/rules", ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+        return await response.Content.ReadFromJsonAsync<RuleCatalogDto>(ct);
+    }
 }
