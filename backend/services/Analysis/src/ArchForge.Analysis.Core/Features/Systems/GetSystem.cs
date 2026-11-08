@@ -54,11 +54,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         // Порог цикла сервисов — параметр профиля. Источник считает проблемы с порогом по умолчанию; если профиль
         // его изменил — пересчитываем только цикл (чистая функция над рёбрами графа), остальное не трогаем.
         if (profile.Thresholds.ServiceCycleMinConfidence != ServiceCycleDetector.DefaultMinConfidence)
-            graph = graph with
-            {
-                Problems = [.. graph.Problems.Where(p => p.Kind != "service-cycle"),
-                            .. ServiceCycleDetector.Detect(graph, profile.Thresholds.ServiceCycleMinConfidence)],
-            };
+            graph = graph with { Problems = ReplaceCycles(graph.Problems, ServiceCycleDetector.Detect(graph, profile.Thresholds.ServiceCycleMinConfidence)) };
 
         // Свод: из файла проекта (если есть), иначе встроенный. Нужен и для линз, и чтобы показать источник во фронте.
         var pack = Directory.Exists(query.Path) ? ConventionPack.Load(query.Path) : ConventionPack.Default();
@@ -119,5 +115,26 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             Degradations = degradations.Count > 0 ? degradations : null,
         };
         return dto;
+    }
+
+    // Заменяет циклы сервисов на пересчитанные, СОХРАНЯЯ порядок прочих проблем: новые циклы встают на место первого
+    // прежнего; прежних не было — после последней проблемы общей БД/хранилища (где их ставит SystemProblemDetector), иначе в начало.
+    private static List<SystemProblem> ReplaceCycles(IReadOnlyList<SystemProblem> problems, IReadOnlyList<SystemProblem> cycles)
+    {
+        var at = -1;
+        for (var i = 0; i < problems.Count; i++) if (problems[i].Kind == "service-cycle") { at = i; break; }
+        if (at < 0)
+        {
+            at = 0;
+            for (var i = 0; i < problems.Count; i++) if (problems[i].Kind is "shared-db" or "shared-store") at = i + 1;
+        }
+        var result = new List<SystemProblem>(problems.Count + cycles.Count);
+        for (var i = 0; i < problems.Count; i++)
+        {
+            if (i == at) result.AddRange(cycles);
+            if (problems[i].Kind != "service-cycle") result.Add(problems[i]);
+        }
+        if (at >= problems.Count) result.AddRange(cycles);
+        return result;
     }
 }

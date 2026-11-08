@@ -164,4 +164,45 @@ public class ProjectProfileTests
         Assert.DoesNotContain(dto.Problems!, p => p.Kind == "service-cycle");
         Assert.Contains(dto.Problems!, p => p.Kind == "shared-db"); // прочее не тронуто
     }
+
+    [Fact]
+    public void Handler_keeps_problem_order_when_cycle_is_recomputed()
+    {
+        var dir = TempDir();
+        SystemEdge Http(string a, string b, double c) => new(a, b, "http-call", EdgeVia.Config, c);
+        // рёбра 0.5 образуют цикл только при пониженном пороге; источник цикла не нашёл
+        var graph = new SystemGraph([Svc("a"), Svc("b")], [Http("a", "b", 0.5), Http("b", "a", 0.5)],
+            [Problem("shared-db"), Problem("dangling-event"), Problem("exposed-datastore")]);
+        var loose = new ProjectProfile(Params: new ProfileParams(ServiceCycleMinConfidence: 0.5));
+
+        var dto = new GetSystemHandler(new FakeSource(graph)).Handle(new GetSystemQuery(dir, Profile: loose))!;
+
+        Assert.Equal(["shared-db", "service-cycle", "dangling-event", "exposed-datastore"], dto.Problems!.Select(p => p.Kind));
+    }
+
+    [Fact]
+    public void Handler_replaces_existing_cycle_in_place()
+    {
+        var dir = TempDir();
+        SystemEdge Http(string a, string b) => new(a, b, "http-call", EdgeVia.Config, 0.8);
+        var graph = new SystemGraph([Svc("a"), Svc("b")], [Http("a", "b"), Http("b", "a")],
+            [Problem("shared-db"), Problem("service-cycle", ProblemSeverity.Critical), Problem("exposed-datastore")]);
+        var loose = new ProjectProfile(Params: new ProfileParams(ServiceCycleMinConfidence: 0.5));
+
+        var dto = new GetSystemHandler(new FakeSource(graph)).Handle(new GetSystemQuery(dir, Profile: loose))!;
+
+        Assert.Equal(["shared-db", "service-cycle", "exposed-datastore"], dto.Problems!.Select(p => p.Kind));
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 0.8)]
+    [InlineData(-3, 0)]
+    [InlineData(7, 1)]
+    [InlineData(0.65, 0.65)]
+    public void Thresholds_are_sanitised(double input, double expected)
+    {
+        var profile = new ProjectProfile(Params: new ProfileParams(input));
+
+        Assert.Equal(expected, profile.Thresholds.ServiceCycleMinConfidence);
+    }
 }

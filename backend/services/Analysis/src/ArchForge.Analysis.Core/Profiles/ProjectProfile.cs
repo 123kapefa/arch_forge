@@ -16,7 +16,16 @@ public sealed record ProjectProfile(
 {
     public static ProjectProfile Default { get; } = new();
 
-    public ProfileParams Thresholds => Params ?? new ProfileParams();
+    /// <summary>Пороги с защитой от мусора: NaN → значение по умолчанию, остальное зажато в [0..1].
+    /// (NaN молча отключил бы детектор циклов: любое сравнение с NaN ложно.)</summary>
+    public ProfileParams Thresholds
+    {
+        get
+        {
+            var c = (Params ?? new ProfileParams()).ServiceCycleMinConfidence;
+            return new ProfileParams(double.IsNaN(c) ? ProfileParams.DefaultServiceCycleMinConfidence : Math.Clamp(c, 0, 1));
+        }
+    }
 
     /// <summary>Строгость правила: переопределение пользователя → умолчание уровня → null (родная серьёзность детектора).
     /// Для неизвестного правила (не из каталога) всегда null.</summary>
