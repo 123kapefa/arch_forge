@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Contracts;
 using ArchForge.Contracts;
 using ArchForge.Map.Core.Profiles;
 using ArchForge.SharedKernel;
@@ -40,6 +41,16 @@ public sealed class GetRulesEndpoint : IEndpoint
         app.MapGet("/api/rules", async (IRuleCatalogProvider catalog, CancellationToken ct) =>
             await catalog.GetAsync(ct) is { } rules
                 ? Results.Ok(rules)
+                : ProfileHttp.Fail(503, ["Analysis не отвечает"]));
+}
+
+/// <summary>GET /api/vocabulary — встроенный словарь ролей, имена сервисов и пороги: точка отсчёта для отличий профиля.</summary>
+public sealed class GetVocabularyEndpoint : IEndpoint
+{
+    public void MapEndpoint(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/vocabulary", async (AnalysisClient analysis, CancellationToken ct) =>
+            await analysis.GetVocabularyAsync(ct) is { } v
+                ? Results.Ok(v)
                 : ProfileHttp.Fail(503, ["Analysis не отвечает"]));
 }
 

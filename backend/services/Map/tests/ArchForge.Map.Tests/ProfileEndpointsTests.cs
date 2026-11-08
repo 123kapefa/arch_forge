@@ -25,6 +25,10 @@ public class ProfileEndpointsTests : IAsyncLifetime
         {
             Calls.Add((request.Method, request.RequestUri!.PathAndQuery, request.Content is null ? null : await request.Content.ReadAsStringAsync(ct)));
             if (Down) throw new HttpRequestException("connection refused");
+            if (request.RequestUri!.AbsolutePath == "/api/vocabulary")
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new VocabularyDefaultsDto(
+                    new Dictionary<string, RoleVocabularyDto> { ["Command"] = new(["ICommand"], [], ["Command"]) },
+                    new ServiceNamingDto(["-api"], ["-migrate"], ["seed"]), new ProfileParamsDto(0.8, 3, 3))) };
             if (request.RequestUri!.AbsolutePath == "/api/rules") return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Catalog) };
             if (RejectProfile && request.Method == HttpMethod.Post) return new HttpResponseMessage(HttpStatusCode.BadRequest);
             return new HttpResponseMessage(HttpStatusCode.OK)
@@ -266,5 +270,15 @@ public class ProfileEndpointsTests : IAsyncLifetime
         req.Headers.Add("Sec-Fetch-Site", "cross-site");
 
         Assert.Equal(HttpStatusCode.OK, (await _http.SendAsync(req)).StatusCode);   // чтение защищено same-origin политикой браузера
+    }
+
+    [Fact]
+    public async Task Vocabulary_is_proxied_and_503_when_analysis_down()
+    {
+        var v = (await _http.GetFromJsonAsync<VocabularyDefaultsDto>("/api/vocabulary"))!;
+        Assert.Equal(["ICommand"], v.Roles["Command"].Markers!);
+
+        _analysis.Down = true;
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await _http.GetAsync("/api/vocabulary")).StatusCode);
     }
 }

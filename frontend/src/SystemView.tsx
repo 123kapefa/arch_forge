@@ -15,6 +15,7 @@ import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto 
 import { isAbortError } from './http';
 import { ImportsScreen } from './ImportsScreen';
 import { ConventionsView } from './ConventionsView';
+import { ProfileView } from './ProfileView';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, portExposure, portLabel, type SystemNodeData } from './systemFlow';
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
 import { dagreLayout } from './dagreLayout';
@@ -749,6 +750,7 @@ export function SystemView() {
   const [imports, setImports] = useState<ImportsDto | null>(null); // прямые пакеты (ленивая загрузка)
   const [importsLoading, setImportsLoading] = useState(false);
   const [convOpen, setConvOpen] = useState(false); // модалка просмотра свода
+  const [profileOpen, setProfileOpen] = useState(false); // окно «Профиль проекта» (adr/0012)
   const flowRef = useRef<FlowHandle>(null);
   const flagsRef = useRef({ layers: true, drift: true }); // текущие флаги анализа (для стабильного load)
   flagsRef.current = { layers: runLayers, drift: runDrift };
@@ -1286,6 +1288,13 @@ export function SystemView() {
                 </span>
               </button>
             )}
+            {loadedPath && (
+              <button className="panel__conv" onClick={() => setProfileOpen(true)}
+                title="Уровень проекта, строгость правил, словарь ролей и свои конфигурации анализа">
+                <span className="panel__conv-src">профиль проекта</span>
+                <span className="panel__conv-cnt">уровень · правила · словарь · настроить →</span>
+              </button>
+            )}
             <div className="panel__hint">{loading ? 'анализирую…' : 'по отдельности или вместе; структурный анализ идёт всегда'}</div>
           </div>
           {allLayers.length > 0 && (
@@ -1508,6 +1517,9 @@ export function SystemView() {
       )}
       {convOpen && graph?.conventions && (
         <ConventionsView conventions={graph.conventions} onClose={() => setConvOpen(false)} />
+      )}
+      {profileOpen && loadedPath && (
+        <ProfileView path={loadedPath} onClose={() => setProfileOpen(false)} onApplied={() => void load(loadedPath)} />
       )}
     </div>
   );

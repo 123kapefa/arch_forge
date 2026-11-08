@@ -81,6 +81,19 @@ public sealed class AnalysisClient(HttpClient http)
         catch (Exception e) when (IsTransportFailure(e, ct)) { return null; }
     }
 
+    /// <summary>Встроенный словарь ролей, имена сервисов и пороги (adr/0012). null — если Analysis не смог.</summary>
+    public async Task<VocabularyDefaultsDto?> GetVocabularyAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using HttpResponseMessage response = await http.GetAsync("/api/vocabulary", ct);
+            if (!response.IsSuccessStatusCode)
+                return null;
+            return await response.Content.ReadFromJsonAsync<VocabularyDefaultsDto>(ct);
+        }
+        catch (Exception e) when (IsTransportFailure(e, ct)) { return null; }
+    }
+
     // Отказ соединения, таймаут или битый ответ — сбой Analysis; отмена самим вызывающим сюда не относится.
     private static bool IsTransportFailure(Exception e, CancellationToken ct) =>
         !ct.IsCancellationRequested && e is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or NotSupportedException;

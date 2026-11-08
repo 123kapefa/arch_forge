@@ -1,0 +1,262 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  type Profile, type RuleDef, type VocabularyDefaults, type ProfileParams,
+  levelDefault, effectiveStrictness, withStrictness, withParam, paramValue, isRuleChanged, changedRuleCount,
+  resetRule, resetCategory, resetToLevel, withLevel, roleList, isRoleChanged, withRoleList, resetRole,
+  namingList, isNamingChanged, withNaming, resetNaming, addItem, removeItem, profilesEqual, filterRules, groupByCategory,
+  exportManifest, parseImport, ProfileApiError, createConfig, updateConfig, bindProject, fetchProjectProfile,
+} from './profile';
+
+const rule = (id: string, category: string, defaults: Record<string, string | null>, title = id): RuleDef =>
+  ({ id, category, title, note: 'заметка', defaults });
+
+const DRIFT = rule('drift', 'convention', { Simple: 'Off', Standard: null, Platform: null }, 'Расхождение со сводом');
+const CYCLE = rule('service-cycle', 'architecture', { Simple: null, Standard: null, Platform: 'Error' }, 'Циклы между сервисами');
+const DTO = rule('dto-mapping', 'convention', { Simple: 'Off', Standard: 'Info', Platform: 'Warning' }, 'DTO инлайн');
+const RULES = [DRIFT, CYCLE, DTO];
+
+const PARAMS: ProfileParams = { serviceCycleMinConfidence: 0.8, dtoMinSites: 3, dtoMinFiles: 3 };
+const VOCAB: VocabularyDefaults = {
+  roles: {
+    Command: { markers: ['ICommand'], fallback: [], suffixes: ['Command'] },
+    Handler: { markers: ['ICommandHandler', 'IQueryHandler'], fallback: ['IRequestHandler'], suffixes: ['Handler'] },
+  },
+  naming: { typeSuffixes: ['-api', '-service'], migrationSuffixes: ['-migrate'], satelliteMarkers: ['migrat', 'seed'] },
+  params: PARAMS,
+};
+
+describe('строгость правил', () => {
+  it('умолчание уровня; null = родная серьёзность детектора', () => {
+    expect(levelDefault(DRIFT, 'Simple')).toBe('Off');
+    expect(levelDefault(DRIFT, 'Standard')).toBeNull();
+    expect(levelDefault(DRIFT, 'Unknown')).toBeNull();
+  });
+
+  it('переопределение сильнее умолчания, источник различается', () => {
+    expect(effectiveStrictness(DRIFT, { level: 'Simple' })).toEqual({ value: 'Off', overridden: false });
+    expect(effectiveStrictness(DRIFT, { level: 'Simple', overrides: { drift: 'Warning' } })).toEqual({ value: 'Warning', overridden: true });
+  });
+
+  it('значение, равное умолчанию уровня, не хранится как переопределение', () => {
+    const p = withStrictness({ level: 'Platform' }, CYCLE, 'Error');
+    expect(p.overrides).toBeUndefined();
+    expect(withStrictness({ level: 'Platform' }, CYCLE, 'Info').overrides).toEqual({ 'service-cycle': 'Info' });
+  });
+
+  it('смена уровня сохраняет отличия и пересчитывает «переопределено»', () => {
+    const p = withLevel(withStrictness({ level: 'Standard' }, DRIFT, 'Warning'), 'Simple');
+    expect(p.level).toBe('Simple');
+    expect(effectiveStrictness(DRIFT, p).overridden).toBe(true);
+  });
+
+  it('правка не мутирует исходный профиль', () => {
+    const p: Profile = { level: 'Standard', overrides: { drift: 'Info' } };
+    withStrictness(p, DRIFT, 'Error');
+    expect(p.overrides).toEqual({ drift: 'Info' });
+  });
+
+  it('null снимает переопределение', () => {
+    const p = withStrictness({ level: 'Standard', overrides: { drift: 'Info' } }, DRIFT, null);
+    expect(p).toEqual({ level: 'Standard' });
+  });
+});
+
+describe('пороги', () => {
+  it('значение по умолчанию не хранится; иное — хранится', () => {
+    expect(withParam({ level: 'Standard' }, 'dtoMinSites', 3, PARAMS).params).toBeUndefined();
+    expect(withParam({ level: 'Standard' }, 'dtoMinSites', 5, PARAMS).params).toEqual({ dtoMinSites: 5 });
+  });
+
+  it('paramValue берёт профиль, иначе умолчание', () => {
+    expect(paramValue({ level: 'Standard' }, 'serviceCycleMinConfidence', PARAMS)).toBe(0.8);
+    expect(paramValue({ level: 'Standard', params: { serviceCycleMinConfidence: 0.9 } }, 'serviceCycleMinConfidence', PARAMS)).toBe(0.9);
+  });
+
+  it('сдвинутый порог делает правило «изменённым»', () => {
+    expect(isRuleChanged(CYCLE, { level: 'Standard' }, PARAMS)).toBe(false);
+    expect(isRuleChanged(CYCLE, withParam({ level: 'Standard' }, 'serviceCycleMinConfidence', 0.9, PARAMS), PARAMS)).toBe(true);
+    // порог чужого правила не задевает
+    expect(isRuleChanged(DRIFT, withParam({ level: 'Standard' }, 'serviceCycleMinConfidence', 0.9, PARAMS), PARAMS)).toBe(false);
+  });
+});
+
+describe('сброс', () => {
+  const edited: Profile = {
+    level: 'Standard',
+    overrides: { drift: 'Error', 'dto-mapping': 'Off', 'service-cycle': 'Info' },
+    params: { dtoMinSites: 7, serviceCycleMinConfidence: 0.95 },
+    vocabulary: { Command: { markers: ['IRequest'] } },
+  };
+
+  it('правило: убирает и строгость, и свои пороги, остальное не трогает', () => {
+    const p = resetRule(edited, DTO);
+    expect(p.overrides).toEqual({ drift: 'Error', 'service-cycle': 'Info' });
+    expect(p.params).toEqual({ serviceCycleMinConfidence: 0.95 });
+  });
+
+  it('категория', () => {
+    const p = resetCategory(edited, RULES, 'convention');
+    expect(p.overrides).toEqual({ 'service-cycle': 'Info' });
+    expect(p.params).toEqual({ serviceCycleMinConfidence: 0.95 });
+  });
+
+  it('к уровню — всё, включая словарь', () => {
+    expect(resetToLevel(edited)).toEqual({ level: 'Standard' });
+  });
+
+  it('счётчик изменённых', () => {
+    expect(changedRuleCount(RULES, edited, PARAMS)).toBe(3);
+    expect(changedRuleCount(RULES, { level: 'Standard' }, PARAMS)).toBe(0);
+  });
+});
+
+describe('словарь ролей', () => {
+  it('без переопределения — встроенный список', () => {
+    expect(roleList({ level: 'Standard' }, VOCAB, 'Command', 'markers')).toEqual(['ICommand']);
+    expect(roleList({ level: 'Standard' }, VOCAB, 'Nope', 'markers')).toEqual([]);
+  });
+
+  it('правка списка хранится только если отличается от встроенного', () => {
+    const p = withRoleList({ level: 'Standard' }, VOCAB, 'Command', 'markers', ['IRequest']);
+    expect(p.vocabulary).toEqual({ Command: { markers: ['IRequest'] } });
+    expect(roleList(p, VOCAB, 'Command', 'markers')).toEqual(['IRequest']);
+    expect(isRoleChanged(p, VOCAB, 'Command')).toBe(true);
+    expect(isRoleChanged(p, VOCAB, 'Handler')).toBe(false);
+  });
+
+  it('возврат к встроенному значению и пустой список убирают запись', () => {
+    const edited = withRoleList({ level: 'Standard' }, VOCAB, 'Command', 'markers', ['IRequest']);
+    expect(withRoleList(edited, VOCAB, 'Command', 'markers', ['ICommand'])).toEqual({ level: 'Standard' });
+    expect(withRoleList(edited, VOCAB, 'Command', 'markers', [])).toEqual({ level: 'Standard' }); // пусто = «встроенное»
+  });
+
+  it('сброс роли не задевает другие', () => {
+    let p = withRoleList({ level: 'Standard' }, VOCAB, 'Command', 'markers', ['IRequest']);
+    p = withRoleList(p, VOCAB, 'Handler', 'suffixes', ['UseCase']);
+    expect(resetRole(p, 'Command').vocabulary).toEqual({ Handler: { suffixes: ['UseCase'] } });
+  });
+});
+
+describe('имена сервисов', () => {
+  it('аналогично: отличие хранится, возврат к встроенному снимает', () => {
+    const p = withNaming({ level: 'Standard' }, VOCAB, 'typeSuffixes', ['-api', '-service', '-core']);
+    expect(p.params?.naming).toEqual({ typeSuffixes: ['-api', '-service', '-core'] });
+    expect(namingList(p, VOCAB, 'typeSuffixes')).toEqual(['-api', '-service', '-core']);
+    expect(isNamingChanged(p, VOCAB, 'typeSuffixes')).toBe(true);
+    expect(isNamingChanged(p, VOCAB, 'migrationSuffixes')).toBe(false);
+    expect(withNaming(p, VOCAB, 'typeSuffixes', ['-api', '-service'])).toEqual({ level: 'Standard' });
+    expect(resetNaming(p, 'typeSuffixes')).toEqual({ level: 'Standard' });
+  });
+});
+
+describe('списки', () => {
+  it('addItem: без дублей (без учёта регистра), пустых и слишком длинных', () => {
+    expect(addItem(['A'], ' b ')).toEqual(['A', 'b']);
+    expect(addItem(['A'], 'a')).toEqual(['A']);
+    expect(addItem(['A'], '   ')).toEqual(['A']);
+    expect(addItem(['A'], 'x'.repeat(65))).toEqual(['A']);
+  });
+  it('removeItem', () => {
+    expect(removeItem(['a', 'b', 'c'], 1)).toEqual(['a', 'c']);
+  });
+});
+
+describe('сравнение и фильтры', () => {
+  it('профили равны независимо от порядка ключей и пустых секций', () => {
+    expect(profilesEqual({ level: 'Standard', overrides: { a: 'Off', b: 'Info' } }, { overrides: { b: 'Info', a: 'Off' }, level: 'Standard' })).toBe(true);
+    expect(profilesEqual({ level: 'Standard', overrides: {} }, { level: 'Standard' })).toBe(true);
+    expect(profilesEqual({ level: 'Standard' }, { level: 'Simple' })).toBe(false);
+  });
+
+  it('поиск по названию и заметке, фильтры «изменённые» и «выключенные»', () => {
+    const p: Profile = { level: 'Simple', overrides: { 'service-cycle': 'Info' } };
+    expect(filterRules(RULES, p, PARAMS, 'циклы', 'all').map((r) => r.id)).toEqual(['service-cycle']);
+    expect(filterRules(RULES, p, PARAMS, '', 'changed').map((r) => r.id)).toEqual(['service-cycle']);
+    expect(filterRules(RULES, p, PARAMS, '', 'off').map((r) => r.id)).toEqual(['drift', 'dto-mapping']); // Simple выключает свод-линзы
+  });
+
+  it('группы: архитектура раньше конвенций', () => {
+    expect(groupByCategory(RULES).map((g) => g.category)).toEqual(['architecture', 'convention']);
+    expect(groupByCategory(RULES)[1].rules.map((r) => r.id)).toEqual(['drift', 'dto-mapping']);
+  });
+});
+
+describe('импорт и экспорт', () => {
+  const cfg = { id: 'x', name: 'Для клиента', author: '@k', version: 3, kind: 'own', catalogVersion: '2026.11',
+    profile: { level: 'Platform', overrides: { drift: 'Error' } } as Profile };
+
+  it('экспорт без служебных полей сервера, импорт его же возвращает профиль', () => {
+    const text = exportManifest(cfg);
+    expect(text).not.toContain('"id"');
+    expect(text).not.toContain('"kind"');
+    const r = parseImport(text);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.draft.name).toBe('Для клиента');
+      expect(r.draft.profile).toEqual(cfg.profile);
+      expect(r.draft.id).toBeNull();
+      expect(r.draft.version).toBe(0);
+    }
+  });
+
+  it('принимает «голый» профиль', () => {
+    const r = parseImport('{ "level": "Simple", "overrides": { "drift": "Info" } }');
+    expect(r.ok && r.draft.profile.level).toBe('Simple');
+    expect(r.ok && r.draft.name).toBe('Импортированная конфигурация');
+  });
+
+  it('понятные ошибки: не JSON, не объект, нет профиля, слишком большой', () => {
+    expect(parseImport('{ oops')).toEqual({ ok: false, error: 'Это не JSON' });
+    expect(parseImport('[1]').ok).toBe(false);
+    expect(parseImport('{"name":"x"}').ok).toBe(false);
+    expect(parseImport('x'.repeat(300 * 1024)).ok).toBe(false);
+  });
+
+  it('длинное имя обрезается до 100 символов', () => {
+    const r = parseImport(JSON.stringify({ name: 'я'.repeat(300), profile: { level: 'Standard' } }));
+    expect(r.ok && r.draft.name.length).toBe(100);
+  });
+});
+
+describe('клиент API', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const respond = (status: number, body?: unknown) =>
+    vi.fn(async () => new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }));
+
+  it('отправляет JSON и разбирает ответ', async () => {
+    const f = respond(201, { id: 'n', name: 'A', author: 'a', version: 1, profile: { level: 'Standard' } });
+    vi.stubGlobal('fetch', f);
+    const c = await createConfig({ name: 'A', author: 'a', version: 0, profile: { level: 'Standard' } });
+    expect(c.id).toBe('n');
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/profile/configs');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+  });
+
+  it('ошибки сервера собираются в ProfileApiError со статусом и списком причин', async () => {
+    vi.stubGlobal('fetch', respond(409, { error: 'конфликт', errors: ['конфликт', 'обновите'] }));
+    const err = await updateConfig('x', { name: 'A', author: 'a', version: 1, profile: { level: 'Standard' } }).catch((e) => e);
+    expect(err).toBeInstanceOf(ProfileApiError);
+    expect(err.status).toBe(409);
+    expect(err.errors).toEqual(['конфликт', 'обновите']);
+  });
+
+  it('не-JSON ошибка не ломает разбор', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>', { status: 502 })));
+    const err = await fetchProjectProfile('/p').catch((e) => e);
+    expect(err).toBeInstanceOf(ProfileApiError);
+    expect(err.status).toBe(502);
+  });
+
+  it('путь проекта экранируется в адресе', async () => {
+    const f = respond(200, { binding: { level: 'Standard' }, effective: { level: 'Standard' } });
+    vi.stubGlobal('fetch', f);
+    await bindProject('/Users/x y/proj', { level: 'Simple' });
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/profile?path=%2FUsers%2Fx%20y%2Fproj');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body as string)).toEqual({ level: 'Simple' });
+  });
+});

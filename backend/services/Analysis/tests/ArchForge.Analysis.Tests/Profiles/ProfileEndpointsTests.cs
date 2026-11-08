@@ -97,4 +97,18 @@ public class ProfileEndpointsTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
     }
+
+    [Fact]
+    public async Task Vocabulary_endpoint_returns_builtin_roles_naming_and_params()
+    {
+        var v = (await _http.GetFromJsonAsync<VocabularyDefaultsDto>("/api/vocabulary"))!;
+
+        Assert.Contains("ICommand", v.Roles["Command"].Markers!);
+        Assert.Contains("Command", v.Roles["Command"].Suffixes!);                    // суффикс ожидания роли
+        Assert.Contains("ICommandHandler", v.Roles["Handler"].Markers!);
+        Assert.Equal(ArchForge.Analysis.Core.Profiles.ServiceNaming.Default.TypeSuffixes, v.Naming.TypeSuffixes);
+        Assert.Equal(0.8, v.Params.ServiceCycleMinConfidence);
+        Assert.Equal(3, v.Params.DtoMinSites);
+    }
 }
+
