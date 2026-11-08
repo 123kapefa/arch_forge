@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core;
 using ArchForge.Contracts;
 
 namespace ArchForge.Analysis.Core.Profiles;
@@ -43,6 +44,25 @@ public static class ProfileMapping
 
         profile = new ProjectProfile(level, overrides, prm, vocabulary);
         return true;
+    }
+
+    /// <summary>Встроенные значения словаря, имён сервисов и порогов — «точка отсчёта» для отличий профиля.</summary>
+    public static VocabularyDefaultsDto ToVocabularyDefaults()
+    {
+        var pack = ConventionPack.Default();
+        var roles = new SortedDictionary<string, RoleVocabularyDto>(StringComparer.Ordinal);
+        var names = pack.Markers.Values.Concat(pack.Fallback.Values).Concat(pack.Expect.Select(e => e.Role)).Distinct(StringComparer.Ordinal);
+        foreach (var role in names)
+            roles[role] = new RoleVocabularyDto(
+                [.. pack.Markers.Where(kv => kv.Value == role).Select(kv => kv.Key)],
+                [.. pack.Fallback.Where(kv => kv.Value == role).Select(kv => kv.Key)],
+                [.. pack.Expect.Where(e => e.Role == role).Select(e => e.Suffix).Distinct(StringComparer.Ordinal)]);
+        var n = ServiceNaming.Default;
+        var d = new ProfileParams();
+        return new VocabularyDefaultsDto(
+            roles,
+            new ServiceNamingDto(n.TypeSuffixes, n.MigrationSuffixes, n.SatelliteMarkers),
+            new ProfileParamsDto(d.ServiceCycleMinConfidence, d.DtoMinSites, d.DtoMinFiles));
     }
 
     public static RuleCatalogDto ToCatalogDto() => new(

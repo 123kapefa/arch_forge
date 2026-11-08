@@ -13,3 +13,11 @@ public sealed class GetRulesEndpoint : IEndpoint
     public void MapEndpoint(IEndpointRouteBuilder app) =>
         app.MapGet("/api/rules", () => Results.Ok(ProfileMapping.ToCatalogDto()));
 }
+
+/// <summary>GET /api/vocabulary — встроенные значения словаря ролей, имён сервисов и порогов (adr/0012):
+/// точка отсчёта, от которой интерфейс показывает отличия профиля.</summary>
+public sealed class GetVocabularyEndpoint : IEndpoint
+{
+    public void MapEndpoint(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/vocabulary", () => Results.Ok(ProfileMapping.ToVocabularyDefaults()));
+}

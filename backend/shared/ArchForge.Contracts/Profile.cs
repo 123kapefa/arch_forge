@@ -68,6 +68,13 @@ public sealed record RuleDto(
 
 public sealed record RuleCatalogDto(string Version, IReadOnlyList<RuleDto> Rules);
 
+/// <summary>Значения по умолчанию, от которых отсчитываются отличия в профиле: словарь ролей встроенного свода,
+/// имена сервисов и пороги. Нужны интерфейсу настройки, чтобы показать «что изменено».</summary>
+public sealed record VocabularyDefaultsDto(
+    IReadOnlyDictionary<string, RoleVocabularyDto> Roles,
+    ServiceNamingDto Naming,
+    ProfileParamsDto Params);
+
 /// <summary>Единая проверка профиля на входе (Map перед сохранением, Analysis перед применением). Чистая функция.
 /// Возвращает список ошибок на русском; пусто = профиль допустим.</summary>
 public static class ProfileValidator
