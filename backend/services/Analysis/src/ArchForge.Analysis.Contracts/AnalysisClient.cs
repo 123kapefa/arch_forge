@@ -58,18 +58,30 @@ public sealed class AnalysisClient(HttpClient http)
         if (layers) url += "&layers=true";
         if (!string.IsNullOrWhiteSpace(env)) url += $"&env={Uri.EscapeDataString(env)}";
         if (calls) url += "&calls=true";
-        using HttpResponseMessage response = await http.PostAsJsonAsync(url, profile, ct);
-        if (!response.IsSuccessStatusCode)
-            return null;
-        return await response.Content.ReadFromJsonAsync<GraphDto>(ct);
+        try
+        {
+            using HttpResponseMessage response = await http.PostAsJsonAsync(url, profile, ct);
+            if (!response.IsSuccessStatusCode)
+                return null;
+            return await response.Content.ReadFromJsonAsync<GraphDto>(ct);
+        }
+        catch (Exception e) when (IsTransportFailure(e, ct)) { return null; } // Analysis недоступен — как «не смог», не 500
     }
 
     /// <summary>Каталог правил анализатора (adr/0012). null — если Analysis не смог.</summary>
     public async Task<RuleCatalogDto?> GetRulesAsync(CancellationToken ct = default)
     {
-        using HttpResponseMessage response = await http.GetAsync("/api/rules", ct);
-        if (!response.IsSuccessStatusCode)
-            return null;
-        return await response.Content.ReadFromJsonAsync<RuleCatalogDto>(ct);
+        try
+        {
+            using HttpResponseMessage response = await http.GetAsync("/api/rules", ct);
+            if (!response.IsSuccessStatusCode)
+                return null;
+            return await response.Content.ReadFromJsonAsync<RuleCatalogDto>(ct);
+        }
+        catch (Exception e) when (IsTransportFailure(e, ct)) { return null; }
     }
+
+    // Отказ соединения, таймаут или битый ответ — сбой Analysis; отмена самим вызывающим сюда не относится.
+    private static bool IsTransportFailure(Exception e, CancellationToken ct) =>
+        !ct.IsCancellationRequested && e is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or NotSupportedException;
 }

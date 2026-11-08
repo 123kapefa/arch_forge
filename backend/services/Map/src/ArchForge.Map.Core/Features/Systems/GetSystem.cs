@@ -23,6 +23,14 @@ public sealed class GetSystemEndpoint : IEndpoint
             GraphDto? graph = profile is null
                 ? await analysis.GetSystemAsync(path, drift ?? false, layers ?? false, env, calls ?? false, ct)
                 : await analysis.GetSystemWithProfileAsync(path, profile, drift ?? false, layers ?? false, env, calls ?? false, ct);
+            if (graph is null && profile is not null)
+            {
+                // Сохранённый профиль мог устареть (правило убрали из каталога) — карта не должна пропадать совсем:
+                // показываем разбор по умолчанию и честно говорим, что профиль не применён.
+                graph = await analysis.GetSystemAsync(path, drift ?? false, layers ?? false, env, calls ?? false, ct);
+                if (graph is not null)
+                    graph = graph with { Degradations = [.. graph.Degradations ?? [], "профиль проекта не применён: Analysis его не принял — показан разбор по умолчанию"] };
+            }
             return graph is null
                 ? Results.BadRequest(new { error = "Analysis не смог собрать систему" })
                 : Results.Ok(graph);

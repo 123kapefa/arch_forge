@@ -13,5 +13,8 @@ builder.Services.AddInfrastructure(builder.Configuration["Profiles:Directory"]);
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 256 * 1024);
 
 var app = builder.Build();
+
+// Защита локального API от чужих страниц в браузере (CSRF); от DNS rebinding защищает AllowedHosts в appsettings.
+app.UseCrossSiteGuard();
 app.MapEndpoints();
 await app.RunAsync();

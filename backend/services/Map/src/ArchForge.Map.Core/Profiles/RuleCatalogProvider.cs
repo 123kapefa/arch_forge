@@ -13,6 +13,7 @@ public interface IRuleCatalogProvider
 public sealed class AnalysisRuleCatalogProvider(AnalysisClient analysis, TimeProvider? time = null) : IRuleCatalogProvider
 {
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private RuleCatalogDto? _cached;
@@ -24,7 +25,12 @@ public sealed class AnalysisRuleCatalogProvider(AnalysisClient analysis, TimePro
         try
         {
             if (_cached is not null && _time.GetUtcNow() - _at < Ttl) return _cached;
-            var fresh = await analysis.GetRulesAsync(ct);
+            // Короткий таймаут: лежащий Analysis не должен держать замок и запросы по 100 секунд.
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(Timeout);
+            RuleCatalogDto? fresh = null;
+            try { fresh = await analysis.GetRulesAsync(cts.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* таймаут → как недоступен */ }
             if (fresh is not null) { _cached = fresh; _at = _time.GetUtcNow(); }
             return fresh ?? _cached; // Analysis недоступен — отдаём прошлый каталог, если он был
         }

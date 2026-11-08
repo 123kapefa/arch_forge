@@ -12,7 +12,14 @@ internal sealed class MemoryStore : IProfileStore
 
     public Task<IReadOnlyList<ConfigManifestDto>> ListConfigsAsync(CancellationToken ct = default) { Check(); return Task.FromResult<IReadOnlyList<ConfigManifestDto>>([.. Configs]); }
     public Task<ConfigManifestDto?> GetConfigAsync(string id, CancellationToken ct = default) { Check(); return Task.FromResult(Configs.FirstOrDefault(c => c.Id == id)); }
-    public Task<bool> AddConfigAsync(ConfigManifestDto config, CancellationToken ct = default) { Check(); if (Configs.Any(c => c.Id == config.Id)) return Task.FromResult(false); Configs.Add(config); return Task.FromResult(true); }
+    public Task<AddResult> AddConfigAsync(ConfigManifestDto config, int maxConfigs, CancellationToken ct = default)
+{
+    Check();
+    if (Configs.Any(c => c.Id == config.Id)) return Task.FromResult(AddResult.IdTaken);
+    if (Configs.Count >= maxConfigs) return Task.FromResult(AddResult.LimitReached);
+    Configs.Add(config);
+    return Task.FromResult(AddResult.Ok);
+}
     public Task<ReplaceResult> ReplaceConfigAsync(string id, int expectedVersion, ConfigManifestDto r, CancellationToken ct = default)
     {
         Check();
@@ -30,9 +37,16 @@ internal sealed class MemoryStore : IProfileStore
         return Task.FromResult(true);
     }
     public Task<ProfileBindingDto?> GetBindingAsync(string p, CancellationToken ct = default) { Check(); return Task.FromResult(Bindings.GetValueOrDefault(p)); }
-    public Task SetBindingAsync(string p, ProfileBindingDto? b, CancellationToken ct = default) { Check(); if (b is null) Bindings.Remove(p); else Bindings[p] = b; return Task.CompletedTask; }
-    public Task<int> CountBindingsAsync(CancellationToken ct = default) => Task.FromResult(Bindings.Count);
+    public Task ClearBindingAsync(string p, CancellationToken ct = default) { Check(); Bindings.Remove(p); return Task.CompletedTask; }
+public Task<BindResult> TrySetBindingAsync(string p, ProfileBindingDto b, int max, IReadOnlySet<string> builtin, CancellationToken ct = default)
+{
+    Check();
+    if (b.ConfigId is { } id && !builtin.Contains(id) && !Configs.Any(c => c.Id == id)) return Task.FromResult(BindResult.ConfigMissing);
+    if (!Bindings.ContainsKey(p) && Bindings.Count >= max) return Task.FromResult(BindResult.LimitReached);
+    Bindings[p] = b;
+    return Task.FromResult(BindResult.Ok);
 }
+    }
 
 
 internal sealed class FakeCatalog(RuleCatalogDto? dto) : IRuleCatalogProvider

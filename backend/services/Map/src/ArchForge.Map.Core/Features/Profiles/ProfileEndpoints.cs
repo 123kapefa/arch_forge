@@ -12,10 +12,25 @@ namespace ArchForge.Map.Core.Features.Profiles;
 
 internal static class ProfileHttp
 {
-    public static IResult ToResult<T>(Outcome<T> o, string? createdAt = null) =>
+    public static IResult ToResult(Outcome<ConfigManifestDto> o) =>
         o.Ok
-            ? (o.Status == 201 && createdAt is not null ? Results.Created(createdAt, o.Value) : Results.Ok(o.Value))
-            : Results.Json(new { error = o.Errors.FirstOrDefault() ?? "ошибка", errors = o.Errors }, statusCode: o.Status);
+            ? (o.Status == 201 ? Results.Created($"/api/profile/configs/{o.Value!.Id}", o.Value) : Results.Ok(o.Value))
+            : Fail(o.Status, o.Errors);
+
+    public static IResult ToResult<T>(Outcome<T> o) =>
+        o.Ok ? Results.Ok(o.Value) : Fail(o.Status, o.Errors);
+
+    public static IResult Fail(int status, IReadOnlyList<string> errors) =>
+        Results.Json(new { error = errors.FirstOrDefault() ?? "ошибка", errors }, statusCode: status);
+
+    /// <summary>Сбои хранилища (повреждённый файл, нет прав на запись) — понятный ответ, а не голый 500.</summary>
+    public static async Task<IResult> Guard(Func<Task<IResult>> action)
+    {
+        try { return await action(); }
+        catch (InvalidDataException e) { return Fail(503, [e.Message]); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        { return Fail(503, ["Хранилище профилей недоступно для записи или чтения: " + e.Message]); }
+    }
 }
 
 /// <summary>GET /api/rules — каталог правил анализатора (id, категория, строгость по умолчанию на каждом уровне).</summary>
@@ -25,7 +40,7 @@ public sealed class GetRulesEndpoint : IEndpoint
         app.MapGet("/api/rules", async (IRuleCatalogProvider catalog, CancellationToken ct) =>
             await catalog.GetAsync(ct) is { } rules
                 ? Results.Ok(rules)
-                : Results.Json(new { error = "Analysis не отвечает" }, statusCode: 503));
+                : ProfileHttp.Fail(503, ["Analysis не отвечает"]));
 }
 
 /// <summary>Список и чтение конфигураций: встроенные уровни + свои.</summary>
@@ -33,9 +48,10 @@ public sealed class ListConfigsEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/profile/configs", async (ProfileService svc, CancellationToken ct) => Results.Ok(await svc.ListAsync(ct)));
-        app.MapGet("/api/profile/configs/{id}", async (string id, ProfileService svc, CancellationToken ct) =>
-            await svc.GetAsync(id, ct) is { } c ? Results.Ok(c) : Results.NotFound(new { error = "конфигурация не найдена" }));
+        app.MapGet("/api/profile/configs", (ProfileService svc, CancellationToken ct) =>
+            ProfileHttp.Guard(async () => Results.Ok(await svc.ListAsync(ct))));
+        app.MapGet("/api/profile/configs/{id}", (string id, ProfileService svc, CancellationToken ct) =>
+            ProfileHttp.Guard(async () => await svc.GetAsync(id, ct) is { } c ? Results.Ok(c) : ProfileHttp.Fail(404, ["конфигурация не найдена"])));
     }
 }
 
@@ -44,24 +60,25 @@ public sealed class ManageConfigsEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/profile/configs", async (ConfigManifestDto? config, ProfileService svc, CancellationToken ct) =>
-            config is null
-                ? Results.BadRequest(new { error = "тело запроса обязательно" })
-                : ProfileHttp.ToResult(await svc.CreateAsync(config, ct), "/api/profile/configs"));
+        app.MapPost("/api/profile/configs", (ConfigManifestDto? config, ProfileService svc, CancellationToken ct) =>
+            ProfileHttp.Guard(async () => config is null
+                ? ProfileHttp.Fail(400, ["тело запроса обязательно"])
+                : ProfileHttp.ToResult(await svc.CreateAsync(config, ct))));
 
-        app.MapPut("/api/profile/configs/{id}", async (string id, ConfigManifestDto? config, ProfileService svc, CancellationToken ct) =>
-            config is null
-                ? Results.BadRequest(new { error = "тело запроса обязательно" })
-                : ProfileHttp.ToResult(await svc.UpdateAsync(id, config, ct)));
+        app.MapPut("/api/profile/configs/{id}", (string id, ConfigManifestDto? config, ProfileService svc, CancellationToken ct) =>
+            ProfileHttp.Guard(async () => config is null
+                ? ProfileHttp.Fail(400, ["тело запроса обязательно"])
+                : ProfileHttp.ToResult(await svc.UpdateAsync(id, config, ct))));
 
-        app.MapDelete("/api/profile/configs/{id}", async (string id, ProfileService svc, CancellationToken ct) =>
-        {
-            var o = await svc.DeleteAsync(id, ct);
-            return o.Ok ? Results.NoContent() : ProfileHttp.ToResult(o);
-        });
+        app.MapDelete("/api/profile/configs/{id}", (string id, ProfileService svc, CancellationToken ct) =>
+            ProfileHttp.Guard(async () =>
+            {
+                var o = await svc.DeleteAsync(id, ct);
+                return o.Ok ? Results.NoContent() : ProfileHttp.ToResult(o);
+            }));
 
-        app.MapPost("/api/profile/configs/{id}/duplicate", async (string id, string? author, ProfileService svc, CancellationToken ct) =>
-            ProfileHttp.ToResult(await svc.DuplicateAsync(id, author, ct), "/api/profile/configs"));
+        app.MapPost("/api/profile/configs/{id}/duplicate", (string id, string? author, ProfileService svc, CancellationToken ct) =>
+            ProfileHttp.Guard(async () => ProfileHttp.ToResult(await svc.DuplicateAsync(id, author, ct))));
     }
 }
 
@@ -70,10 +87,10 @@ public sealed class ProjectProfileEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/profile", async (string path, ProfileService svc, CancellationToken ct) =>
-            ProfileHttp.ToResult(await svc.GetForPathAsync(path, ct)));
+        app.MapGet("/api/profile", (string path, ProfileService svc, CancellationToken ct) =>
+            ProfileHttp.Guard(async () => ProfileHttp.ToResult(await svc.GetForPathAsync(path, ct))));
 
-        app.MapPut("/api/profile", async (string path, ProfileBindingDto? binding, ProfileService svc, CancellationToken ct) =>
-            ProfileHttp.ToResult(await svc.BindProjectAsync(path, binding, ct)));
+        app.MapPut("/api/profile", (string path, ProfileBindingDto? binding, ProfileService svc, CancellationToken ct) =>
+            ProfileHttp.Guard(async () => ProfileHttp.ToResult(await svc.BindProjectAsync(path, binding, ct))));
     }
 }

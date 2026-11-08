@@ -83,6 +83,9 @@ public static class ProfileValidator
     public const int MaxNamingList = 32;
     public const int MaxNamingItemLength = 64;
     public const int MaxConfigNameLength = 100;
+    /// <summary>Предел сериализованного профиля. Считается дефолтным кодировщиком (кириллица → \uXXXX), т.е. с запасом:
+    /// то, что принял Map, заведомо проходит лимит тела запроса Analysis (256 КБ).</summary>
+    public const int MaxProfileBytes = 64 * 1024;
 
     public static bool IsLevel(string? s) => s is not null && Levels.Contains(s, StringComparer.OrdinalIgnoreCase);
     public static bool IsStrictness(string? s) => s is not null && Strictnesses.Contains(s, StringComparer.OrdinalIgnoreCase);
@@ -92,6 +95,11 @@ public static class ProfileValidator
     {
         var errors = new List<string>();
         if (profile is null) { errors.Add("профиль не задан"); return errors; }
+        if (SizeOf(profile) > MaxProfileBytes)
+        {
+            errors.Add($"профиль слишком большой (не больше {MaxProfileBytes / 1024} КБ)");
+            return errors; // дальше разбирать раздутый профиль незачем
+        }
 
         if (!IsLevel(profile.Level)) errors.Add($"неизвестный уровень «{Trim(profile.Level)}»; допустимо: {string.Join(", ", Levels)}");
 
@@ -161,6 +169,13 @@ public static class ProfileValidator
         if (list.Take(MaxNamingList).Any(s => string.IsNullOrWhiteSpace(s) || s.Length > MaxNamingItemLength))
             errors.Add($"{what}: записи от 1 до {MaxNamingItemLength} символов");
     }
+
+    // NaN/Infinity допускаем при подсчёте размера (их отдельно отвергает проверка порогов), иначе сериализатор бросил бы исключение.
+    private static readonly System.Text.Json.JsonSerializerOptions SizeOptions = new()
+    {
+        NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
+    };
+    private static int SizeOf(ProfileDto profile) => System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(profile, SizeOptions).Length;
 
     // В тексте ошибки показываем не больше 40 символов чужого ввода.
     private static string Trim(string? s) => s is null ? "" : s.Length <= 40 ? s : s[..40] + "…";

@@ -26,11 +26,22 @@ public sealed class ProfileService(IProfileStore store, IRuleCatalogProvider cat
         [.. ProfileValidator.Levels.Select(l => new ConfigManifestDto(
             "lvl-" + l.ToLowerInvariant(), l, "arch_forge", 1, new ProfileDto(l), Kind: "level"))];
 
+    /// <summary>Ключ проекта: полный путь без хвостового разделителя; симлинк конечной папки разворачивается;
+    /// на Windows и macOS (ФС обычно нечувствительны к регистру) регистр сводится к нижнему, иначе один проект получил бы две привязки.
+    /// Относительный путь разрешается от рабочей папки Map — для привязки нужен абсолютный путь проекта.</summary>
     public static string NormalizePath(string path)
     {
         var full = Path.GetFullPath(path.Trim());
         var root = Path.GetPathRoot(full);
-        return full.Length > (root?.Length ?? 0) ? full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : full;
+        if (full.Length > (root?.Length ?? 0)) full = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        try
+        {
+            if (Directory.Exists(full) && new DirectoryInfo(full).ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                full = target.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch (IOException) { /* не удалось развернуть — остаёмся с полным путём */ }
+        catch (UnauthorizedAccessException) { }
+        return OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? full.ToLowerInvariant() : full;
     }
 
     private static string? CheckPath(string? path) =>
@@ -41,7 +52,7 @@ public sealed class ProfileService(IProfileStore store, IRuleCatalogProvider cat
     // ── конфигурации ──
 
     public async Task<IReadOnlyList<ConfigManifestDto>> ListAsync(CancellationToken ct = default) =>
-        [.. Levels, .. (await store.ListConfigsAsync(ct)).OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase)];
+        [.. Levels, .. (await store.ListConfigsAsync(ct)).OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)];
 
     public async Task<ConfigManifestDto?> GetAsync(string id, CancellationToken ct = default) =>
         Levels.FirstOrDefault(l => l.Id == id) ?? await store.GetConfigAsync(id, ct);
@@ -52,15 +63,16 @@ public sealed class ProfileService(IProfileStore store, IRuleCatalogProvider cat
         if (rules is null) return Outcome<ConfigManifestDto>.Fail(503, "каталог правил недоступен: Analysis не отвечает");
         var errors = ProfileValidator.Validate(input, KnownIds(rules));
         if (errors.Count > 0) return new(default, 400, errors);
-        if ((await store.ListConfigsAsync(ct)).Count >= MaxOwnConfigs)
-            return Outcome<ConfigManifestDto>.Fail(409, $"конфигураций не больше {MaxOwnConfigs}");
         if (input.ParentId is not null && await GetAsync(input.ParentId, ct) is null)
             return Outcome<ConfigManifestDto>.Fail(400, "родительская конфигурация не найдена");
 
         var created = Stamp(input, Guid.NewGuid().ToString("N"), 1, rules);
-        return await store.AddConfigAsync(created, ct)
-            ? Outcome<ConfigManifestDto>.Success(created, 201)
-            : Outcome<ConfigManifestDto>.Fail(409, "не удалось создать конфигурацию, повторите");
+        return await store.AddConfigAsync(created, MaxOwnConfigs, ct) switch   // лимит проверяет само хранилище, атомарно с записью
+        {
+            AddResult.Ok => Outcome<ConfigManifestDto>.Success(created, 201),
+            AddResult.LimitReached => Outcome<ConfigManifestDto>.Fail(409, $"конфигураций не больше {MaxOwnConfigs}"),
+            _ => Outcome<ConfigManifestDto>.Fail(409, "не удалось создать конфигурацию, повторите"),
+        };
     }
 
     public async Task<Outcome<ConfigManifestDto>> UpdateAsync(string id, ConfigManifestDto input, CancellationToken ct = default)
@@ -70,13 +82,16 @@ public sealed class ProfileService(IProfileStore store, IRuleCatalogProvider cat
         if (rules is null) return Outcome<ConfigManifestDto>.Fail(503, "каталог правил недоступен: Analysis не отвечает");
         var errors = ProfileValidator.Validate(input, KnownIds(rules));
         if (errors.Count > 0) return new(default, 400, errors);
+        if (input.Version < 1) return Outcome<ConfigManifestDto>.Fail(400, "укажите version — текущую версию конфигурации (для проверки конфликта)");
+        if (input.ParentId is not null && await GetAsync(input.ParentId, ct) is null)
+            return Outcome<ConfigManifestDto>.Fail(400, "родительская конфигурация не найдена");
 
-        var updated = Stamp(input, id, input.Version + 1, rules);
+        var updated = Stamp(input, id, input.Version + 1, rules);   // Id берётся из адреса, а не из тела
         return await store.ReplaceConfigAsync(id, input.Version, updated, ct) switch
         {
             ReplaceResult.Ok => Outcome<ConfigManifestDto>.Success(updated),
             ReplaceResult.NotFound => Outcome<ConfigManifestDto>.Fail(404, "конфигурация не найдена"),
-            _ => Outcome<ConfigManifestDto>.Fail(409, "конфигурация изменилась: обновите и повторите (версия не совпала)"),
+            _ => Outcome<ConfigManifestDto>.Fail(409, $"конфигурация изменилась (у вас версия {input.Version}): обновите её и повторите"),
         };
     }
 
@@ -110,25 +125,29 @@ public sealed class ProfileService(IProfileStore store, IRuleCatalogProvider cat
     public async Task<Outcome<ProfileForPathDto>> BindProjectAsync(string path, ProfileBindingDto? binding, CancellationToken ct = default)
     {
         if (CheckPath(path) is { } bad) return Outcome<ProfileForPathDto>.Fail(400, bad);
+        // Пустое тело — ошибка, а не «сброс»: случайный PUT без тела не должен молча снимать привязку.
+        if (binding is null) return Outcome<ProfileForPathDto>.Fail(400, "тело обязательно; чтобы сбросить привязку, отправьте {}");
         var key = NormalizePath(path);
 
-        if (binding is null || (binding.ConfigId is null && binding.Level is null))
-        {   // пустая привязка = «сбросить к умолчанию»
-            await store.SetBindingAsync(key, null, ct);
+        if (binding.ConfigId is null && binding.Level is null)
+        {   // {} = «сбросить к умолчанию»
+            await store.ClearBindingAsync(key, ct);
             return Outcome<ProfileForPathDto>.Success(DefaultFor());
         }
         if ((binding.ConfigId is null) == (binding.Level is null))
             return Outcome<ProfileForPathDto>.Fail(400, "укажите ровно одно: configId или level");
         if (binding.Level is not null && !ProfileValidator.IsLevel(binding.Level))
             return Outcome<ProfileForPathDto>.Fail(400, $"неизвестный уровень; допустимо: {string.Join(", ", ProfileValidator.Levels)}");
-        if (binding.ConfigId is not null && await GetAsync(binding.ConfigId, ct) is null)
-            return Outcome<ProfileForPathDto>.Fail(404, "конфигурация не найдена");
-        if (await store.GetBindingAsync(key, ct) is null && await store.CountBindingsAsync(ct) >= MaxBindings)
-            return Outcome<ProfileForPathDto>.Fail(409, $"привязок проектов не больше {MaxBindings}");
+        if (binding.ConfigId is { Length: > 64 }) return Outcome<ProfileForPathDto>.Fail(400, "configId слишком длинный");
 
         var canonical = binding.Level is { } l ? new ProfileBindingDto(null, Canonical(l)) : binding;
-        await store.SetBindingAsync(key, canonical, ct);
-        return Outcome<ProfileForPathDto>.Success((await ResolveAsync(canonical, ct))!);
+        var builtin = Levels.Select(x => x.Id!).ToHashSet(StringComparer.Ordinal);
+        switch (await store.TrySetBindingAsync(key, canonical, MaxBindings, builtin, ct))   // проверки существования и лимита — внутри хранилища
+        {
+            case BindResult.ConfigMissing: return Outcome<ProfileForPathDto>.Fail(404, "конфигурация не найдена");
+            case BindResult.LimitReached: return Outcome<ProfileForPathDto>.Fail(409, $"привязок проектов не больше {MaxBindings}");
+        }
+        return Outcome<ProfileForPathDto>.Success((await ResolveAsync(canonical, ct)) ?? DefaultFor());
     }
 
     /// <summary>Профиль для разбора проекта. null — привязки нет, Analysis применяет профиль по умолчанию (прежнее поведение).
@@ -174,7 +193,11 @@ public sealed class ProfileService(IProfileStore store, IRuleCatalogProvider cat
         Kind = "own",
         CatalogVersion = rules.Version,
         FormatVersion = 1,
-        Profile = input.Profile with { Level = Canonical(input.Profile.Level) },
+        Profile = input.Profile with
+        {
+            Level = Canonical(input.Profile.Level),
+            Overrides = input.Profile.Overrides?.ToDictionary(kv => kv.Key, kv => ProfileValidator.Strictnesses.First(x => x.Equals(kv.Value, StringComparison.OrdinalIgnoreCase)), StringComparer.Ordinal),
+        },
         UpdatedAt = _time.GetUtcNow(),
     };
 }

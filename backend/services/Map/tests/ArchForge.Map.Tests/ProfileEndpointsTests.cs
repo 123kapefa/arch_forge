@@ -19,9 +19,14 @@ public class ProfileEndpointsTests : IAsyncLifetime
     private sealed class AnalysisStub : HttpMessageHandler
     {
         public List<(HttpMethod Method, string Url, string? Body)> Calls { get; } = [];
+        public bool Down { get; set; }                 // Analysis недоступен (отказ соединения)
+        public bool RejectProfile { get; set; }        // Analysis отвечает 400 на POST /api/system (профиль не принят)
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls.Add((request.Method, request.RequestUri!.PathAndQuery, request.Content is null ? null : await request.Content.ReadAsStringAsync(ct)));
+            if (Down) throw new HttpRequestException("connection refused");
+            if (request.RequestUri!.AbsolutePath == "/api/rules") return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Catalog) };
+            if (RejectProfile && request.Method == HttpMethod.Post) return new HttpResponseMessage(HttpStatusCode.BadRequest);
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = JsonContent.Create(new GraphDto("sys", [], [], new CoverageDto(0, 0, 0, 0), [], Health: "ok")),
@@ -45,10 +50,9 @@ public class ProfileEndpointsTests : IAsyncLifetime
         b.Services.AddCore("http://analysis");
         b.Services.RemoveAll<IProfileStore>();
         b.Services.AddSingleton<IProfileStore>(_store);
-        b.Services.RemoveAll<IRuleCatalogProvider>();
-        b.Services.AddSingleton<IRuleCatalogProvider>(new FakeCatalog(Catalog));
         b.Services.AddHttpClient<AnalysisClient>().ConfigurePrimaryHttpMessageHandler(() => _analysis);
         _app = b.Build();
+        _app.UseCrossSiteGuard();
         _app.MapEndpoints();
         await _app.StartAsync();
         _http = _app.GetTestClient();
@@ -172,5 +176,95 @@ public class ProfileEndpointsTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);                    // профиль не прочитан → разбор по умолчанию
         Assert.Equal(HttpMethod.Get, _analysis.Calls[^1].Method);
+    }
+
+    // ── ревью среза 2 ──
+
+    [Fact]
+    public async Task Created_response_points_to_the_new_resource()
+    {
+        var r = await _http.PostAsJsonAsync("/api/profile/configs", new ConfigManifestDto(null, "A", "a", 1, new ProfileDto("Standard")));
+        var cfg = (await r.Content.ReadFromJsonAsync<ConfigManifestDto>())!;
+
+        Assert.Equal($"/api/profile/configs/{cfg.Id}", r.Headers.Location!.OriginalString);
+    }
+
+    [Fact]
+    public async Task Analysis_down_gives_503_not_500()
+    {
+        _analysis.Down = true;
+
+        var create = await _http.PostAsJsonAsync("/api/profile/configs", new ConfigManifestDto(null, "A", "a", 1, new ProfileDto("Standard")));
+        var rules = await _http.GetAsync("/api/rules");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, create.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, rules.StatusCode);
+    }
+
+    [Fact]
+    public async Task Corrupt_store_gives_503_with_message_and_no_path()
+    {
+        _store.Throw = true;
+
+        var r = await _http.GetAsync("/api/profile/configs");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, r.StatusCode);
+        Assert.Contains("error", await r.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Profile_rejected_by_analysis_does_not_blank_the_map()
+    {
+        var cfg = (await (await _http.PostAsJsonAsync("/api/profile/configs",
+            new ConfigManifestDto(null, "A", "a", 1, new ProfileDto("Platform")))).Content.ReadFromJsonAsync<ConfigManifestDto>())!;
+        await _http.PutAsJsonAsync(ProfileUrl, new ProfileBindingDto(ConfigId: cfg.Id));
+        _analysis.RejectProfile = true;                                    // например, правило убрали из каталога после сохранения
+
+        var r = await _http.GetAsync("/api/system?path=" + Uri.EscapeDataString(Proj));
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);                     // карта есть
+        var g = (await r.Content.ReadFromJsonAsync<GraphDto>())!;
+        Assert.Contains(g.Degradations!, d => d.Contains("профиль"));      // и честно сказано, что профиль не применён
+        Assert.Equal(HttpMethod.Get, _analysis.Calls[^1].Method);
+    }
+
+    [Fact]
+    public async Task Put_without_body_is_400_and_empty_object_resets()
+    {
+        await _http.PutAsJsonAsync(ProfileUrl, new ProfileBindingDto(Level: "Simple"));
+
+        var none = await _http.PutAsync(ProfileUrl, new StringContent("null", System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, none.StatusCode);
+        Assert.Equal("Simple", (await _http.GetFromJsonAsync<ProfileForPathDto>(ProfileUrl))!.Effective.Level);   // не сброшено
+
+        var reset = await _http.PutAsJsonAsync(ProfileUrl, new ProfileBindingDto());
+        Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
+        Assert.Equal("Standard", (await _http.GetFromJsonAsync<ProfileForPathDto>(ProfileUrl))!.Effective.Level);
+    }
+
+    [Theory]
+    [InlineData("POST", "/api/profile/configs/lvl-standard/duplicate")]
+    [InlineData("PUT", "/api/profile?path=%2Ftmp%2Fx")]
+    [InlineData("DELETE", "/api/profile/configs/ghost")]
+    public async Task Cross_site_mutations_are_forbidden_but_same_site_and_plain_clients_pass(string method, string url)
+    {
+        using var cross = new HttpRequestMessage(new HttpMethod(method), url);
+        cross.Headers.Add("Sec-Fetch-Site", "cross-site");
+        using var same = new HttpRequestMessage(new HttpMethod(method), url);
+        same.Headers.Add("Sec-Fetch-Site", "same-site");                    // фронт на другом порту той же машины
+        using var plain = new HttpRequestMessage(new HttpMethod(method), url);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await _http.SendAsync(cross)).StatusCode);
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await _http.SendAsync(same)).StatusCode);
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await _http.SendAsync(plain)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Cross_site_reads_are_not_blocked_by_the_guard()
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/profile/configs");
+        req.Headers.Add("Sec-Fetch-Site", "cross-site");
+
+        Assert.Equal(HttpStatusCode.OK, (await _http.SendAsync(req)).StatusCode);   // чтение защищено same-origin политикой браузера
     }
 }
