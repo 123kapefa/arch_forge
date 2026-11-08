@@ -4,7 +4,7 @@
 
 Замысел — [`docs/VISION.md`](docs/VISION.md), дорога — [`docs/ROADMAP.md`](docs/ROADMAP.md), карта репозитория и правила — [`AGENTS.md`](AGENTS.md).
 
-**Статус: Фаза 1 «Видеть» — готова.** Разбор `путь → IR`, роли по convention-pack, дрейф, тип-граф, свой React-вьюер (drill по уровням, инспектор, импорты, линт-панель). Известные ограничения — в конце `docs/plan-phase-1.md`.
+**Статус (2026-11-08):** Фаза 1 «Видеть» выпущена в `main`. В `dev` (не выпущено) — Фаза 1.5 «Полный разбор» и большая часть Фазы 1.6 «Картина системы по средам»: карта микросервисов из docker-compose и кода (сервисы, БД, шина, внешние системы), среды dev/stage/prod, call-graph, детекторы проблем (общая БД, циклы, БД наружу, дрейф, нарушения слоёв), drill System → Service → Layer → Type. Что осталось — `docs/roadmap-epics.md`.
 
 ## Требования
 
@@ -32,18 +32,21 @@ ASPNETCORE_URLS=http://localhost:5200 \
 cd frontend && npm install && npm run dev
 ```
 
-Открыть **http://localhost:5173**, вставить путь к разбираемому .NET-сервису и нажать «Разобрать».
+Открыть **http://localhost:5173** и выбрать папку с проектом: одним сервисом или целой системой (папка с несколькими сервисами и `docker-compose*.yml`). Среда выбирается переключателем в топбаре (`?env=`).
+
+Свод правил проекта можно дополнить файлом `archforge.conventions.json` (или `.archforge/conventions.json`) в корне разбираемого проекта — пример и список секций в окне «Свод конвенций» в приложении.
 
 > Семантика (транзитивное наследование, точные рёбра) работает, когда у таргета есть собранный `bin/`. Без него — синтаксический «пол» (`docs/adr/0008`).
 
 ## Проверки
 
 ```bash
-# Бэк — сборка и тесты всего решения
+# Бэк — сборка и тесты всего решения (из корня нужно указывать решение явно)
 dotnet build backend/ArchForge.slnx
-dotnet test backend/services/Analysis/tests/ArchForge.Analysis.Tests
-dotnet test backend/services/Map/tests/ArchForge.Map.Tests
+dotnet test backend/ArchForge.slnx
 ```
+
+> Два теста Analysis (`Reproduces_spike_coverage_on_auth_service`, `Semantic_pack_leaves_no_unknown_on_auth_service`) читают локальный репозиторий `auth_service` (путь — `ARCHFORGE_AUTH_SERVICE`) и сейчас красные из-за изменений в нём; без этого репозитория они пропускаются. Подробности — `docs/agents/known-issues.md`.
 
 ```bash
 # Фронт
