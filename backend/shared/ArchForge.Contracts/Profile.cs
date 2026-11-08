@@ -64,7 +64,33 @@ public sealed record RuleDto(
     string Category,
     string Title,
     string Note,
-    IReadOnlyDictionary<string, string?> Defaults);
+    IReadOnlyDictionary<string, string?> Defaults,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RuleExampleDto? Example = null);
+
+/// <summary>Пример «плохо / хорошо» для правила: строки кода (без привязки к проекту).</summary>
+public sealed record RuleExampleDto(IReadOnlyList<string> Bad, IReadOnlyList<string> Good);
+
+/// <summary>Сколько находок даёт правило на проекте и проверяется ли оно (false — выключено профилем).</summary>
+public sealed record RuleImpactDto(int Count, bool Enabled);
+
+/// <summary>Итог разбора проекта по профилю: находки по строгости и по правилам.</summary>
+public sealed record ImpactSummaryDto(int Errors, int Warnings, int Infos, IReadOnlyDictionary<string, RuleImpactDto> Rules);
+
+/// <summary>Совет об уровне проекта по его коду. Только совет: выбор всегда за пользователем.</summary>
+public sealed record LevelHintDto(string Level, IReadOnlyList<string> Reasons);
+
+/// <summary>Предпросмотр влияния профиля (adr/0012): что изменится в находках, совет уровня и сколько типов встречается
+/// у маркеров и суффиксов словаря.</summary>
+/// <param name="Current">Находки по проверяемому профилю.</param>
+/// <param name="Baseline">Находки по чистому уровню того же профиля (без отличий) — для сравнения.</param>
+/// <param name="MarkerCounts">маркер → число типов проекта, у которых он есть среди базовых типов.</param>
+/// <param name="SuffixCounts">суффикс имени → число типов проекта с таким окончанием.</param>
+public sealed record PreviewDto(
+    ImpactSummaryDto Current,
+    ImpactSummaryDto Baseline,
+    LevelHintDto Hint,
+    IReadOnlyDictionary<string, int> MarkerCounts,
+    IReadOnlyDictionary<string, int> SuffixCounts);
 
 public sealed record RuleCatalogDto(string Version, IReadOnlyList<RuleDto> Rules);
 
@@ -86,7 +112,8 @@ public static class ProfileValidator
     public const int MaxRoles = 64;
     public const int MaxNameLength = 64;
     public const int MaxItemLength = 128;
-    public const int MaxListSize = 64;
+    public const int MaxMarkers = 32;      // маркеры и запасные признаки одной роли
+    public const int MaxSuffixes = 16;     // суффиксы одной роли: каждый — отдельное «ожидание» для КАЖДОГО типа проекта, поэтому лимит строже
     public const int MaxNamingList = 32;
     public const int MaxNamingItemLength = 64;
     public const int MaxConfigNameLength = 100;
@@ -140,9 +167,9 @@ public static class ProfileValidator
             {
                 if (string.IsNullOrWhiteSpace(role) || role.Length > MaxNameLength) errors.Add($"имя роли «{Trim(role)}» должно быть от 1 до {MaxNameLength} символов");
                 if (v is null) { errors.Add($"роль «{Trim(role)}»: значение не задано"); continue; }
-                CheckList($"роль «{Trim(role)}», маркеры", v.Markers, errors);
-                CheckList($"роль «{Trim(role)}», запасные признаки", v.Fallback, errors);
-                CheckList($"роль «{Trim(role)}», суффиксы", v.Suffixes, errors);
+                CheckList($"роль «{Trim(role)}», маркеры", v.Markers, MaxMarkers, errors);
+                CheckList($"роль «{Trim(role)}», запасные признаки", v.Fallback, MaxMarkers, errors);
+                CheckList($"роль «{Trim(role)}», суффиксы", v.Suffixes, MaxSuffixes, errors);
             }
         }
         return errors;
@@ -161,11 +188,11 @@ public static class ProfileValidator
         return errors;
     }
 
-    private static void CheckList(string what, IReadOnlyList<string>? list, List<string> errors)
+    private static void CheckList(string what, IReadOnlyList<string>? list, int max, List<string> errors)
     {
         if (list is null) return;
-        if (list.Count > MaxListSize) errors.Add($"{what}: не больше {MaxListSize} записей");
-        if (list.Take(MaxListSize).Any(s => string.IsNullOrWhiteSpace(s) || s.Length > MaxItemLength))
+        if (list.Count > max) errors.Add($"{what}: не больше {max} записей");
+        if (list.Take(max).Any(s => string.IsNullOrWhiteSpace(s) || s.Length > MaxItemLength))
             errors.Add($"{what}: записи от 1 до {MaxItemLength} символов");
     }
 

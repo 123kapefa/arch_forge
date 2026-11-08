@@ -45,12 +45,26 @@ export interface ConfigManifest {
 }
 export interface Binding { configId?: string | null; level?: string | null }
 export interface ProfileForPath { binding: Binding; config?: ConfigManifest | null; effective: Profile }
+export interface RuleExample { bad: string[]; good: string[] }
 export interface RuleDef {
   id: string;
   category: string;
   title: string;
   note: string;
   defaults: Record<string, string | null>;   // уровень → строгость; null = «как решает сам детектор»
+  example?: RuleExample | null;
+}
+
+// Предпросмотр влияния профиля (ответ POST /api/profile/preview).
+export interface RuleImpact { count: number; enabled: boolean }
+export interface ImpactSummary { errors: number; warnings: number; infos: number; rules: Record<string, RuleImpact> }
+export interface LevelHint { level: string; reasons: string[] }
+export interface Preview {
+  current: ImpactSummary;
+  baseline: ImpactSummary;        // чистый уровень того же профиля, без отличий
+  hint: LevelHint;
+  markerCounts: Record<string, number>;
+  suffixCounts: Record<string, number>;
 }
 export interface RuleCatalog { version: string; rules: RuleDef[] }
 export interface VocabularyDefaults {
@@ -72,9 +86,10 @@ export class ProfileApiError extends Error {
 }
 
 const TIMEOUT_MS = 20_000;
+const PREVIEW_TIMEOUT_MS = 120_000;   // первый предпросмотр читает весь код проекта; дальше идёт из кеша
 
-async function request<T>(url: string, init?: RequestInit, signal?: AbortSignal): Promise<T> {
-  const res = await fetchWithTimeout(url, TIMEOUT_MS, signal, init);
+async function request<T>(url: string, init?: RequestInit, signal?: AbortSignal, timeoutMs = TIMEOUT_MS): Promise<T> {
+  const res = await fetchWithTimeout(url, timeoutMs, signal, init);
   if (!res.ok) {
     let errors: string[] = [];
     try {
@@ -101,6 +116,8 @@ export const deleteConfig = (id: string) =>
   request<void>(`/api/profile/configs/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const duplicateConfig = (id: string, author?: string) =>
   request<ConfigManifest>(`/api/profile/configs/${encodeURIComponent(id)}/duplicate${author ? `?author=${encodeURIComponent(author)}` : ''}`, { method: 'POST' });
+export const fetchPreview = (path: string, profile: Profile, signal?: AbortSignal) =>
+  request<Preview>(`/api/profile/preview?path=${encodeURIComponent(path)}`, { method: 'POST', ...body(profile) }, signal, PREVIEW_TIMEOUT_MS);
 export const fetchProjectProfile = (path: string, signal?: AbortSignal) =>
   request<ProfileForPath>(`/api/profile?path=${encodeURIComponent(path)}`, undefined, signal);
 export const bindProject = (path: string, binding: Binding) =>
@@ -384,4 +401,44 @@ export function parseImport(text: string, author = 'local'): ImportResult {
   if (!profile) return { ok: false, error: 'Не найден профиль: нужно поле profile.level или level' };
   const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim() : 'Импортированная конфигурация';
   return { ok: true, draft: { id: null, name: name.slice(0, 100), author, version: 0, profile, kind: 'own' } };
+}
+
+// ── предпросмотр: чистая логика ──
+
+export const impactTotal = (s: ImpactSummary): number => s.errors + s.warnings + s.infos;
+
+/** Сколько находок даёт правило и проверяется ли оно. Нет данных (предпросмотр не пришёл) → null. */
+export function ruleImpact(p: Preview | null, current: boolean, ruleId: string): RuleImpact | null {
+  return (current ? p?.current : p?.baseline)?.rules[ruleId] ?? null;
+}
+
+/** Разница находок с чистым уровнем: положительная — профиль добавляет находки. */
+export function impactDelta(p: Preview): number { return impactTotal(p.current) - impactTotal(p.baseline); }
+
+/** Роль: сколько типов с её суффиксами в проекте и сколько из них узнано по маркерам роли. Нет данных → null. */
+export function roleCoverage(p: Preview | null, markers: string[], suffixes: string[]): { total: number; marked: number } | null {
+  if (!p || !suffixes.length) return null;
+  const total = suffixes.reduce((n, s) => n + (p.suffixCounts[s] ?? 0), 0);
+  const marked = Math.min(total, markers.reduce((n, m) => n + (p.markerCounts[m] ?? 0), 0));
+  return { total, marked };
+}
+
+/** Живой пример порога: на выдуманных данных видно, какие строки попадают под правило при выбранном значении. */
+export interface SampleRow { label: string; value: string; hit: boolean }
+export function paramSample(ruleId: string, key: ParamSpec['key'], value: number): SampleRow[] | null {
+  if (ruleId === 'service-cycle' && key === 'serviceCycleMinConfidence') {
+    return [
+      { label: 'orders → billing → orders', c: 0.95 }, { label: 'courses → users → courses', c: 0.85 },
+      { label: 'notify → orders → notify', c: 0.7 }, { label: 'search → courses → search', c: 0.55 },
+    ].map((r) => ({ label: r.label, value: r.c.toFixed(2), hit: r.c >= value - 1e-9 }));
+  }
+  if (ruleId === 'dto-mapping' && key === 'dtoMinSites') {
+    return [{ label: 'UserDto', n: 7 }, { label: 'OrderDto', n: 4 }, { label: 'CourseDto', n: 3 }, { label: 'LessonDto', n: 2 }]
+      .map((r) => ({ label: r.label, value: `${r.n} мест`, hit: r.n >= value }));
+  }
+  if (ruleId === 'dto-mapping' && key === 'dtoMinFiles') {
+    return [{ label: 'UserDto', n: 5 }, { label: 'OrderDto', n: 3 }, { label: 'CourseDto', n: 1 }]
+      .map((r) => ({ label: r.label, value: `${r.n} файл.`, hit: r.n >= value }));
+  }
+  return null;
 }

@@ -232,7 +232,7 @@ public class ProfileParamsTests
         var many = Enumerable.Range(0, 200).Select(i => "M" + i).ToList();
         var v = new RoleVocabulary([" A ", "A", "", new string('x', 300), .. many], [], []).Sanitized();
 
-        Assert.Equal(64, v.Markers.Count);
+        Assert.Equal(32, v.Markers.Count);   // маркеры не больше 32 на роль
         Assert.Equal("A", v.Markers[0]);
         Assert.DoesNotContain(v.Markers, m => m.Length > 128 || m.Length == 0);
     }

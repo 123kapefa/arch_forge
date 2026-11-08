@@ -2,13 +2,13 @@ import { Component, type ReactNode, useCallback, useEffect, useMemo, useRef, use
 import { Icon } from './Icon';
 import {
   type ConfigManifest, type Level, type Profile, type RuleCatalog, type RuleDef, type RuleFilter, type Strictness,
-  type VocabularyDefaults, type ProfileParams, type NamingKey, type VocabKey, type ProfileForPath,
+  type VocabularyDefaults, type ProfileParams, type Preview, type NamingKey, type VocabKey, type ProfileForPath,
   LEVELS, LEVEL_TITLE, STRICTNESS, STRICTNESS_TITLE, CATEGORY_TITLE, DEFAULT_LEVEL, RULE_PARAMS, NAMING_KEYS, NAMING_TITLE,
   ProfileApiError, addItem, removeItem, bindProject, changedRuleCount, createConfig, deleteConfig, effectiveStrictness,
   exportManifest, fetchProjectProfile, fetchRules, fetchVocabulary, filterRules, groupByCategory, isNamingChanged,
   isRoleChanged, isRuleChanged, levelDefault, listConfigs, namingList, paramValue, parseImport, profilesEqual, resetCategory,
   resetNaming, resetRole, resetRule, resetToLevel, roleList, updateConfig, withLevel, withNaming, withParam, withRoleList,
-  withStrictness,
+  withStrictness, fetchPreview, impactDelta, impactTotal, ruleImpact, roleCoverage, paramSample,
 } from './profile';
 
 // Окно «Профиль проекта» (adr/0012, срез 3): уровень, конфигурации, строгость правил, словарь ролей, имена сервисов.
@@ -81,6 +81,10 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
   const [pending, setPending] = useState<(() => void) | null>(null);   // действие, ждущее подтверждения «отбросить правки»
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [preview, setPreview] = useState<Preview | null>(null);      // влияние профиля на проект (последний удачный расчёт)
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const [previewTick, setPreviewTick] = useState(0);                    // «Повторить» после ошибки
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // ── загрузка ──
@@ -115,6 +119,26 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
   const profile: Profile = working?.profile ?? { level: DEFAULT_LEVEL };
   const defaults: ProfileParams = vocab?.params ?? {};
   const rules = useMemo(() => catalog?.rules ?? [], [catalog]);
+
+  // Предпросмотр влияния: пересчёт после паузы в правках. Предыдущий запрос рвём (Analysis прекращает работу).
+  // Код проекта читается один раз, дальше Analysis отдаёт его из кеша — правка стоит только детекторов.
+  const profileKey = JSON.stringify(profile);
+  useEffect(() => {
+    if (!catalog) return;
+    const ctrl = new AbortController();
+    setPreviewBusy(true); setPreviewErr(null);
+    const timer = setTimeout(async () => {
+      try {
+        const pv = await fetchPreview(path, JSON.parse(profileKey) as Profile, ctrl.signal);
+        if (!ctrl.signal.aborted) { setPreview(pv); setPreviewErr(null); }
+      } catch (e) {
+        if (!ctrl.signal.aborted) setPreviewErr(messageOf(e)[0]);
+      } finally {
+        if (!ctrl.signal.aborted) setPreviewBusy(false);
+      }
+    }, 450);
+    return () => { clearTimeout(timer); ctrl.abort(); };
+  }, [path, profileKey, catalog, previewTick]);
 
   /** Правка профиля. Встроенный уровень не трогаем: первая правка создаёт несохранённую копию. */
   const edit = (fn: (p: Profile) => Profile) => {
@@ -301,6 +325,18 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
                 </>}
               </div>
 
+              <ImpactPanel preview={preview} busy={previewBusy} error={previewErr} level={profile.level} onRetry={() => setPreviewTick((t) => t + 1)} />
+              {preview && preview.hint.level !== profile.level && (
+                <div className="pv__hint">
+                  <span>По коду проекта похоже на <b>{preview.hint.level}</b>: {preview.hint.reasons.join('; ')}. Это совет, выбор за вами.</span>
+                  <button className="pv__btn" onClick={() => readOnly ? selectConfig(`lvl-${preview.hint.level.toLowerCase()}`) : edit((p) => withLevel(p, preview.hint.level))}>
+                    Выбрать {preview.hint.level}</button>
+                </div>
+              )}
+              {preview && preview.hint.level === profile.level && (
+                <div className="pv__hint pv__hint--ok">По коду проекта уровень <b>{profile.level}</b> подходит: {preview.hint.reasons.join('; ')}.</div>
+              )}
+
               <div className="pv__tabs" role="tablist">
                 <button role="tab" aria-selected={tab === 'rules'} className={tab === 'rules' ? 'on' : ''} onClick={() => setTab('rules')}>
                   Правила{nChanged ? ` · изменено ${nChanged}` : ''}</button>
@@ -322,12 +358,12 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
 
               {tab === 'rules' ? (
                 <RulesTab rules={shownRules} all={rules} profile={profile} paramDefaults={defaults} q={q} setQ={setQ} filter={filter} setFilter={setFilter}
-                  nChanged={nChanged} selected={activeRule?.id ?? null} onSelect={setSelRule}
+                  nChanged={nChanged} preview={preview} selected={activeRule?.id ?? null} onSelect={setSelRule}
                   onSet={(r, s) => { setSelRule(r.id); edit((p) => withStrictness(p, r, s)); }}
                   onReset={(r) => edit((p) => resetRule(p, r))}
                   onResetCategory={(cat) => edit((p) => resetCategory(p, rules, cat))} canReset={!readOnly} />
               ) : (
-                <DictTab profile={profile} vocab={vocab} selRole={selRole ?? sortedRoles(vocab)[0] ?? null} onSelect={setSelRole}
+                <DictTab profile={profile} vocab={vocab} preview={preview} selRole={selRole ?? sortedRoles(vocab)[0] ?? null} onSelect={setSelRole}
                   onRole={(role, key, list) => { setSelRole(role); edit((p) => withRoleList(p, vocab, role, key, list)); }}
                   onResetRole={(role) => edit((p) => resetRole(p, role))}
                   onNaming={(key, list) => edit((p) => withNaming(p, vocab, key, list))}
@@ -338,7 +374,7 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
             <section className="pv__right">
               {tab === 'rules' && activeRule
                 ? <RuleDetails rule={activeRule} profile={profile} vocab={vocab} onParam={(key, v) => edit((p) => withParam(p, key, v, defaults))} />
-                : <DictHelp profile={profile} vocab={vocab} role={selRole ?? sortedRoles(vocab)[0] ?? null} />}
+                : <DictHelp profile={profile} vocab={vocab} role={selRole ?? sortedRoles(vocab)[0] ?? null} preview={preview} />}
             </section>
           </div>
         )}
@@ -411,7 +447,7 @@ function StrictnessControl({ rule, profile, onSet }: { rule: RuleDef; profile: P
 
 interface RulesTabProps {
   rules: RuleDef[]; all: RuleDef[]; profile: Profile; paramDefaults: ProfileParams;
-  q: string; setQ: (v: string) => void; filter: RuleFilter; setFilter: (f: RuleFilter) => void; nChanged: number;
+  q: string; setQ: (v: string) => void; filter: RuleFilter; setFilter: (f: RuleFilter) => void; nChanged: number; preview: Preview | null;
   selected: string | null; onSelect: (id: string) => void; onSet: (r: RuleDef, s: Strictness | null) => void;
   onReset: (r: RuleDef) => void; onResetCategory: (cat: string) => void; canReset: boolean;
 }
@@ -447,6 +483,7 @@ function RulesTab(p: RulesTabProps) {
                     <span className={`pv__src${changed ? ' pv__src--cfg' : ''}`}>{changed ? 'ваша конфигурация' : `уровень ${p.profile.level}`}</span>
                     {e.value === 'Off' ? <span>не проверяется на вашем уровне</span>
                       : e.value === null ? <span>как решает само правило</span> : null}
+                    <RuleFindings preview={p.preview} ruleId={r.id} />
                   </div>
                 </div>
                 <div className="pv__rule-ctl" onClick={(ev) => ev.stopPropagation()}>
@@ -459,6 +496,43 @@ function RulesTab(p: RulesTabProps) {
           })}
         </section>
       ))}
+    </div>
+  );
+}
+
+function RuleFindings({ preview, ruleId }: { preview: Preview | null; ruleId: string }) {
+  const now = ruleImpact(preview, true, ruleId);
+  const was = ruleImpact(preview, false, ruleId);
+  if (!now || !now.enabled) return null;
+  const changed = was && was.count !== now.count;
+  return <span className="pv__found" title="Сколько находок даёт правило на этом проекте">найдено: <b>{now.count}</b>{changed ? <span className="pv__muted"> (на уровне без правок: {was.count})</span> : null}</span>;
+}
+
+function CodeBlock({ lines, kind }: { lines: string[]; kind: 'bad' | 'good' }) {
+  return <pre className={`pv__code pv__code--${kind}`}>{lines.map((l, i) => <span key={i} className="pv__code-l">{l}{'\n'}</span>)}</pre>;
+}
+
+/** Влияние профиля на проект одной полосой: находки по строгости и разница с уровнем без правок. Всегда на виду. */
+function ImpactPanel({ preview, busy, error, onRetry, level }: { preview: Preview | null; busy: boolean; error: string | null; onRetry: () => void; level: string }) {
+  const off = preview ? Object.values(preview.current.rules).filter((r) => !r.enabled).length : 0;
+  const d = preview ? impactDelta(preview) : 0;
+  return (
+    <div className="pv__impact" aria-busy={busy} aria-label="Влияние на проект">
+      <span className="pv__impact-t">Влияние на проект</span>
+      {preview && (
+        <span className={`pv__impact-b${busy ? ' pv__dim' : ''}`}>
+          <b className="pv__big">{impactTotal(preview.current)}</b> <span className="pv__muted">находок</span>
+          <span className="pv__muted" title={`На уровне ${level} без правок: ${impactTotal(preview.baseline)}`}>
+            {d === 0 ? ` · как на уровне ${level}` : ` · ${d > 0 ? '+' : '−'}${Math.abs(d)} к уровню ${level} (было ${impactTotal(preview.baseline)})`}</span>
+          <span className="pv__pill pv__pill-Error">ошибок {preview.current.errors}</span>
+          <span className="pv__pill pv__pill-Warning">предупр. {preview.current.warnings}</span>
+          <span className="pv__pill pv__pill-Info">инфо {preview.current.infos}</span>
+          {off > 0 && <span className="pv__pill pv__pill-Off">выкл. правил {off}</span>}
+        </span>
+      )}
+      {busy && <span className="pv__muted">{preview ? 'пересчитываю…' : 'читаю код проекта — первый раз это занимает время, дальше быстро…'}</span>}
+      {error && <span className="pv__err" role="alert">{error} <button className="pv__link" onClick={onRetry}>Повторить</button></span>}
+      {!preview && !busy && !error && <span className="pv__muted">нет данных</span>}
     </div>
   );
 }
@@ -480,13 +554,26 @@ function RuleDetails({ rule, profile, vocab, onParam }: { rule: RuleDef; profile
       </tbody></table>
       <div className="pv__verdict">Сейчас: {cur.value ? <span className={`pv__pill pv__pill-${cur.value}`}>{STRICTNESS_TITLE[cur.value]}</span> : <span className="pv__muted">как решает правило</span>}
         {cur.overridden && def !== cur.value && <span className="pv__muted"> · по умолчанию {def ? STRICTNESS_TITLE[def] : 'как решает правило'}</span>}</div>
+      {rule.example && (
+        <>
+          <div className="pv__lbl">Плохо</div><CodeBlock lines={rule.example.bad} kind="bad" />
+          <div className="pv__lbl">Хорошо</div><CodeBlock lines={rule.example.good} kind="good" />
+          <div className="pv__muted">{cur.value === 'Off' ? 'Правило выключено: такой код не даст находок.' : cur.value ? `Такой код даст находку: ${STRICTNESS_TITLE[cur.value]}.` : 'Серьёзность находки определяет само правило.'}</div>
+        </>
+      )}
       {(RULE_PARAMS[rule.id] ?? []).map((s) => {
         const v = paramValue(profile, s.key, vocab.params);
+        const sample = paramSample(rule.id, s.key, v);
         return (
           <div key={s.key} className="pv__param">
             <div className="pv__param-row"><label htmlFor={`pv-${s.key}`}>{s.label}</label><b className="pv__mono">{v}</b></div>
             <input id={`pv-${s.key}`} type="range" min={s.min} max={s.max} step={s.step} value={v} onChange={(e) => onParam(s.key, Number(e.target.value))} />
             <div className="pv__muted">По умолчанию {vocab.params[s.key]}. {s.hint}</div>
+            {sample && (
+              <div className="pv__sample" aria-label="Пример: что попадёт под правило">
+                {sample.map((r) => <div key={r.label} className={`pv__sample-row${r.hit ? ' pv__sample-row--hit' : ''}`}><span>{r.label}</span><span className="pv__mono">{r.value}</span><span>{r.hit ? 'находка' : 'пропуск'}</span></div>)}
+              </div>
+            )}
           </div>
         );
       })}
@@ -494,13 +581,14 @@ function RuleDetails({ rule, profile, vocab, onParam }: { rule: RuleDef; profile
   );
 }
 
-function Chips({ list, onChange, changed, label }: { list: string[]; onChange: (l: string[]) => void; changed?: boolean; label: string }) {
+function Chips({ list, onChange, changed, label, counts }: { list: string[]; onChange: (l: string[]) => void; changed?: boolean; label: string; counts?: Record<string, number> | null }) {
   const [v, setV] = useState('');
   const add = () => { const n = addItem(list, v); if (n !== list) onChange(n); setV(''); };
   return (
     <div className="pv__tags">
       {list.map((m, i) => (
-        <span key={`${m}-${i}`} className={`pv__tag${changed ? ' pv__tag--chg' : ''}`}>{m}
+        <span key={`${m}-${i}`} className={`pv__tag${changed ? ' pv__tag--chg' : ''}${counts && !counts[m] ? ' pv__tag--zero' : ''}`}
+          title={counts ? (counts[m] ? `Типов с ${m} в проекте: ${counts[m]}` : `В проекте нет типов с ${m}`) : undefined}>{m}{counts ? <i className="pv__tag-n">{counts[m] ?? 0}</i> : null}
           <button title="Убрать" aria-label={`Убрать ${m}`} onClick={() => onChange(removeItem(list, i))}>×</button></span>
       ))}
       <input className="pv__add" placeholder="+ добавить" aria-label={`Добавить: ${label}`} value={v} maxLength={64}
@@ -512,24 +600,26 @@ function Chips({ list, onChange, changed, label }: { list: string[]; onChange: (
 const VOCAB_TITLE: Record<VocabKey, string> = { markers: 'Маркер (уверенно)', fallback: 'Запасной (эвристика)', suffixes: 'Суффикс имени' };
 
 function DictTab(p: {
-  profile: Profile; vocab: VocabularyDefaults; selRole: string | null; onSelect: (r: string) => void;
+  profile: Profile; vocab: VocabularyDefaults; preview: Preview | null; selRole: string | null; onSelect: (r: string) => void;
   onRole: (role: string, key: VocabKey, list: string[]) => void; onResetRole: (role: string) => void;
   onNaming: (key: NamingKey, list: string[]) => void; onResetNaming: (key: NamingKey) => void; canReset: boolean;
 }) {
   const roles = sortedRoles(p.vocab);
   return (
     <div className="pv__body">
-      <div className="pv__note">Здесь вы говорите, как называются вещи в вашем коде: правила смотрят на роли, а не на имена. Пустой список возвращает встроенное значение. Оранжевая рамка — отличие от встроенного.</div>
+      <div className="pv__note">Здесь вы говорите, как называются вещи в вашем коде: правила смотрят на роли, а не на имена. Пустой список возвращает встроенное значение. Жёлтый фон — отличие от встроенного. Число у маркера — сколько типов проекта его используют; оранжевая рамка — в проекте такого маркера нет.</div>
       {roles.map((role) => {
         const ch = isRoleChanged(p.profile, p.vocab, role);
+        const cov = roleCoverage(p.preview, roleList(p.profile, p.vocab, role, 'markers'), roleList(p.profile, p.vocab, role, 'suffixes'));
         return (
           <div key={role} className={`pv__role${p.selRole === role ? ' pv__role--sel' : ''}`} onClick={() => p.onSelect(role)} onFocus={() => p.onSelect(role)}>
-            <div className="pv__role-h"><b>{role}</b>{ch && <span className="pv__src pv__src--cfg">изменено</span>}<span className="pv__spacer" />
+            <div className="pv__role-h"><b>{role}</b>{ch && <span className="pv__src pv__src--cfg">изменено</span>}
+              {cov && cov.total > 0 && <span className={`pv__muted${cov.marked < cov.total ? ' pv__muted--warn' : ''}`} title="Типов с суффиксами роли и сколько из них реализуют её маркер">узнано по маркеру: {cov.marked} из {cov.total}</span>}<span className="pv__spacer" />
               <button className="pv__rst" title="Сбросить роль" aria-label={`Сбросить роль ${role}`} disabled={!ch || !p.canReset} onClick={(e) => { e.stopPropagation(); p.onResetRole(role); }}><Icon name="reset" size={13} /></button></div>
             {(['markers', 'fallback', 'suffixes'] as VocabKey[]).map((k) => (
               <div key={k} className="pv__fld"><div className="pv__k">{VOCAB_TITLE[k]}</div>
                 <Chips label={`${role}, ${VOCAB_TITLE[k]}`} list={roleList(p.profile, p.vocab, role, k)} changed={!!p.profile.vocabulary?.[role]?.[k]?.length}
-                  onChange={(l) => p.onRole(role, k, l)} /></div>
+                  counts={k === 'suffixes' ? null : p.preview?.markerCounts} onChange={(l) => p.onRole(role, k, l)} /></div>
             ))}
           </div>
         );
@@ -550,7 +640,7 @@ function DictTab(p: {
   );
 }
 
-function DictHelp({ profile, vocab, role }: { profile: Profile; vocab: VocabularyDefaults; role: string | null }) {
+function DictHelp({ profile, vocab, role, preview }: { profile: Profile; vocab: VocabularyDefaults; role: string | null; preview: Preview | null }) {
   if (!role) return <div className="pv__muted">Выберите роль.</div>;
   const markers = roleList(profile, vocab, role, 'markers');
   const suffixes = roleList(profile, vocab, role, 'suffixes');
@@ -563,7 +653,7 @@ function DictHelp({ profile, vocab, role }: { profile: Profile; vocab: Vocabular
         ? <ul className="pv__list">{suffixes.map((s) => <li key={s}>тип с суффиксом <code>*{s}</code> должен реализовывать <code>{markers.join(' / ')}</code>; иначе — расхождение со сводом</li>)}</ul>
         : <div className="pv__muted">Для этой роли нет пары «суффикс → маркер»: она узнаётся по маркеру или запасному признаку, ожидание не проверяется.</div>}
       <div className="pv__lbl">Откуда значения</div>
-      <div className="pv__muted">Встроенный свод → этот профиль → файл <code>archforge.conventions.json</code> в проекте (он сильнее всех). Число найденных в проекте типов появится позже.</div>
+      <div className="pv__muted">Встроенный свод → этот профиль → файл <code>archforge.conventions.json</code> в проекте (он сильнее всех).{preview ? ' Числа у маркеров и «узнано по маркеру» посчитаны по коду проекта.' : ''}</div>
     </div>
   );
 }

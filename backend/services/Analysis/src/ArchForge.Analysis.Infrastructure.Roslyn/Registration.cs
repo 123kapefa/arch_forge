@@ -10,12 +10,16 @@ public static class Registration
         // Семантика поверх синтаксического пола (adr/0008): ITypeSource = семантика, floor — фолбэк.
         // CreateInstance, а не new: контейнер сам подставит ILogger — иначе лог деградации был бы NullLogger.
         services.AddSingleton<RoslynTypeSource>();
-        services.AddSingleton<ITypeSource>(sp =>
-            ActivatorUtilities.CreateInstance<RoslynSemanticTypeSource>(sp, sp.GetRequiredService<RoslynTypeSource>()));
+        // Дорогие источники обёрнуты кешем по отпечатку дерева (предпросмотр влияния профиля не читает код заново).
+        services.AddSingleton<ScanCache>();
+        services.AddSingleton<IScanCacheControl>(sp => sp.GetRequiredService<ScanCache>());   // «Пере-анализировать» сбрасывает кеш
+        services.AddSingleton<ITypeSource>(sp => new CachingTypeSource(
+            ActivatorUtilities.CreateInstance<RoslynSemanticTypeSource>(sp, sp.GetRequiredService<RoslynTypeSource>()),
+            sp.GetRequiredService<ScanCache>()));
         services.AddSingleton<IImportSource, CsprojImportSource>();
-        services.AddSingleton<IConstructionSource, RoslynConstructionSource>(); // ось usage-графа (пока источник; потребитель — детектор далее)
-        services.AddSingleton<IEndpointSource, RoslynMinimalApiSource>();        // minimal-API эндпоинты для L1 (#71)
-        services.AddSingleton<IHttpCallSource, RoslynHttpCallSource>();          // исходящие http-вызовы → call-graph (E3.1)
+        services.AddSingleton<IConstructionSource>(sp => new CachingConstructionSource(new RoslynConstructionSource(), sp.GetRequiredService<ScanCache>()));
+        services.AddSingleton<IEndpointSource>(sp => new CachingEndpointSource(new RoslynMinimalApiSource(), sp.GetRequiredService<ScanCache>()));
+        services.AddSingleton<IHttpCallSource>(sp => new CachingHttpCallSource(new RoslynHttpCallSource(), sp.GetRequiredService<ScanCache>()));
         return services;
     }
 }

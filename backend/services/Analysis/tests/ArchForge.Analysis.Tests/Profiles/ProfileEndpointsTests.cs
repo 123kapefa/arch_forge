@@ -110,5 +110,52 @@ public class ProfileEndpointsTests : IAsyncLifetime
         Assert.Equal(0.8, v.Params.ServiceCycleMinConfidence);
         Assert.Equal(3, v.Params.DtoMinSites);
     }
+
+    // ── предпросмотр (#127) ──
+
+    [Fact]
+    public async Task Rules_catalog_carries_examples()
+    {
+        var dto = (await _http.GetFromJsonAsync<RuleCatalogDto>("/api/rules"))!;
+
+        Assert.All(dto.Rules, r => Assert.True(r.Example is { Bad.Count: > 0, Good.Count: > 0 }, r.Id));
+    }
+
+    [Fact]
+    public async Task Preview_returns_impact_for_valid_profile()
+    {
+        var dir = TempDir();
+
+        var r = await _http.PostAsJsonAsync($"/api/system/preview?path={Uri.EscapeDataString(dir)}",
+            new ProfileDto("Simple", new Dictionary<string, string> { ["drift"] = "Warning" }));
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        var pv = (await r.Content.ReadFromJsonAsync<PreviewDto>())!;
+        Assert.True(pv.Current.Rules["drift"].Enabled);               // переопределение сильнее умолчания Simple
+        Assert.NotNull(pv.Hint.Level);
+    }
+
+    [Fact]
+    public async Task Preview_rejects_invalid_profile_and_missing_path_and_empty_body()
+    {
+        var dir = TempDir();
+
+        var bad = await _http.PostAsJsonAsync($"/api/system/preview?path={Uri.EscapeDataString(dir)}", new ProfileDto("Huge"));
+        var nopath = await _http.PostAsJsonAsync("/api/system/preview?path=%2Fno%2Fsuch%2Fdir_archforge", new ProfileDto("Standard"));
+        var nobody = await _http.PostAsJsonAsync<ProfileDto?>($"/api/system/preview?path={Uri.EscapeDataString(dir)}", null);
+
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, nopath.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, nobody.StatusCode);
+    }
+
+    [Fact]
+    public async Task System_accepts_the_refresh_flag_on_get_and_post()
+    {
+        var dir = TempDir();
+
+        Assert.Equal(HttpStatusCode.OK, (await _http.GetAsync($"/api/system?path={Uri.EscapeDataString(dir)}&refresh=true")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _http.PostAsJsonAsync($"/api/system?path={Uri.EscapeDataString(dir)}&refresh=true", new ProfileDto("Standard"))).StatusCode);
+    }
 }
 

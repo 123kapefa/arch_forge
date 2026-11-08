@@ -4,7 +4,7 @@ import {
   levelDefault, effectiveStrictness, withStrictness, withParam, paramValue, isRuleChanged, changedRuleCount,
   resetRule, resetCategory, resetToLevel, withLevel, roleList, isRoleChanged, withRoleList, resetRole,
   namingList, isNamingChanged, withNaming, resetNaming, addItem, removeItem, profilesEqual, filterRules, groupByCategory,
-  exportManifest, parseImport, sanitizeProfile, ProfileApiError, createConfig, updateConfig, bindProject, fetchProjectProfile,
+  exportManifest, parseImport, sanitizeProfile, impactTotal, ruleImpact, impactDelta, roleCoverage, paramSample, fetchPreview, type Preview, ProfileApiError, createConfig, updateConfig, bindProject, fetchProjectProfile,
 } from './profile';
 
 const rule = (id: string, category: string, defaults: Record<string, string | null>, title = id): RuleDef =>
@@ -301,6 +301,62 @@ describe('санитизация импорта (чужой JSON не роняе
   it('parseImport отдаёт только очищенный профиль', () => {
     const r = parseImport('{"profile":{"level":"Standard","vocabulary":{"Command":{"markers":"x"}}}}');
     expect(r.ok && r.draft.profile).toEqual({ level: 'Standard' });
+  });
+});
+
+describe('предпросмотр влияния', () => {
+  const sum = (e: number, w: number, i: number, rules: Record<string, { count: number; enabled: boolean }> = {}) => ({ errors: e, warnings: w, infos: i, rules });
+  const PV: Preview = {
+    current: sum(1, 2, 3, { drift: { count: 3, enabled: true }, 'dto-mapping': { count: 0, enabled: false } }),
+    baseline: sum(4, 2, 3, { drift: { count: 3, enabled: true } }),
+    hint: { level: 'Standard', reasons: ['сервисов в compose: 2'] },
+    markerCounts: { ICommand: 12, IRequest: 30, IQuery: 0 },
+    suffixCounts: { Command: 18, Query: 6 },
+  };
+
+  it('итог и разница с чистым уровнем', () => {
+    expect(impactTotal(PV.current)).toBe(6);
+    expect(impactDelta(PV)).toBe(-3);                               // профиль убрал три находки
+  });
+
+  it('находки правила: текущие и базовые; нет данных → null', () => {
+    expect(ruleImpact(PV, true, 'drift')).toEqual({ count: 3, enabled: true });
+    expect(ruleImpact(PV, true, 'dto-mapping')).toEqual({ count: 0, enabled: false });
+    expect(ruleImpact(PV, false, 'dto-mapping')).toBeNull();
+    expect(ruleImpact(null, true, 'drift')).toBeNull();
+  });
+
+  it('покрытие роли: узнано по маркеру из всех типов с суффиксом; не больше общего', () => {
+    expect(roleCoverage(PV, ['ICommand'], ['Command'])).toEqual({ total: 18, marked: 12 });
+    expect(roleCoverage(PV, ['IRequest'], ['Command'])).toEqual({ total: 18, marked: 18 });   // IRequest встречается чаще — упираемся в общее
+    expect(roleCoverage(PV, ['IQuery'], ['Query'])).toEqual({ total: 6, marked: 0 });
+    expect(roleCoverage(PV, ['ICommand'], [])).toBeNull();
+    expect(roleCoverage(null, ['ICommand'], ['Command'])).toBeNull();
+  });
+
+  it('пример порога: строки попадают под правило по выбранному значению', () => {
+    const at = (v: number) => paramSample('service-cycle', 'serviceCycleMinConfidence', v)!.filter((r) => r.hit).length;
+    expect(at(0.5)).toBe(4);
+    expect(at(0.8)).toBe(2);
+    expect(at(0.95)).toBe(1);
+    expect(at(1)).toBe(0);
+    expect(paramSample('dto-mapping', 'dtoMinSites', 3)!.filter((r) => r.hit).map((r) => r.label)).toEqual(['UserDto', 'OrderDto', 'CourseDto']);
+    expect(paramSample('drift', 'dtoMinSites', 3)).toBeNull();
+  });
+
+  it('запрос предпросмотра: POST с профилем, путь экранирован, отмена доходит до fetch', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify(PV), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', f);
+    const ctrl = new AbortController();
+
+    const r = await fetchPreview('/Users/x y/proj', { level: 'Simple' }, ctrl.signal);
+
+    expect(r.hint.level).toBe('Standard');
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/profile/preview?path=%2FUsers%2Fx%20y%2Fproj');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ level: 'Simple' });
+    vi.unstubAllGlobals();
   });
 });
 

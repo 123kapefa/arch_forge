@@ -157,5 +157,51 @@ public class AnalysisClientTests
         Assert.Equal("Off", ok.Rules[0].Defaults["Simple"]);
         Assert.Null(bad);
     }
+
+    [Fact]
+    public async Task PreviewImpactAsync_posts_profile_and_reads_result()
+    {
+        var rec = new RecordingHandler();
+        var none = new Dictionary<string, RuleImpactDto>();
+        var dto = new PreviewDto(new ImpactSummaryDto(1, 0, 0, none), new ImpactSummaryDto(2, 0, 0, none), new LevelHintDto("Simple", ["один сервис"]), new Dictionary<string, int>(), new Dictionary<string, int>());
+
+        var ok = await Client(HttpStatusCode.OK, dto).PreviewImpactAsync("/root", new ProfileDto("Standard"));
+        var bad = await Client(HttpStatusCode.BadRequest, null).PreviewImpactAsync("/root", new ProfileDto("Standard"));
+        var client = new AnalysisClient(new HttpClient(rec) { BaseAddress = new Uri("http://analysis") });
+        await client.PreviewImpactAsync("/root x", new ProfileDto("Simple"));
+
+        Assert.Equal(1, ok!.Current.Errors);
+        Assert.Equal("Simple", ok.Hint.Level);
+        Assert.Null(bad);
+        Assert.Equal(HttpMethod.Post, rec.Method);
+        Assert.Contains("/api/system/preview?path=%2Froot%20x", rec.Url);
+    }
+
+    [Fact]
+    public async Task PreviewImpactAsync_cancellation_by_caller_is_not_swallowed()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new AnalysisClient(new HttpClient(new RecordingHandler()) { BaseAddress = new Uri("http://analysis") })
+                .PreviewImpactAsync("/root", new ProfileDto("Standard"), cts.Token));
+    }
+
+    [Fact]
+    public async Task Refresh_flag_reaches_analysis_on_both_system_calls()
+    {
+        var rec = new RecordingHandler();
+        var client = new AnalysisClient(new HttpClient(rec) { BaseAddress = new Uri("http://analysis") });
+
+        await client.GetSystemAsync("/root", refresh: true);
+        Assert.Contains("refresh=true", rec.Url);
+
+        await client.GetSystemWithProfileAsync("/root", new ProfileDto("Standard"), refresh: true);
+        Assert.Contains("refresh=true", rec.Url);
+
+        await client.GetSystemAsync("/root");
+        Assert.DoesNotContain("refresh", rec.Url!);                       // по умолчанию кеш не сбрасывается
+    }
 }
 

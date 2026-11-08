@@ -25,13 +25,18 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
 
     private readonly ILogger _log = logger ?? NullLogger<RoslynSemanticTypeSource>.Instance;
 
-    public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default)
+    public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) => Read(path, out _, ct);
+
+    /// <summary><paramref name="degraded"/> = true: семантики не получилось, вернулся синтаксический пол (кеш держит такой результат коротко).</summary>
+    internal IReadOnlyList<RawType> Read(string path, out bool degraded, CancellationToken ct = default)
     {
+        degraded = false;
         try
         {
             var semantic = ReadSemantic(path, ct);
             if (semantic is { Count: > 0 }) return semantic;
             _log.LogDebug("Семантика пуста — синтаксический пол: {Path}", path);
+            degraded = true;
             return floor.Read(path, ct);
         }
         catch (OperationCanceledException) { throw; } // отмена — не «сбой семантики», пробрасываем
@@ -39,6 +44,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         {
             // Деградация видима в логах, а не молча (adr/0008: семантика — best-effort).
             _log.LogWarning(ex, "Семантика упала — синтаксический пол: {Path}", path);
+            degraded = true;
             return floor.Read(path, ct);
         }
     }

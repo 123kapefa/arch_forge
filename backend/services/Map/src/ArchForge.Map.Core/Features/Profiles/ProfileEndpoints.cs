@@ -54,6 +54,27 @@ public sealed class GetVocabularyEndpoint : IEndpoint
                 : ProfileHttp.Fail(503, ["Analysis не отвечает"]));
 }
 
+/// <summary>POST /api/profile/preview?path= — предпросмотр влияния профиля (тело — ProfileDto): находки до и после,
+/// совет уровня, счётчики словаря. Ничего не сохраняет. Профиль проверяется так же, как при сохранении.</summary>
+public sealed class PreviewProfileEndpoint : IEndpoint
+{
+    public void MapEndpoint(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/profile/preview", (string path, ProfileDto? profile, AnalysisClient analysis, IRuleCatalogProvider catalog, CancellationToken ct) =>
+            ProfileHttp.Guard(async () =>
+            {
+                if (string.IsNullOrWhiteSpace(path) || path.Length > ProfileService.MaxPathLength || path.Contains('\0'))
+                    return ProfileHttp.Fail(400, ["path обязателен"]);
+                if (profile is null) return ProfileHttp.Fail(400, ["тело запроса обязательно"]);
+                var rules = await catalog.GetAsync(ct);
+                if (rules is null) return ProfileHttp.Fail(503, ["Analysis не отвечает"]);
+                var errors = ProfileValidator.Validate(profile, rules.Rules.Select(r => r.Id).ToHashSet(StringComparer.Ordinal));
+                if (errors.Count > 0) return ProfileHttp.Fail(400, [.. errors]);
+                return await analysis.PreviewImpactAsync(path, profile, ct) is { } dto
+                    ? Results.Ok(dto)
+                    : ProfileHttp.Fail(502, ["Analysis не смог посчитать предпросмотр: сервис недоступен, не принял путь или профиль, либо разбор не уложился во время"]);
+            }));
+}
+
 /// <summary>Список и чтение конфигураций: встроенные уровни + свои.</summary>
 public sealed class ListConfigsEndpoint : IEndpoint
 {
