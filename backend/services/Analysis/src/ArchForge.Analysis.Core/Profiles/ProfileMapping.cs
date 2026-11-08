@@ -69,5 +69,6 @@ public static class ProfileMapping
         RuleCatalog.Version,
         [.. RuleCatalog.All.Select(r => new RuleDto(
             r.Id, r.Category, r.Title, r.Note,
-            Enum.GetValues<ProjectLevel>().ToDictionary(l => l.ToString(), l => r.DefaultFor(l)?.ToString())))]);
+            Enum.GetValues<ProjectLevel>().ToDictionary(l => l.ToString(), l => r.DefaultFor(l)?.ToString()),
+            r.Example is { } e ? new RuleExampleDto(e.Bad, e.Good) : null))]);
 }

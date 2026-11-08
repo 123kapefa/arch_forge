@@ -14,6 +14,7 @@ public static class Registration
         services.AddTransient<Features.Analysis.AnalyzeSolutionHandler>();
         services.AddTransient<Features.Imports.GetImportsHandler>();
         services.AddTransient<Features.Systems.GetSystemHandler>();
+        services.AddTransient<Features.Systems.PreviewImpactHandler>();
         services.AddEndpoints(typeof(Registration).Assembly);
         return services;
     }

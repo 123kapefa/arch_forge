@@ -64,7 +64,33 @@ public sealed record RuleDto(
     string Category,
     string Title,
     string Note,
-    IReadOnlyDictionary<string, string?> Defaults);
+    IReadOnlyDictionary<string, string?> Defaults,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RuleExampleDto? Example = null);
+
+/// <summary>Пример «плохо / хорошо» для правила: строки кода (без привязки к проекту).</summary>
+public sealed record RuleExampleDto(IReadOnlyList<string> Bad, IReadOnlyList<string> Good);
+
+/// <summary>Сколько находок даёт правило на проекте и проверяется ли оно (false — выключено профилем).</summary>
+public sealed record RuleImpactDto(int Count, bool Enabled);
+
+/// <summary>Итог разбора проекта по профилю: находки по строгости и по правилам.</summary>
+public sealed record ImpactSummaryDto(int Errors, int Warnings, int Infos, IReadOnlyDictionary<string, RuleImpactDto> Rules);
+
+/// <summary>Совет об уровне проекта по его коду. Только совет: выбор всегда за пользователем.</summary>
+public sealed record LevelHintDto(string Level, IReadOnlyList<string> Reasons);
+
+/// <summary>Предпросмотр влияния профиля (adr/0012): что изменится в находках, совет уровня и сколько типов встречается
+/// у маркеров и суффиксов словаря.</summary>
+/// <param name="Current">Находки по проверяемому профилю.</param>
+/// <param name="Baseline">Находки по чистому уровню того же профиля (без отличий) — для сравнения.</param>
+/// <param name="MarkerCounts">маркер → число типов проекта, у которых он есть среди базовых типов.</param>
+/// <param name="SuffixCounts">суффикс имени → число типов проекта с таким окончанием.</param>
+public sealed record PreviewDto(
+    ImpactSummaryDto Current,
+    ImpactSummaryDto Baseline,
+    LevelHintDto Hint,
+    IReadOnlyDictionary<string, int> MarkerCounts,
+    IReadOnlyDictionary<string, int> SuffixCounts);
 
 public sealed record RuleCatalogDto(string Version, IReadOnlyList<RuleDto> Rules);
 

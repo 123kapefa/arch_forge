@@ -21,10 +21,19 @@ public class ProfileEndpointsTests : IAsyncLifetime
         public List<(HttpMethod Method, string Url, string? Body)> Calls { get; } = [];
         public bool Down { get; set; }                 // Analysis недоступен (отказ соединения)
         public bool RejectProfile { get; set; }        // Analysis отвечает 400 на POST /api/system (профиль не принят)
+        public bool RejectPreview { get; set; }        // Analysis отвечает 400 на POST /api/system/preview
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls.Add((request.Method, request.RequestUri!.PathAndQuery, request.Content is null ? null : await request.Content.ReadAsStringAsync(ct)));
             if (Down) throw new HttpRequestException("connection refused");
+            if (request.RequestUri!.AbsolutePath == "/api/system/preview")
+            {
+                if (RejectPreview) return new HttpResponseMessage(HttpStatusCode.BadRequest);
+                var none = new Dictionary<string, RuleImpactDto>();
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new PreviewDto(
+                    new ImpactSummaryDto(1, 2, 3, none), new ImpactSummaryDto(4, 5, 6, none),
+                    new LevelHintDto("Standard", ["сервисов в compose: 2"]), new Dictionary<string, int> { ["ICommand"] = 7 }, new Dictionary<string, int>())) };
+            }
             if (request.RequestUri!.AbsolutePath == "/api/vocabulary")
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new VocabularyDefaultsDto(
                     new Dictionary<string, RoleVocabularyDto> { ["Command"] = new(["ICommand"], [], ["Command"]) },
@@ -280,5 +289,70 @@ public class ProfileEndpointsTests : IAsyncLifetime
 
         _analysis.Down = true;
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await _http.GetAsync("/api/vocabulary")).StatusCode);
+    }
+
+    // ── предпросмотр (#127) ──
+
+    [Fact]
+    public async Task Preview_is_proxied_with_the_profile_in_the_body()
+    {
+        var r = await _http.PostAsJsonAsync("/api/profile/preview?path=" + Uri.EscapeDataString(Proj),
+            new ProfileDto("Simple", new Dictionary<string, string> { ["drift"] = "Warning" }));
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        var pv = (await r.Content.ReadFromJsonAsync<PreviewDto>())!;
+        Assert.Equal(1, pv.Current.Errors);
+        Assert.Equal(7, pv.MarkerCounts["ICommand"]);
+        var call = _analysis.Calls.Last(c => c.Url.StartsWith("/api/system/preview"));
+        Assert.Equal(HttpMethod.Post, call.Method);
+        Assert.Contains("drift", call.Body);
+    }
+
+    [Fact]
+    public async Task Preview_validates_the_profile_before_calling_analysis()
+    {
+        var before = _analysis.Calls.Count(c => c.Url.StartsWith("/api/system/preview"));
+
+        var r = await _http.PostAsJsonAsync("/api/profile/preview?path=" + Uri.EscapeDataString(Proj),
+            new ProfileDto("Huge", new Dictionary<string, string> { ["ghost"] = "Off" }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
+        Assert.Equal(before, _analysis.Calls.Count(c => c.Url.StartsWith("/api/system/preview")));   // до Analysis не дошло
+        Assert.Contains("ghost", await r.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Preview_rejects_missing_body_and_bad_path()
+    {
+        Assert.Equal(HttpStatusCode.BadRequest, (await _http.PostAsJsonAsync<ProfileDto?>("/api/profile/preview?path=" + Uri.EscapeDataString(Proj), null)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _http.PostAsJsonAsync("/api/profile/preview?path=", new ProfileDto("Standard"))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _http.PostAsJsonAsync("/api/profile/preview?path=" + new string('p', 2000), new ProfileDto("Standard"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Preview_is_502_when_analysis_refuses_or_drops_after_catalog_was_cached()
+    {
+        _analysis.RejectPreview = true;
+        Assert.Equal(HttpStatusCode.BadGateway, (await _http.PostAsJsonAsync("/api/profile/preview?path=" + Uri.EscapeDataString(Proj), new ProfileDto("Standard"))).StatusCode);
+
+        _analysis.RejectPreview = false; _analysis.Down = true;   // каталог уже в кеше → проверка профиля проходит, падает сам расчёт
+        Assert.Equal(HttpStatusCode.BadGateway, (await _http.PostAsJsonAsync("/api/profile/preview?path=" + Uri.EscapeDataString(Proj), new ProfileDto("Standard"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Preview_is_503_when_catalog_is_unavailable_from_the_start()
+    {
+        _analysis.Down = true;
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await _http.PostAsJsonAsync("/api/profile/preview?path=" + Uri.EscapeDataString(Proj), new ProfileDto("Standard"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Preview_post_from_another_site_is_forbidden()
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/profile/preview?path=%2Ftmp%2Fx") { Content = JsonContent.Create(new ProfileDto("Standard")) };
+        req.Headers.Add("Sec-Fetch-Site", "cross-site");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await _http.SendAsync(req)).StatusCode);
     }
 }

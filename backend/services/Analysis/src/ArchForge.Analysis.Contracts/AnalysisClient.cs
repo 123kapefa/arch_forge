@@ -68,6 +68,20 @@ public sealed class AnalysisClient(HttpClient http)
         catch (Exception e) when (IsTransportFailure(e, ct)) { return null; } // Analysis недоступен — как «не смог», не 500
     }
 
+    /// <summary>Предпросмотр влияния профиля на проект (adr/0012). null — если Analysis не смог или не принял профиль.
+    /// Долгий при первом разборе проекта (потом идёт из кеша), поэтому принимает отмену.</summary>
+    public async Task<PreviewDto?> PreviewImpactAsync(string path, ProfileDto profile, CancellationToken ct = default)
+    {
+        try
+        {
+            using HttpResponseMessage response = await http.PostAsJsonAsync($"/api/system/preview?path={Uri.EscapeDataString(path)}", profile, ct);
+            if (!response.IsSuccessStatusCode)
+                return null;
+            return await response.Content.ReadFromJsonAsync<PreviewDto>(ct);
+        }
+        catch (Exception e) when (IsTransportFailure(e, ct)) { return null; }
+    }
+
     /// <summary>Каталог правил анализатора (adr/0012). null — если Analysis не смог.</summary>
     public async Task<RuleCatalogDto?> GetRulesAsync(CancellationToken ct = default)
     {

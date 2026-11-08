@@ -1,0 +1,103 @@
+using ArchForge.Analysis.Core.Profiles;
+using ArchForge.Analysis.Core.Systems;
+using ArchForge.Contracts;
+using ArchForge.SharedKernel;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
+
+namespace ArchForge.Analysis.Core.Features.Systems;
+
+// Предпросмотр влияния профиля (adr/0012): «что изменится в находках, если выбрать такой профиль».
+// Не меняет ничего и не сохраняется. Дорогой разбор кода берётся из кеша источников (ScanCache), поэтому
+// после первого вызова каждая правка стоит лишь детекторов и классификации.
+
+public sealed record PreviewQuery(string Path, ProjectProfile Profile);
+
+public sealed class PreviewImpactHandler(GetSystemHandler system, ISystemSource source, ServiceAnalyzer? analyzer = null)
+{
+    public PreviewDto? Handle(PreviewQuery query, CancellationToken ct = default)
+    {
+        var path = query.Path;
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return null;
+
+        // Обе линзы кода включены: предпросмотр должен показать всё, что профиль может изменить.
+        var current = system.Handle(new GetSystemQuery(path, Drift: true, Layers: true, Profile: query.Profile), ct);
+        var baselineProfile = new ProjectProfile(query.Profile.Level);        // тот же уровень, без отличий
+        var baseline = system.Handle(new GetSystemQuery(path, Drift: true, Layers: true, Profile: baselineProfile), ct);
+        if (current is null || baseline is null) return null;
+
+        // Данные для подсказки уровня и счётчиков словаря.
+        var graph = source.Read(path, null, ct);
+        var pack = ConventionPack.Default().WithProfile(query.Profile);
+        var analyses = analyzer?.Analyze(path, pack, ct) ?? [];
+        var types = analyses.Where(a => a.Result is not null).SelectMany(a => a.Result!.Types)
+            .Where(t => t.Layer is not ("Shared" or "tests"))                  // как в классификаторе: свод — про сервисный код
+            .ToList();
+
+        var markerNames = pack.Markers.Keys.Concat(pack.Fallback.Keys).ToHashSet(StringComparer.Ordinal);
+        var markerCounts = markerNames.ToDictionary(m => m, m => types.Count(t => t.Bases.Contains(m)), StringComparer.Ordinal);
+        var suffixCounts = pack.Expect.Select(e => e.Suffix).Concat(query.Profile.Vocabulary?.Values.SelectMany(v => v.Suffixes) ?? [])
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(s => s, s => types.Count(t => t.Name.EndsWith(s, StringComparison.Ordinal)), StringComparer.Ordinal);
+
+        var typeCount = analyses.Where(a => a.Result is not null).Sum(a => a.Result!.Coverage.Marker + a.Result.Coverage.Heuristic + a.Result.Coverage.Unknown);
+        var marked = analyses.Where(a => a.Result is not null).Sum(a => a.Result!.Coverage.Marker);
+        var hint = LevelHint.Suggest(
+            graph.Nodes.Count(n => n.Kind == SystemNodeKind.Service),
+            graph.Nodes.Any(n => n.Kind == SystemNodeKind.Topic),
+            typeCount > 0 ? marked * 100 / typeCount : 0,
+            typeCount);
+
+        return new PreviewDto(Summarize(current, query.Profile), Summarize(baseline, baselineProfile), hint, markerCounts, suffixCounts);
+    }
+
+    /// <summary>Находки по строгости и по правилам. Находка — отдельный факт агрегированной проблемы (тип, пара слоёв…),
+    /// а у проблемы без перечня — она сама. Покрытие и служебные отметки не считаются.</summary>
+    internal static ImpactSummaryDto Summarize(GraphDto dto, ProjectProfile profile)
+    {
+        var counts = RuleCatalog.All.ToDictionary(r => r.Id, _ => 0, StringComparer.Ordinal);
+        int errors = 0, warnings = 0, infos = 0;
+        foreach (var p in dto.Problems ?? [])
+        {
+            if (!counts.ContainsKey(p.Kind)) continue;
+            var n = p.Items is { Count: > 0 } ? p.Items.Count : 1;
+            counts[p.Kind] += n;
+            switch (p.Severity)
+            {
+                case "critical": errors += n; break;
+                case "warning": warnings += n; break;
+                case "info": infos += n; break;
+            }
+        }
+        var rules = counts.ToDictionary(kv => kv.Key,
+            kv => new RuleImpactDto(kv.Value, profile.Effective(kv.Key) != Strictness.Off), StringComparer.Ordinal);
+        return new ImpactSummaryDto(errors, warnings, infos, rules);
+    }
+}
+
+/// <summary>POST /api/system/preview?path=… — предпросмотр влияния профиля (тело — ProfileDto).
+/// Неверный профиль — 400 со списком ошибок; анализ при этом не запускается.</summary>
+public sealed class PreviewImpactEndpoint : IEndpoint
+{
+    public void MapEndpoint(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/system/preview", (string path, ProfileDto? profile, PreviewImpactHandler handler,
+            ILogger<PreviewImpactEndpoint> log, CancellationToken ct) =>
+        {
+            if (!ProfileMapping.TryToProfile(profile, out var parsed, out var errors))
+                return Results.BadRequest(new { error = "профиль не принят", errors });
+            try
+            {
+                var dto = handler.Handle(new PreviewQuery(path, parsed), ct);
+                return dto is null
+                    ? Results.BadRequest(new { error = "path обязателен и должен быть существующей папкой" })
+                    : Results.Ok(dto);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                log.LogInformation("Предпросмотр влияния отменён клиентом (abort): {Path}", path);
+                throw;
+            }
+        });
+}
