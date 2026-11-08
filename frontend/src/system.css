@@ -767,7 +767,7 @@
 .pv__pop button:hover:not(:disabled) { background: var(--card); }
 .pv__pop button:disabled { opacity: .5; cursor: not-allowed; }
 .pv__pop small { display: block; color: var(--muted); font-size: 11.5px; }
-.pv__body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
+.pv__body { padding-right: 2px; }   /* прокручивается вся средняя колонка (.pv__mid), а не только список: на низких окнах шапка уходит вверх */
 .pv__tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .pv__search { flex: 1 1 180px; min-width: 0; background: var(--card); border: 1px solid var(--card-line); border-radius: 7px; padding: 6px 10px; color: var(--text); font: inherit; font-size: 13px; }
 .pv__chips { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -836,3 +836,24 @@
 @media (max-width: 1100px) { .pv__cols { grid-template-columns: 200px minmax(0, 1fr); } .pv__right { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--card-line); max-height: 220px; } }
 @media (max-width: 760px) { .pv__cols { grid-template-columns: 1fr; } .pv__side { border-right: 0; border-bottom: 1px solid var(--card-line); max-height: 180px; } .pv__fld { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .pv * { transition: none !important; } }
+
+/* ── Предпросмотр влияния, подсказка уровня, примеры (#127) ── */
+.pv__hint { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12.5px; padding: 7px 10px; margin: 0 0 8px; border: 1px solid var(--card-line); border-radius: 8px; background: rgba(108,140,255,0.1); }
+.pv__hint--ok { background: rgba(111,207,119,0.08); color: var(--muted); }
+.pv__hint b { color: var(--text); }
+.pv__found { color: var(--text); }
+.pv__muted--warn { color: var(--warn); }
+.pv__impact { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; font-size: 12.5px; padding: 6px 10px; margin: 0 0 8px; border: 1px solid var(--card-line); border-radius: 8px; background: var(--card); }
+.pv__impact-t { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.pv__impact-b { display: inline-flex; gap: 4px 8px; align-items: center; flex-wrap: wrap; }
+.pv__big { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pv__dim { opacity: .55; transition: opacity .15s; }
+.pv__code { margin: 0; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--card-line); background: var(--card); font: 12px/1.5 ui-monospace, monospace; overflow-x: auto; white-space: pre; }
+.pv__code--bad { border-left: 3px solid var(--crit); }
+.pv__code--good { border-left: 3px solid var(--ok); }
+.pv__sample { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.pv__sample-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px 64px; gap: 8px; align-items: center; font-size: 12px; padding: 3px 6px; border-radius: 5px; color: var(--muted); }
+.pv__sample-row > span:first-child { font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv__sample-row--hit { background: rgba(224,178,74,0.16); color: var(--text); }
+.pv__tag--zero { background: rgba(224,178,74,0.12); outline: 1px solid rgba(224,178,74,0.55); }
+.pv__tag-n { font-style: normal; color: var(--muted); font-size: 11px; }
