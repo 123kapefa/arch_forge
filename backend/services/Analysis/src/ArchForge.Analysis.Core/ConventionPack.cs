@@ -65,28 +65,51 @@ public sealed class ConventionPack(
     /// <summary>Накладывает профиль (adr/0012): словарь ролей и пороги DTO-маппинга. Профиль без словаря и с порогами по
     /// умолчанию возвращает тот же свод — вывод существующих проектов не меняется. Слои настроек:
     /// встроенный свод → профиль (этот метод) → файл проекта (<see cref="Load"/> накладывает его сверху).</summary>
+    /// <summary>Максимум ролей словаря, принимаемых из профиля.</summary>
+    public const int MaxRoles = 64;
+
     public ConventionPack WithProfile(ProjectProfile profile)
     {
         var th = profile.Thresholds;
         var dm = DtoMapping with { MinSites = th.DtoMinSites, MinFiles = th.DtoMinFiles };
+        var thresholdsChanged = dm != DtoMapping;
         if (profile.Vocabulary is not { Count: > 0 } vocab)
-            return dm == DtoMapping ? this : new ConventionPack(Markers, Fallback, Expect, Source, dm);
+            return thresholdsChanged ? new ConventionPack(Markers, Fallback, Expect, "встроенный свод + профиль", dm) : this;
 
+        // Защита от раздутого входа: ролей не больше MaxRoles, имя роли не длиннее 64, пустые и null пропускаем.
+        var roles = vocab
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Key.Length <= 64 && kv.Value is not null)
+            .Take(MaxRoles)
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Sanitized(), StringComparer.Ordinal);
+        if (roles.Count == 0)
+            return thresholdsChanged ? new ConventionPack(Markers, Fallback, Expect, "встроенный свод + профиль", dm) : this;
+
+        // Пустой список в записи роли = «оставить встроенное» (как у имён сервисов): стираем и заменяем только то, что задано.
         var markers = new Dictionary<string, string>(Markers, StringComparer.Ordinal);
         var fallback = new Dictionary<string, string>(Fallback, StringComparer.Ordinal);
         var expect = new List<(string Suffix, string Marker, string Role)>(Expect);
-        foreach (var (role, raw) in vocab)
+
+        var replaceMarkers = roles.Where(kv => kv.Value.Markers.Count > 0).Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
+        var replaceFallback = roles.Where(kv => kv.Value.Fallback.Count > 0).Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
+        var oldMarkers = markers.Where(kv => replaceMarkers.Contains(kv.Value)).ToList();
+        foreach (var kv in oldMarkers) markers.Remove(kv.Key);                                  // один проход, не по проходу на роль
+        foreach (var kv in fallback.Where(kv => replaceFallback.Contains(kv.Value)).ToList()) fallback.Remove(kv.Key);
+
+        foreach (var (role, v) in roles)
         {
-            if (string.IsNullOrWhiteSpace(role)) continue;
-            var v = raw.Sanitized();
-            foreach (var k in markers.Where(kv => kv.Value == role).Select(kv => kv.Key).ToList()) markers.Remove(k);
-            foreach (var k in fallback.Where(kv => kv.Value == role).Select(kv => kv.Key).ToList()) fallback.Remove(k);
             foreach (var m in v.Markers) markers[m] = role;
             foreach (var f in v.Fallback) fallback[f] = role;
-            if (v.Suffixes.Count > 0 && v.Markers.Count > 0) // ожидание «суффикс → маркер» строим, только если маркер задан
+
+            // Ожидание «суффикс → маркер» пересобираем, если задано хоть одно из двух; недостающее берём из текущего свода.
+            if (v.Markers.Count == 0 && v.Suffixes.Count == 0) continue;
+            var effMarkers = v.Markers.Count > 0 ? v.Markers : [.. Markers.Where(kv => kv.Value == role).Select(kv => kv.Key)];
+            var effSuffixes = v.Suffixes.Count > 0 ? v.Suffixes : [.. Expect.Where(e => e.Role == role).Select(e => e.Suffix).Distinct(StringComparer.Ordinal)];
+            if (effMarkers.Count == 0 || effSuffixes.Count == 0) continue;                       // нечего ожидать — прежнее не трогаем
+            expect.RemoveAll(e => e.Role == role);
+            foreach (var suf in effSuffixes)
             {
-                expect.RemoveAll(e => e.Role == role);
-                foreach (var suf in v.Suffixes) expect.Add((suf, string.Join("/", v.Markers), role));
+                expect.RemoveAll(e => e.Suffix == suf);                                          // суффикс один на правило (как в Load)
+                expect.Add((suf, string.Join("/", effMarkers), role));
             }
         }
         return new ConventionPack(markers, fallback, expect, "встроенный свод + профиль", dm);

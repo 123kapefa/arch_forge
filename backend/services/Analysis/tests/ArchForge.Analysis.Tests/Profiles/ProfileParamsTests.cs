@@ -162,4 +162,91 @@ public class ProfileParamsTests
         Assert.Equal(expected, th.DtoMinSites);
         Assert.Equal(expected, th.DtoMinFiles);
     }
+
+    [Fact]
+    public void Vocabulary_is_bounded_and_tolerates_nulls()
+    {
+        var vocab = new Dictionary<string, RoleVocabulary>
+        {
+            ["Command"] = null!,                                   // null-значение не роняет
+            [""] = new(["IBad"], [], []),                          // пустое имя роли пропущено
+            [new string('r', 200)] = new(["ILong"], [], []),       // слишком длинное имя пропущено
+        };
+        for (var i = 0; i < 500; i++) vocab["Role" + i] = new(["IM" + i], [], []);
+
+        var pack = ConventionPack.Default().WithProfile(new ProjectProfile(Vocabulary: vocab));
+
+        Assert.DoesNotContain("IBad", pack.Markers.Keys);
+        Assert.DoesNotContain("ILong", pack.Markers.Keys);
+        Assert.Equal("Command", pack.Markers["ICommand"]);         // роль с null не тронута
+        var added = pack.Markers.Keys.Count(k => k.StartsWith("IM", StringComparison.Ordinal));
+        Assert.True(added <= ConventionPack.MaxRoles);             // лишние роли отброшены
+    }
+
+    [Fact]
+    public void Empty_lists_in_a_role_keep_builtin_values()
+    {
+        // задали только суффикс: маркеры хендлера остаются, ожидание строится на них с новым суффиксом
+        var profile = new ProjectProfile(Vocabulary: new Dictionary<string, RoleVocabulary>
+        {
+            ["Handler"] = new([], [], ["UseCase"]),
+        });
+
+        var pack = ConventionPack.Default().WithProfile(profile);
+
+        Assert.Equal("Handler", pack.Markers["ICommandHandler"]);
+        Assert.Equal("Handler", pack.Markers["IQueryHandler"]);
+        Assert.Contains(pack.Expect, e => e is { Suffix: "UseCase", Role: "Handler" } && e.Marker.Contains("ICommandHandler"));
+        Assert.DoesNotContain(pack.Expect, e => e is { Suffix: "Handler", Role: "Handler" });
+    }
+
+    [Fact]
+    public void Only_markers_given_rewrites_expectation_text()
+    {
+        var profile = new ProjectProfile(Vocabulary: new Dictionary<string, RoleVocabulary>
+        {
+            ["Command"] = new(["IRequest"], [], []),
+        });
+
+        var pack = ConventionPack.Default().WithProfile(profile);
+
+        Assert.Contains(pack.Expect, e => e is { Suffix: "Command", Marker: "IRequest", Role: "Command" }); // не «ожидается ICommand»
+    }
+
+    [Fact]
+    public void Same_suffix_in_two_roles_leaves_single_expectation()
+    {
+        var profile = new ProjectProfile(Vocabulary: new Dictionary<string, RoleVocabulary>
+        {
+            ["Handler"] = new(["IHandler"], [], ["Command"]),   // суффикс уже принадлежит роли Command
+        });
+
+        var pack = ConventionPack.Default().WithProfile(profile);
+
+        Assert.Single(pack.Expect, e => e.Suffix == "Command");
+    }
+
+    [Fact]
+    public void Role_vocabulary_sanitised_trims_dedups_and_caps()
+    {
+        var many = Enumerable.Range(0, 200).Select(i => "M" + i).ToList();
+        var v = new RoleVocabulary([" A ", "A", "", new string('x', 300), .. many], [], []).Sanitized();
+
+        Assert.Equal(64, v.Markers.Count);
+        Assert.Equal("A", v.Markers[0]);
+        Assert.DoesNotContain(v.Markers, m => m.Length > 128 || m.Length == 0);
+    }
+
+    [Fact]
+    public void Broken_project_file_keeps_profile_baseline_values()
+    {
+        var dir = TempDir();
+        File.WriteAllText(Path.Combine(dir, "archforge.conventions.json"), "{ not json");
+        var baseline = ConventionPack.Default().WithProfile(new ProjectProfile(Params: new ProfileParams(DtoMinSites: 7)));
+
+        var pack = ConventionPack.Load(dir, baseline);
+
+        Assert.Contains("ошибка чтения", pack.Source);
+        Assert.Equal(7, pack.DtoMapping.MinSites);               // порог профиля не потерян из-за битого файла
+    }
 }
