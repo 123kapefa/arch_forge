@@ -108,7 +108,8 @@ internal static class ConfigHttpScanner
 
     // Стем сервиса: имя без хвостового -service/-api/… (education-service → education). Для сопоставления
     // с папкой кода, названной иначе (EducationContentService). Снимаем один суффикс.
-    private static readonly string[] ServiceSuffixes = { "-service", "-svc", "-api", "-worker", "-gateway", "-app" };
+    // Список — в Core.Profiles.ServiceNaming (одно место). Сканер конфигов работает в источнике, раньше профиля, поэтому берёт умолчание.
+    private static IReadOnlyList<string> ServiceSuffixes => ArchForge.Analysis.Core.Profiles.ServiceNaming.Default.TypeSuffixes;
     private static string StripServiceSuffix(string name)
     {
         var b = (name ?? "").Trim();

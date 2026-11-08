@@ -53,11 +53,16 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
 
         // Порог цикла сервисов — параметр профиля. Источник считает проблемы с порогом по умолчанию; если профиль
         // его изменил — пересчитываем только цикл (чистая функция над рёбрами графа), остальное не трогаем.
+        var naming = profile.Naming;
         if (profile.Thresholds.ServiceCycleMinConfidence != ServiceCycleDetector.DefaultMinConfidence)
-            graph = graph with { Problems = ReplaceCycles(graph.Problems, ServiceCycleDetector.Detect(graph, profile.Thresholds.ServiceCycleMinConfidence)) };
+            graph = graph with { Problems = ReplaceKinds(graph.Problems, ["service-cycle"], ServiceCycleDetector.Detect(graph, profile.Thresholds.ServiceCycleMinConfidence)) };
+        // То же для общей БД: её идентичность «приложения» зависит от суффиксов имён сервисов из профиля.
+        if (!naming.IsDefault)
+            graph = graph with { Problems = ReplaceKinds(graph.Problems, ["shared-db", "shared-store"], SharedDbDetector.Detect(graph, naming)) };
 
         // Свод: из файла проекта (если есть), иначе встроенный. Нужен и для линз, и чтобы показать источник во фронте.
-        var pack = Directory.Exists(query.Path) ? ConventionPack.Load(query.Path) : ConventionPack.Default();
+        var basePack = ConventionPack.Default().WithProfile(profile); // слои: умолчание → профиль → файл проекта (сильнее)
+        var pack = Directory.Exists(query.Path) ? ConventionPack.Load(query.Path, basePack) : basePack;
 
         // Код-линзы (дрейф/слои) — по запросу, только для пути-папки, если анализатор доступен (в тестах может быть null).
         // Общий per-service разбор ОДИН раз → чистые детекторы по флагам + L0-сводка слоёв (без двойного Roslyn).
@@ -85,7 +90,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             var composeServices = graph.Nodes
                 .Where(n => n.Kind == SystemNodeKind.Service)
                 .Select(n => (n.Id, n.Name)).ToList();
-            nodeLayers = MicroserviceLayerBuilder.Build(analyses, composeServices); // per-microservice слои для L0-карточек
+            nodeLayers = MicroserviceLayerBuilder.Build(analyses, composeServices, naming); // per-microservice слои для L0-карточек
 
             // сквозной shared kernel — отдельный drill-таргет на L0 (типы под src/Shared, вне сервисов)
             if (SharedKernelBuilder.Build(analyses) is { } sk)
@@ -100,7 +105,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             // call-graph (E3.1): конкретные http-вызовы из кода → на рёбра. ПОСЛЕ дедупа (граф из source уже сведён)
             // и после nodeLayers (нужны эндпоинты цели для RouteMatch). Дополняем рёбра, не заменяем (adr/0008).
             if (query.Calls)
-                graph = HttpCallGraphBuilder.Enrich(graph, analyses, nodeLayers);
+                graph = HttpCallGraphBuilder.Enrich(graph, analyses, nodeLayers, naming);
         }
 
         // Профиль: выключенные правила убираем, остальным ставим заданную строгость (после всех детекторов).
@@ -117,24 +122,24 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         return dto;
     }
 
-    // Заменяет циклы сервисов на пересчитанные, СОХРАНЯЯ порядок прочих проблем: новые циклы встают на место первого
-    // прежнего; прежних не было — после последней проблемы общей БД/хранилища (где их ставит SystemProblemDetector), иначе в начало.
-    private static List<SystemProblem> ReplaceCycles(IReadOnlyList<SystemProblem> problems, IReadOnlyList<SystemProblem> cycles)
+    // Заменяет проблемы заданных видов на пересчитанные, СОХРАНЯЯ порядок прочих: новые встают на место первой прежней;
+    // прежних не было — после последней проблемы общей БД/хранилища (где их ставит SystemProblemDetector), иначе в начало.
+    private static List<SystemProblem> ReplaceKinds(IReadOnlyList<SystemProblem> problems, string[] kinds, IReadOnlyList<SystemProblem> replacement)
     {
         var at = -1;
-        for (var i = 0; i < problems.Count; i++) if (problems[i].Kind == "service-cycle") { at = i; break; }
+        for (var i = 0; i < problems.Count; i++) if (kinds.Contains(problems[i].Kind)) { at = i; break; }
         if (at < 0)
         {
             at = 0;
             for (var i = 0; i < problems.Count; i++) if (problems[i].Kind is "shared-db" or "shared-store") at = i + 1;
         }
-        var result = new List<SystemProblem>(problems.Count + cycles.Count);
+        var result = new List<SystemProblem>(problems.Count + replacement.Count);
         for (var i = 0; i < problems.Count; i++)
         {
-            if (i == at) result.AddRange(cycles);
-            if (problems[i].Kind != "service-cycle") result.Add(problems[i]);
+            if (i == at) result.AddRange(replacement);
+            if (!kinds.Contains(problems[i].Kind)) result.Add(problems[i]);
         }
-        if (at >= problems.Count) result.AddRange(cycles);
+        if (at >= problems.Count) result.AddRange(replacement);
         return result;
     }
 }

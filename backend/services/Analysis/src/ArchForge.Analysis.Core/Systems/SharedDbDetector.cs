@@ -17,8 +17,9 @@ namespace ArchForge.Analysis.Core.Systems;
 //    случайно названный *-exporter, будет пропущен (см. тест) — приоритет чистоте сигнала.
 public static class SharedDbDetector
 {
-    public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph)
+    public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph, Profiles.ServiceNaming? naming = null)
     {
+        naming ??= Profiles.ServiceNaming.Default;
         var nodeById = graph.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
         var problems = new List<SystemProblem>();
 
@@ -28,7 +29,7 @@ public static class SharedDbDetector
                 .Where(e => e.Kind == "rw-db" && e.Target == ds.Id && !e.Deferred)
                 .Select(e => nodeById.GetValueOrDefault(e.Source))
                 .Where(src => src is not null && !IsMonitoring(src.Image) && !IsMigrationRunner(src))
-                .GroupBy(src => WriterIdentity(src!), StringComparer.OrdinalIgnoreCase)  // одно приложение = одна идентичность
+                .GroupBy(src => WriterIdentity(src!, naming), StringComparer.OrdinalIgnoreCase)  // одно приложение = одна идентичность
                 .Select(g => g.First()!)                                                  // узел-представитель для отображения
                 .ToList();
 
@@ -58,16 +59,15 @@ public static class SharedDbDetector
     // Идентичность «пишущего приложения»: по образу (api+migrate одного образа = одно приложение);
     // build-сервис без образа — по базовому имени сервиса (без суффикса миграций), с префиксом «name:»,
     // чтобы имя-идентичность не столкнулась с образом-идентичностью.
-    private static readonly string[] MigrationSuffixes = { "-migrations", "-migration", "-migrate" };
-    private static readonly string[] TypeSuffixes = { "-service", "-svc", "-api", "-worker", "-gateway", "-app" };
+    // Списки суффиксов — в Profiles.ServiceNaming (одно место, настраиваются профилем).
 
     // Идентичность «пишущего приложения»:
     //  • по образу — общий образ = одно приложение (api+migrate одного образа сходятся);
     //  • build-сервис без образа — по СИСТЕМЕ (namespace id «{system}/{svc}») + базовому имени (без суффиксов
     //    миграций И типа). Namespace: одноимённые сервисы в РАЗНЫХ системах (sysA/api vs sysB/api) не сливаются.
     //    Двойное снятие суффикса: «auth-api» и «auth-migrate» сходятся в общую базу «auth».
-    private static string WriterIdentity(SystemNode n) =>
-        NormalizeImage(n.Image) is { } img ? img : $"name:{SystemOf(n.Id)}:{AppBaseName(n.Name)}";
+    private static string WriterIdentity(SystemNode n, Profiles.ServiceNaming naming) =>
+        NormalizeImage(n.Image) is { } img ? img : $"name:{SystemOf(n.Id)}:{AppBaseName(n.Name, naming)}";
 
     // Система узла = namespace-префикс id ({system}/{svc}); внешние/инфра-id без '/' → пустая строка.
     private static string SystemOf(string id)
@@ -76,12 +76,12 @@ public static class SharedDbDetector
         return i > 0 ? id[..i] : "";
     }
 
-    private static string AppBaseName(string name)
+    private static string AppBaseName(string name, Profiles.ServiceNaming naming)
     {
         var b = (name ?? "").Trim();
-        foreach (var s in MigrationSuffixes)
+        foreach (var s in naming.MigrationSuffixes)
             if (b.EndsWith(s, StringComparison.OrdinalIgnoreCase)) { b = b[..^s.Length]; break; }
-        foreach (var s in TypeSuffixes)
+        foreach (var s in naming.TypeSuffixes)
             if (b.EndsWith(s, StringComparison.OrdinalIgnoreCase)) { b = b[..^s.Length]; break; }
         return b.ToLowerInvariant();
     }
