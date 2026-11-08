@@ -325,6 +325,51 @@ export function exportManifest(c: ConfigManifest): string {
   }, null, 2);
 }
 
+const isStrArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+const strList = (v: unknown): string[] | undefined => (isStrArray(v) ? v : undefined);
+
+/** Оставляет в профиле только допустимую форму: чужой JSON не должен нести значения не тех типов (иначе окно упадёт
+ *  при отрисовке). Лишние поля и ключи не того вида отбрасываются; содержательную проверку делает сервер при сохранении. */
+export function sanitizeProfile(raw: unknown): Profile | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.level !== 'string') return null;
+  const out: Profile = { level: r.level };
+
+  if (r.overrides && typeof r.overrides === 'object' && !Array.isArray(r.overrides)) {
+    const ov: Record<string, string> = {};
+    for (const [k, v] of Object.entries(r.overrides)) if (typeof v === 'string') ov[k] = v;
+    if (Object.keys(ov).length) out.overrides = ov;
+  }
+
+  if (r.params && typeof r.params === 'object' && !Array.isArray(r.params)) {
+    const p = r.params as Record<string, unknown>;
+    const params: ProfileParams = {};
+    for (const k of ['serviceCycleMinConfidence', 'dtoMinSites', 'dtoMinFiles'] as const)
+      if (typeof p[k] === 'number' && Number.isFinite(p[k])) params[k] = p[k];
+    if (p.naming && typeof p.naming === 'object' && !Array.isArray(p.naming)) {
+      const n = p.naming as Record<string, unknown>;
+      const naming: ServiceNaming = {};
+      for (const k of NAMING_KEYS) { const l = strList(n[k]); if (l) naming[k] = l; }
+      if (Object.keys(naming).length) params.naming = naming;
+    }
+    if (Object.keys(params).length) out.params = params;
+  }
+
+  if (r.vocabulary && typeof r.vocabulary === 'object' && !Array.isArray(r.vocabulary)) {
+    const voc: Record<string, RoleVocabulary> = {};
+    for (const [role, v] of Object.entries(r.vocabulary)) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+      const e = v as Record<string, unknown>;
+      const entry: RoleVocabulary = {};
+      for (const k of VOCAB_KEYS) { const l = strList(e[k]); if (l) entry[k] = l; }
+      if (Object.keys(entry).length) voc[role] = entry;
+    }
+    if (Object.keys(voc).length) out.vocabulary = voc;
+  }
+  return out;
+}
+
 export type ImportResult = { ok: true; draft: ConfigManifest } | { ok: false; error: string };
 
 /** Разбирает вставленный/загруженный JSON в черновик НОВОЙ конфигурации (полную проверку делает сервер при сохранении).
@@ -335,9 +380,8 @@ export function parseImport(text: string, author = 'local'): ImportResult {
   try { raw = JSON.parse(text); } catch { return { ok: false, error: 'Это не JSON' }; }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'Ожидается JSON-объект' };
   const o = raw as Record<string, unknown>;
-  const profile = (o.profile ?? (typeof o.level === 'string' ? o : null)) as Profile | null;
-  if (!profile || typeof profile !== 'object' || typeof profile.level !== 'string')
-    return { ok: false, error: 'Не найден профиль: нужно поле profile.level или level' };
+  const profile = sanitizeProfile(o.profile ?? (typeof o.level === 'string' ? o : null));
+  if (!profile) return { ok: false, error: 'Не найден профиль: нужно поле profile.level или level' };
   const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim() : 'Импортированная конфигурация';
-  return { ok: true, draft: { id: null, name: name.slice(0, 100), author, version: 0, profile: clone(profile), kind: 'own' } };
+  return { ok: true, draft: { id: null, name: name.slice(0, 100), author, version: 0, profile, kind: 'own' } };
 }

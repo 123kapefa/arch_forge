@@ -4,7 +4,7 @@ import {
   levelDefault, effectiveStrictness, withStrictness, withParam, paramValue, isRuleChanged, changedRuleCount,
   resetRule, resetCategory, resetToLevel, withLevel, roleList, isRoleChanged, withRoleList, resetRole,
   namingList, isNamingChanged, withNaming, resetNaming, addItem, removeItem, profilesEqual, filterRules, groupByCategory,
-  exportManifest, parseImport, ProfileApiError, createConfig, updateConfig, bindProject, fetchProjectProfile,
+  exportManifest, parseImport, sanitizeProfile, ProfileApiError, createConfig, updateConfig, bindProject, fetchProjectProfile,
 } from './profile';
 
 const rule = (id: string, category: string, defaults: Record<string, string | null>, title = id): RuleDef =>
@@ -260,3 +260,47 @@ describe('клиент API', () => {
     expect(JSON.parse(init.body as string)).toEqual({ level: 'Simple' });
   });
 });
+
+describe('санитизация импорта (чужой JSON не роняет окно)', () => {
+  it('значения не тех типов отбрасываются', () => {
+    const p = sanitizeProfile({
+      level: 'Standard',
+      overrides: { drift: 'Warning', bad: 5, worse: { x: 1 } },
+      params: { dtoMinSites: {}, dtoMinFiles: 4, serviceCycleMinConfidence: 'x', naming: { typeSuffixes: [{}], migrationSuffixes: ['-m'], satelliteMarkers: 'seed' } },
+      vocabulary: { Command: { markers: 'x', fallback: ['A'], suffixes: [1, 2] }, Handler: 'oops', Other: ['a'] },
+      extra: 'лишнее',
+    });
+    expect(p).toEqual({
+      level: 'Standard',
+      overrides: { drift: 'Warning' },
+      params: { dtoMinFiles: 4, naming: { migrationSuffixes: ['-m'] } },
+      vocabulary: { Command: { fallback: ['A'] } },
+    });
+  });
+
+  it('NaN, бесконечность и массивы вместо объектов отбрасываются', () => {
+    const p = sanitizeProfile({ level: 'Simple', params: { dtoMinSites: Number.POSITIVE_INFINITY }, overrides: ['a'], vocabulary: [] });
+    expect(p).toEqual({ level: 'Simple' });
+  });
+
+  it('без level профиля нет', () => {
+    expect(sanitizeProfile({ overrides: {} })).toBeNull();
+    expect(sanitizeProfile(null)).toBeNull();
+    expect(sanitizeProfile([1])).toBeNull();
+    expect(sanitizeProfile({ level: 5 })).toBeNull();
+  });
+
+  it('ключи __proto__ и constructor остаются данными и не меняют прототип', () => {
+    const raw = JSON.parse('{"level":"Standard","overrides":{"__proto__":"Off","constructor":"Info"},"vocabulary":{"__proto__":{"markers":["x"]}}}');
+    const p = sanitizeProfile(raw)!;
+    expect(({} as Record<string, unknown>).markers).toBeUndefined();
+    expect(Object.getPrototypeOf(p.overrides!)).toBe(Object.prototype);
+    expect(Object.keys(p.overrides!)).toContain('constructor');
+  });
+
+  it('parseImport отдаёт только очищенный профиль', () => {
+    const r = parseImport('{"profile":{"level":"Standard","vocabulary":{"Command":{"markers":"x"}}}}');
+    expect(r.ok && r.draft.profile).toEqual({ level: 'Standard' });
+  });
+});
+

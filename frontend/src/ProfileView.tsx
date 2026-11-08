@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import {
   type ConfigManifest, type Level, type Profile, type RuleCatalog, type RuleDef, type RuleFilter, type Strictness,
@@ -25,12 +25,41 @@ const NEW = 'new';              // несохранённая конфигура
 const levelOfId = (id?: string | null): Level | null =>
   LEVELS.find((l) => `lvl-${l.toLowerCase()}` === id) ?? null;
 
+/** Роли в порядке показа: с маркерами выше технических. Первая из них открывается по умолчанию. */
+function sortedRoles(vocab: VocabularyDefaults): string[] {
+  const has = (r: string) => (vocab.roles[r].markers?.length ?? 0) > 0;
+  return Object.keys(vocab.roles).sort((a, b) => has(a) === has(b) ? a.localeCompare(b) : has(a) ? -1 : 1);
+}
+
 function messageOf(e: unknown): string[] {
   if (e instanceof ProfileApiError) return e.errors;
   return [e instanceof Error ? e.message : 'Что-то пошло не так'];
 }
 
-export function ProfileView({ path, onClose, onApplied }: Props) {
+/** Граница ошибок: сбой отрисовки окна настройки не должен ронять всю карту — показываем сообщение и даём закрыть. */
+class ProfileBoundary extends Component<{ onClose: () => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="pv-backdrop" onClick={this.props.onClose}>
+        <div className="pv pv--small" role="alertdialog" aria-label="Ошибка окна профиля" onClick={(e) => e.stopPropagation()}>
+          <div className="pv__fail">
+            <p>В окне профиля произошла ошибка. Карта и сохранённые данные не затронуты.</p>
+            <button className="pv__btn" onClick={this.props.onClose}>Закрыть</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
+export function ProfileView(props: Props) {
+  return <ProfileBoundary onClose={props.onClose}><ProfileViewInner {...props} /></ProfileBoundary>;
+}
+
+function ProfileViewInner({ path, onClose, onApplied }: Props) {
   const [catalog, setCatalog] = useState<RuleCatalog | null>(null);
   const [vocab, setVocab] = useState<VocabularyDefaults | null>(null);
   const [configs, setConfigs] = useState<ConfigManifest[]>([]);
@@ -47,6 +76,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const [conflict, setConflict] = useState(false);   // 409: конфигурация изменилась в другом месте
   const [note, setNote] = useState('');
   const [pending, setPending] = useState<(() => void) | null>(null);   // действие, ждущее подтверждения «отбросить правки»
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -110,7 +140,8 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
   const close = () => guard(onClose);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !importOpen && !pending) close(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key !== 'Escape') return;
+      if (pending) setPending(null); else if (importOpen) setImportOpen(false); else if (menu) setMenu(false); else close(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
@@ -118,11 +149,11 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
 
   // ── действия ──
   const run = async (fn: () => Promise<void>) => {
-    setBusy(true); setErrors([]); setNote('');
+    setBusy(true); setErrors([]); setNote(''); setConflict(false);
     try { await fn(); }
     catch (e) {
-      const conflict = e instanceof ProfileApiError && e.status === 409;
-      setErrors(conflict ? [...messageOf(e), 'Закройте окно и откройте заново, чтобы увидеть актуальную версию.'] : messageOf(e));
+      setConflict(e instanceof ProfileApiError && e.status === 409);
+      setErrors(messageOf(e));
     } finally { setBusy(false); }
   };
 
@@ -133,9 +164,11 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
     await run(async () => {
       saved = sel === NEW || !draft.id ? await createConfig(draft) : await updateConfig(draft.id, draft);
       const s = saved;
-      setConfigs((list) => [...list.filter((c) => c.id !== s.id), s]);
+      const wasBound = isBound(s);                  // привязана к проекту → карта должна пересчитаться по новой версии
+      setConfigs((list) => list.some((c) => c.id === s.id) ? list.map((c) => c.id === s.id ? s : c) : [...list, s]);   // на месте, без прыжков
       setSel(s.id ?? NEW); setDraft(null);
-      setNote(`Сохранено: версия v${s.version}`);
+      setNote(wasBound ? `Сохранено: версия v${s.version}. Проект пересчитывается` : `Сохранено: версия v${s.version}`);
+      if (wasBound) onApplied();
     });
     return saved;
   };
@@ -159,8 +192,10 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
       await deleteConfig(id);
       setConfigs((list) => list.filter((c) => c.id !== id));
       setSel(`lvl-${DEFAULT_LEVEL.toLowerCase()}`); setDraft(null); setConfirmDelete(false);
+      const wasBound = isBound(persisted);
       setBound(await fetchProjectProfile(path));    // привязка к удалённой конфигурации снята сервером
-      setNote('Конфигурация удалена');
+      setNote(wasBound ? 'Конфигурация удалена. Проект пересчитывается по уровню по умолчанию' : 'Конфигурация удалена');
+      if (wasBound) onApplied();
     });
   };
 
@@ -178,8 +213,10 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
     const url = URL.createObjectURL(new Blob([exportManifest(working)], { type: 'application/json' }));
     const a = document.createElement('a');
     a.href = url; a.download = `${working.name.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'profile'}.archforge-profile.json`;
+    document.body.appendChild(a);                   // в части браузеров ссылка вне DOM не скачивает
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const parentProfile = (): Profile | null => {
@@ -198,7 +235,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
   // ── отрисовка ──
   if (loadError) {
     return (
-      <div className="pv-backdrop" onClick={onClose}>
+      <div className="pv-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="pv pv--small" role="dialog" aria-modal="true" aria-label="Профиль проекта" onClick={(e) => e.stopPropagation()}>
           <div className="pv__head"><div className="pv__title"><Icon name="box" size={16} /> Профиль проекта</div>
             <button className="pv__x" onClick={onClose} title="Закрыть"><Icon name="close" size={16} /></button></div>
@@ -220,7 +257,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
   const activeRule = rules.find((r) => r.id === selRule) ?? rules[0];
 
   return (
-    <div className="pv-backdrop" onClick={close}>
+    <div className="pv-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className="pv" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Профиль проекта" onClick={(e) => { e.stopPropagation(); setMenu(false); }}>
         <div className="pv__head">
           <div className="pv__title"><Icon name="box" size={16} /> Профиль проекта <span className="pv__path" title={path}>{path}</span></div>
@@ -228,7 +265,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
         </div>
 
         {!ready ? <div className="pv__loading">Загружаю настройки…</div> : (
-          <div className="pv__cols">
+          <div className="pv__cols" inert={busy} aria-busy={busy}>
             <aside className="pv__side">
               <div className="pv__sidehead">Уровни</div>
               {levelCfgs.map((c) => <ConfigButton key={c.id} c={c} on={sel === c.id} bound={isBound(c)} onClick={() => selectConfig(c.id!)} />)}
@@ -271,7 +308,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
                 <span className="pv__spacer" />
                 {!readOnly && (
                   <div className="pv__menu">
-                    <button className="pv__btn" onClick={(e) => { e.stopPropagation(); setMenu((m) => !m); }}>Сбросить ▾</button>
+                    <button className="pv__btn" aria-haspopup="menu" aria-expanded={menu} onClick={(e) => { e.stopPropagation(); setMenu((m) => !m); }}>Сбросить ▾</button>
                     {menu && (
                       <div className="pv__pop" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => { edit(resetToLevel); setMenu(false); }}>К уровню {profile.level}<small>убрать все отличия: правила, пороги, словарь</small></button>
@@ -290,7 +327,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
                   onReset={(r) => edit((p) => resetRule(p, r))}
                   onResetCategory={(cat) => edit((p) => resetCategory(p, rules, cat))} canReset={!readOnly} />
               ) : (
-                <DictTab profile={profile} vocab={vocab} selRole={selRole ?? Object.keys(vocab.roles)[0] ?? null} onSelect={setSelRole}
+                <DictTab profile={profile} vocab={vocab} selRole={selRole ?? sortedRoles(vocab)[0] ?? null} onSelect={setSelRole}
                   onRole={(role, key, list) => { setSelRole(role); edit((p) => withRoleList(p, vocab, role, key, list)); }}
                   onResetRole={(role) => edit((p) => resetRole(p, role))}
                   onNaming={(key, list) => edit((p) => withNaming(p, vocab, key, list))}
@@ -301,7 +338,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
             <section className="pv__right">
               {tab === 'rules' && activeRule
                 ? <RuleDetails rule={activeRule} profile={profile} vocab={vocab} onParam={(key, v) => edit((p) => withParam(p, key, v, defaults))} />
-                : <DictHelp profile={profile} vocab={vocab} role={selRole ?? Object.keys(vocab.roles)[0] ?? null} />}
+                : <DictHelp profile={profile} vocab={vocab} role={selRole ?? sortedRoles(vocab)[0] ?? null} />}
             </section>
           </div>
         )}
@@ -309,6 +346,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
         {(errors.length > 0 || note) && (
           <div className={errors.length ? 'pv__banner pv__banner--err' : 'pv__banner'} role={errors.length ? 'alert' : 'status'}>
             {errors.length ? errors.map((m, i) => <div key={i}>{m}</div>) : note}
+            {conflict && <button className="pv__btn" onClick={() => { setConflict(false); void load(); }}>Загрузить актуальную версию (правки пропадут)</button>}
           </div>
         )}
 
@@ -336,7 +374,7 @@ export function ProfileView({ path, onClose, onApplied }: Props) {
               <h3>Есть несохранённые правки</h3>
               <p>Если продолжить, они пропадут.</p>
               <div className="pv__row">
-                <button className="pv__btn" onClick={() => setPending(null)}>Остаться</button>
+                <button className="pv__btn" autoFocus onClick={() => setPending(null)}>Остаться</button>
                 <button className="pv__btn pv__btn--danger" onClick={() => { const a = pending; setPending(null); setDraft(null); a(); }}>Отбросить</button>
               </div>
             </div>
@@ -401,7 +439,8 @@ function RulesTab(p: RulesTabProps) {
             const e = effectiveStrictness(r, p.profile);
             const changed = isRuleChanged(r, p.profile, p.paramDefaults);
             return (
-              <div key={r.id} className={`pv__rule${p.selected === r.id ? ' pv__rule--sel' : ''}`} onClick={() => p.onSelect(r.id)}>
+              <div key={r.id} className={`pv__rule${p.selected === r.id ? ' pv__rule--sel' : ''}`} role="button" tabIndex={0} aria-pressed={p.selected === r.id}
+                onClick={() => p.onSelect(r.id)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); p.onSelect(r.id); } }}>
                 <div className="pv__rule-main">
                   <div className="pv__rule-t">{r.title}</div>
                   <div className="pv__rule-d">
@@ -461,7 +500,7 @@ function Chips({ list, onChange, changed, label }: { list: string[]; onChange: (
   return (
     <div className="pv__tags">
       {list.map((m, i) => (
-        <span key={m} className={`pv__tag${changed ? ' pv__tag--chg' : ''}`}>{m}
+        <span key={`${m}-${i}`} className={`pv__tag${changed ? ' pv__tag--chg' : ''}`}>{m}
           <button title="Убрать" aria-label={`Убрать ${m}`} onClick={() => onChange(removeItem(list, i))}>×</button></span>
       ))}
       <input className="pv__add" placeholder="+ добавить" aria-label={`Добавить: ${label}`} value={v} maxLength={64}
@@ -477,17 +516,14 @@ function DictTab(p: {
   onRole: (role: string, key: VocabKey, list: string[]) => void; onResetRole: (role: string) => void;
   onNaming: (key: NamingKey, list: string[]) => void; onResetNaming: (key: NamingKey) => void; canReset: boolean;
 }) {
-  const roles = Object.keys(p.vocab.roles).sort((a, b) => {
-    const ma = (p.vocab.roles[a].markers?.length ?? 0) > 0, mb = (p.vocab.roles[b].markers?.length ?? 0) > 0;
-    return ma === mb ? a.localeCompare(b) : ma ? -1 : 1;     // роли с маркерами — выше технических
-  });
+  const roles = sortedRoles(p.vocab);
   return (
     <div className="pv__body">
       <div className="pv__note">Здесь вы говорите, как называются вещи в вашем коде: правила смотрят на роли, а не на имена. Пустой список возвращает встроенное значение. Оранжевая рамка — отличие от встроенного.</div>
       {roles.map((role) => {
         const ch = isRoleChanged(p.profile, p.vocab, role);
         return (
-          <div key={role} className={`pv__role${p.selRole === role ? ' pv__role--sel' : ''}`} onClick={() => p.onSelect(role)}>
+          <div key={role} className={`pv__role${p.selRole === role ? ' pv__role--sel' : ''}`} onClick={() => p.onSelect(role)} onFocus={() => p.onSelect(role)}>
             <div className="pv__role-h"><b>{role}</b>{ch && <span className="pv__src pv__src--cfg">изменено</span>}<span className="pv__spacer" />
               <button className="pv__rst" title="Сбросить роль" aria-label={`Сбросить роль ${role}`} disabled={!ch || !p.canReset} onClick={(e) => { e.stopPropagation(); p.onResetRole(role); }}><Icon name="reset" size={13} /></button></div>
             {(['markers', 'fallback', 'suffixes'] as VocabKey[]).map((k) => (
@@ -541,7 +577,7 @@ function ImportDialog({ onClose, onImport }: { onClose: () => void; onImport: (c
       <div className="pv-modal__box" role="dialog" aria-label="Импорт конфигурации" onClick={(e) => e.stopPropagation()}>
         <h3>Импорт конфигурации</h3>
         <p className="pv__muted">Вставьте JSON или выберите файл. Появится несохранённая конфигурация — проверьте и сохраните.</p>
-        <textarea rows={7} aria-label="JSON конфигурации" value={text} onChange={(e) => { setText(e.target.value); setErr(''); }} placeholder='{ "name": "…", "profile": { "level": "Standard" } }' />
+        <textarea rows={7} autoFocus aria-label="JSON конфигурации" value={text} onChange={(e) => { setText(e.target.value); setErr(''); }} placeholder='{ "name": "…", "profile": { "level": "Standard" } }' />
         <input type="file" accept=".json,application/json" aria-label="Файл конфигурации"
           onChange={async (e) => { const f = e.target.files?.[0]; if (f) { if (f.size > 256 * 1024) setErr('Файл слишком большой (не больше 256 КБ)'); else submit(await f.text()); } }} />
         {err && <div className="pv__err" role="alert">{err}</div>}
