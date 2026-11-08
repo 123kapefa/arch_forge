@@ -491,3 +491,6 @@ $RECYCLE.BIN/
 node_modules/
 dist/
 build/
+
+# Локальные инструменты AI (Serena MCP)
+.serena/
