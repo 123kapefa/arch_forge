@@ -19,9 +19,10 @@ public static class HttpCallGraphBuilder
     private const double InferredConfidence = 0.6;
 
     public static SystemGraph Enrich(SystemGraph graph, IReadOnlyList<ServiceAnalysis> analyses,
-        IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null)
+        IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null, Profiles.ServiceNaming? naming = null)
     {
         if (analyses.Count == 0) return graph;
+        naming ??= Profiles.ServiceNaming.Default;
 
         // External-узлы (синтетические "http://host" от нерезолвленных compose/config-URL) НЕ цели резолва: иначе
         // код-вызов на тот же хост схлопнулся бы в Inferred(0.6) вместо честного External (P3 ревью #114).
@@ -53,7 +54,7 @@ public static class HttpCallGraphBuilder
         foreach (var sa in analyses)
         {
             if (sa.HttpCalls.Count == 0) continue;
-            var srcId = SourceNodeId(sa, bySystem);
+            var srcId = SourceNodeId(sa, bySystem, naming);
             if (srcId is null)
             {
                 // источник не привязался к узлу (2+ app-узла в системе, тай-брейк не сошёлся) — вызовы есть, но не размещены
@@ -109,12 +110,12 @@ public static class HttpCallGraphBuilder
 
     // Узел-источник для анализа: сервис-узлы его системы (SystemOf(id) == location). Один → он; иначе снимаем
     // сателлиты (migrate/seed/cron) и берём совпавший по имени с .sln; неоднозначно → null (не гадаем).
-    private static string? SourceNodeId(ServiceAnalysis sa, IReadOnlyDictionary<string, List<SystemNode>> bySystem)
+    private static string? SourceNodeId(ServiceAnalysis sa, IReadOnlyDictionary<string, List<SystemNode>> bySystem, Profiles.ServiceNaming naming)
     {
         if (!bySystem.TryGetValue(sa.Location, out var cands) || cands.Count == 0) return null;
         if (cands.Count == 1) return cands[0].Id;
 
-        var real = cands.Where(n => !IsSatellite(n.Name)).ToList();
+        var real = cands.Where(n => !naming.IsSatellite(n.Name)).ToList();
         if (real.Count == 1) return real[0].Id;
 
         // тай-брейк по имени .sln: точное совпадение, иначе вхождение (auth-service ≈ AuthService), как NameMatchesSln.
@@ -132,8 +133,7 @@ public static class HttpCallGraphBuilder
         a.Length >= 4 && b.Length >= 4 && (a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal));
 
     // Сателлит-деплой (миграторы/сидеры/крон) — не несёт код сервиса; для тай-брейка источника (как MicroserviceLayerBuilder).
-    private static readonly string[] SatelliteMarkers = { "migrat", "seed", "cron" };
-    private static bool IsSatellite(string name) => SatelliteMarkers.Any(m => name.Contains(m, StringComparison.OrdinalIgnoreCase));
+    // Маркеры сателлитов — в Profiles.ServiceNaming (настраиваются профилем).
 
     // Имя → строчные буквы/цифры: «AuthService» ≡ «auth-service» → «authservice» (тай-брейк источника по имени .sln).
     private static string NormAlnum(string s) => new(s.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());

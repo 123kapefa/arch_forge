@@ -16,8 +16,9 @@ public static class MicroserviceLayerBuilder
     /// <paramref name="composeServices"/> (id+имя compose-узлов) позволяет привязать код ВНЕ /Services/
     /// (gateway и т.п.) к его узлу по имени — иначе он остаётся без слоёв/endpoints (#75).</summary>
     public static IReadOnlyDictionary<string, Entry> Build(IReadOnlyList<ServiceAnalysis> analyses,
-        IReadOnlyList<(string Id, string Name)>? composeServices = null)
+        IReadOnlyList<(string Id, string Name)>? composeServices = null, Profiles.ServiceNaming? naming = null)
     {
+        naming ??= Profiles.ServiceNaming.Default;
         // имя compose-сервиса (норм. alnum) → имя: для сопоставления сегмента пути кода вне /Services/ с узлом (#75)
         var byNorm = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (_, name) in composeServices ?? [])
@@ -34,7 +35,7 @@ public static class MicroserviceLayerBuilder
             // Признак партиции — тот же MicroserviceOf, что и группировка (иначе ключи схлопнутся и данные потеряются).
             // В мульти-сервисном репо главного нет — catch-all остаётся общим (не привязываем чужой код).
             var hasServices = sa.Result.Types.Any(t => MicroserviceOf(t.File) is not null);
-            var primary = hasServices ? null : PrimaryNode(sa.Result.Types, byNorm, sa.Service.Name);
+            var primary = hasServices ? null : PrimaryNode(sa.Result.Types, byNorm, sa.Service.Name, naming);
             // minimal-API эндпоинты сервиса — по тому же ключу микросервиса, что и типы (#71)
             var miniByMs = sa.MinimalEndpoints
                 .GroupBy(h => MsKey(h.File, location, byNorm, primary), StringComparer.OrdinalIgnoreCase)
@@ -110,17 +111,16 @@ public static class MicroserviceLayerBuilder
 
     // Сателлит-деплой (не несёт код сервиса): миграторы/сидеры/крон-джобы — исключаем из кандидатов на «главного».
     // Только специфичные job-маркеры: «worker» намеренно НЕ включён — это легитимный тип сервиса (.NET Worker).
-    private static readonly string[] SatelliteMarkers = { "migrat", "seed", "cron" };
-    private static bool IsSatellite(string name) => SatelliteMarkers.Any(m => name.Contains(m, StringComparison.OrdinalIgnoreCase));
+    // Маркеры — в Profiles.ServiceNaming (настраиваются профилем).
 
     // Главный узел одно-сервисного .sln (на него уходит весь код, #81). Из compose-узлов берём НЕ-сателлиты,
     // среди них — с бóльшим числом совпавших проектов; при равенстве — узел, чьё имя ≈ имени .sln (auth-service ≡
     // AuthService). ВАЖНО: возвращаем узел только при ПОЛОЖИТЕЛЬНОМ сигнале (совпал проект ИЛИ имя ≈ .sln) — иначе
     // не гадаем по алфавиту среди всех узлов системы (мог бы уехать на чужой sidecar вроде adminer); null → обычный
     // catch-all (безопасная деградация к прежнему поведению).
-    private static string? PrimaryNode(IReadOnlyList<TypeInfo> types, IReadOnlyDictionary<string, string> byNorm, string slnName)
+    private static string? PrimaryNode(IReadOnlyList<TypeInfo> types, IReadOnlyDictionary<string, string> byNorm, string slnName, Profiles.ServiceNaming naming)
     {
-        var candidates = byNorm.Values.Where(n => !IsSatellite(n)).Distinct(StringComparer.Ordinal).ToList();
+        var candidates = byNorm.Values.Where(n => !naming.IsSatellite(n)).Distinct(StringComparer.Ordinal).ToList();
         if (candidates.Count == 0) return null;
         var counts = candidates.ToDictionary(n => n, _ => 0, StringComparer.Ordinal);
         foreach (var t in types)
@@ -181,11 +181,10 @@ public static class MicroserviceLayerBuilder
     }
 
     // Имя сервиса → нормализованное: нижний регистр без деплой-суффиксов (catalog-api → catalog).
-    private static readonly string[] Suffixes = { "-api", "-service", "-ui", "-app", "-web", "-server" };
     private static string Normalize(string name)
     {
         var n = name.ToLowerInvariant();
-        foreach (var s in Suffixes)
+        foreach (var s in Profiles.ServiceNaming.LayerKeySuffixes)
             if (n.EndsWith(s, StringComparison.Ordinal)) return n[..^s.Length];
         return n;
     }
