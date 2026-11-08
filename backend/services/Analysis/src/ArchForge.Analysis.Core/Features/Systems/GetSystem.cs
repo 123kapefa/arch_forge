@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core.Profiles;
 using ArchForge.Analysis.Core.Systems;
 using ArchForge.Contracts;
 using ArchForge.SharedKernel;
@@ -14,7 +15,8 @@ namespace ArchForge.Analysis.Core.Features.Systems;
 // Линзы, требующие КОДА (тяжелее: разбор per-service): drift — «дрейф от свода» (convention);
 // layers — «нарушение направления слоёв» (architecture). Обе opt-in, независимы (фронт включает нужную линзе).
 // calls — «call-graph»: конкретные HTTP-вызовы между сервисами из кода (E3.1). Как drift/layers — opt-in, требует Roslyn.
-public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false, string? Env = null, bool Calls = false);
+// Profile (adr/0012): уровень + переопределения правил + пороги; null → профиль по умолчанию (Standard).
+public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false, string? Env = null, bool Calls = false, ProjectProfile? Profile = null);
 
 public sealed class GetSystemEndpoint : IEndpoint
 {
@@ -47,6 +49,12 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             !(Directory.Exists(query.Path) || File.Exists(query.Path))) return null;
 
         SystemGraph graph = source.Read(query.Path, query.Env, ct);
+        var profile = query.Profile ?? ProjectProfile.Default;
+
+        // Порог цикла сервисов — параметр профиля. Источник считает проблемы с порогом по умолчанию; если профиль
+        // его изменил — пересчитываем только цикл (чистая функция над рёбрами графа), остальное не трогаем.
+        if (profile.Thresholds.ServiceCycleMinConfidence != ServiceCycleDetector.DefaultMinConfidence)
+            graph = graph with { Problems = ReplaceCycles(graph.Problems, ServiceCycleDetector.Detect(graph, profile.Thresholds.ServiceCycleMinConfidence)) };
 
         // Свод: из файла проекта (если есть), иначе встроенный. Нужен и для линз, и чтобы показать источник во фронте.
         var pack = Directory.Exists(query.Path) ? ConventionPack.Load(query.Path) : ConventionPack.Default();
@@ -95,6 +103,9 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
                 graph = HttpCallGraphBuilder.Enrich(graph, analyses, nodeLayers);
         }
 
+        // Профиль: выключенные правила убираем, остальным ставим заданную строгость (после всех детекторов).
+        graph = graph with { Problems = ProfileApplier.Apply(graph.Problems, profile) };
+
         string project = File.Exists(query.Path)
             ? Path.GetFileName(Path.GetDirectoryName(query.Path)) ?? "system"
             : new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
@@ -104,5 +115,26 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             Degradations = degradations.Count > 0 ? degradations : null,
         };
         return dto;
+    }
+
+    // Заменяет циклы сервисов на пересчитанные, СОХРАНЯЯ порядок прочих проблем: новые циклы встают на место первого
+    // прежнего; прежних не было — после последней проблемы общей БД/хранилища (где их ставит SystemProblemDetector), иначе в начало.
+    private static List<SystemProblem> ReplaceCycles(IReadOnlyList<SystemProblem> problems, IReadOnlyList<SystemProblem> cycles)
+    {
+        var at = -1;
+        for (var i = 0; i < problems.Count; i++) if (problems[i].Kind == "service-cycle") { at = i; break; }
+        if (at < 0)
+        {
+            at = 0;
+            for (var i = 0; i < problems.Count; i++) if (problems[i].Kind is "shared-db" or "shared-store") at = i + 1;
+        }
+        var result = new List<SystemProblem>(problems.Count + cycles.Count);
+        for (var i = 0; i < problems.Count; i++)
+        {
+            if (i == at) result.AddRange(cycles);
+            if (problems[i].Kind != "service-cycle") result.Add(problems[i]);
+        }
+        if (at >= problems.Count) result.AddRange(cycles);
+        return result;
     }
 }

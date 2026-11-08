@@ -8,9 +8,10 @@ public static class ServiceCycleDetector
     // Цикл образуют только УВЕРЕННО разрешённые вызовы (цель в том же compose, conf 0.8). Догадки о цели по
     // совпадению имени между несвязанными системами (0.5) не эскалируем в Critical — ложная уверенность хуже
     // честного unknown (adr/0008). Межсистемные циклы — отдельный срез с меньшей серьёзностью (backlog).
-    private const double MinConfidence = 0.8;
+    // Порог теперь параметр профиля (adr/0012); по умолчанию прежние 0.8.
+    public const double DefaultMinConfidence = Profiles.ProfileParams.DefaultServiceCycleMinConfidence;
 
-    public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph)
+    public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph, double minConfidence = DefaultMinConfidence)
     {
         var services = graph.Nodes.Where(n => n.Kind == SystemNodeKind.Service)
             .Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
@@ -21,7 +22,7 @@ public static class ServiceCycleDetector
 
         var adj = services.ToDictionary(s => s, _ => new List<string>(), StringComparer.Ordinal);
         foreach (var e in graph.Edges)
-            if (e is { Kind: "http-call", Deferred: false } && e.Confidence >= MinConfidence &&
+            if (e is { Kind: "http-call", Deferred: false } && e.Confidence >= minConfidence &&
                 e.Source != e.Target && services.Contains(e.Source) && services.Contains(e.Target))
                 adj[e.Source].Add(e.Target);
 
