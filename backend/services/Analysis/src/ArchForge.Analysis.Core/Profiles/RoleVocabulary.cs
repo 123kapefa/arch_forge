@@ -10,10 +10,10 @@ public sealed record RoleVocabulary(
     IReadOnlyList<string> Fallback,
     IReadOnlyList<string> Suffixes)
 {
-    /// <summary>Защита от мусора на входе: пустые/слишком длинные имена отбрасываются, записей не больше 64.</summary>
-    public RoleVocabulary Sanitized() => new(Clean(Markers), Clean(Fallback), Clean(Suffixes));
+    /// <summary>Защита от мусора на входе: пустые/слишком длинные имена отбрасываются, записей: маркеры и запасные не больше 32, суффиксы не больше 16.</summary>
+    public RoleVocabulary Sanitized() => new(Clean(Markers, 32), Clean(Fallback, 32), Clean(Suffixes, 16));
 
-    private static IReadOnlyList<string> Clean(IReadOnlyList<string>? list) =>
+    private static IReadOnlyList<string> Clean(IReadOnlyList<string>? list, int max) =>
         [.. (list ?? []).Select(s => (s ?? "").Trim()).Where(s => s.Length is > 0 and <= 128)
-            .Distinct(StringComparer.Ordinal).Take(64)];
+            .Distinct(StringComparer.Ordinal).Take(max)];
 }

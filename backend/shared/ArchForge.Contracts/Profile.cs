@@ -112,7 +112,8 @@ public static class ProfileValidator
     public const int MaxRoles = 64;
     public const int MaxNameLength = 64;
     public const int MaxItemLength = 128;
-    public const int MaxListSize = 64;
+    public const int MaxMarkers = 32;      // маркеры и запасные признаки одной роли
+    public const int MaxSuffixes = 16;     // суффиксы одной роли: каждый — отдельное «ожидание» для КАЖДОГО типа проекта, поэтому лимит строже
     public const int MaxNamingList = 32;
     public const int MaxNamingItemLength = 64;
     public const int MaxConfigNameLength = 100;
@@ -166,9 +167,9 @@ public static class ProfileValidator
             {
                 if (string.IsNullOrWhiteSpace(role) || role.Length > MaxNameLength) errors.Add($"имя роли «{Trim(role)}» должно быть от 1 до {MaxNameLength} символов");
                 if (v is null) { errors.Add($"роль «{Trim(role)}»: значение не задано"); continue; }
-                CheckList($"роль «{Trim(role)}», маркеры", v.Markers, errors);
-                CheckList($"роль «{Trim(role)}», запасные признаки", v.Fallback, errors);
-                CheckList($"роль «{Trim(role)}», суффиксы", v.Suffixes, errors);
+                CheckList($"роль «{Trim(role)}», маркеры", v.Markers, MaxMarkers, errors);
+                CheckList($"роль «{Trim(role)}», запасные признаки", v.Fallback, MaxMarkers, errors);
+                CheckList($"роль «{Trim(role)}», суффиксы", v.Suffixes, MaxSuffixes, errors);
             }
         }
         return errors;
@@ -187,11 +188,11 @@ public static class ProfileValidator
         return errors;
     }
 
-    private static void CheckList(string what, IReadOnlyList<string>? list, List<string> errors)
+    private static void CheckList(string what, IReadOnlyList<string>? list, int max, List<string> errors)
     {
         if (list is null) return;
-        if (list.Count > MaxListSize) errors.Add($"{what}: не больше {MaxListSize} записей");
-        if (list.Take(MaxListSize).Any(s => string.IsNullOrWhiteSpace(s) || s.Length > MaxItemLength))
+        if (list.Count > max) errors.Add($"{what}: не больше {max} записей");
+        if (list.Take(max).Any(s => string.IsNullOrWhiteSpace(s) || s.Length > MaxItemLength))
             errors.Add($"{what}: записи от 1 до {MaxItemLength} символов");
     }
 

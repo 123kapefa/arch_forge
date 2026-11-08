@@ -355,4 +355,15 @@ public class ProfileEndpointsTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Forbidden, (await _http.SendAsync(req)).StatusCode);
     }
+
+    [Fact]
+    public async Task Map_passes_refresh_to_analysis_for_system()
+    {
+        await _http.GetAsync("/api/system?path=" + Uri.EscapeDataString(Proj) + "&refresh=true");
+        Assert.Contains("refresh=true", _analysis.Calls[^1].Url);
+
+        await _http.GetAsync("/api/system?path=" + Uri.EscapeDataString(Proj));
+        Assert.DoesNotContain("refresh", _analysis.Calls[^1].Url);
+    }
 }
+

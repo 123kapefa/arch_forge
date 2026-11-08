@@ -34,13 +34,14 @@ public sealed class AnalysisClient(HttpClient http)
     /// Код-линзы (тяжелее: разбор per-service): <paramref name="drift"/> — «дрейф от свода» (convention);
     /// <paramref name="layers"/> — «нарушение слоёв» (architecture).</summary>
     public async Task<GraphDto?> GetSystemAsync(
-        string path, bool drift = false, bool layers = false, string? env = null, bool calls = false, CancellationToken ct = default)
+        string path, bool drift = false, bool layers = false, string? env = null, bool calls = false, bool refresh = false, CancellationToken ct = default)
     {
         string url = $"/api/system?path={Uri.EscapeDataString(path)}";
         if (drift) url += "&drift=true";
         if (layers) url += "&layers=true";
         if (!string.IsNullOrWhiteSpace(env)) url += $"&env={Uri.EscapeDataString(env)}";
         if (calls) url += "&calls=true"; // E3.1 call-graph (opt-in, требует Roslyn)
+        if (refresh) url += "&refresh=true"; // «Пере-анализировать»: сбросить кеш разбора кода
         using HttpResponseMessage response = await http.GetAsync(url, ct);
         if (!response.IsSuccessStatusCode)
             return null;
@@ -51,13 +52,14 @@ public sealed class AnalysisClient(HttpClient http)
     /// null — если Analysis не смог или не принял профиль.</summary>
     public async Task<GraphDto?> GetSystemWithProfileAsync(
         string path, ProfileDto profile, bool drift = false, bool layers = false, string? env = null, bool calls = false,
-        CancellationToken ct = default)
+        bool refresh = false, CancellationToken ct = default)
     {
         string url = $"/api/system?path={Uri.EscapeDataString(path)}";
         if (drift) url += "&drift=true";
         if (layers) url += "&layers=true";
         if (!string.IsNullOrWhiteSpace(env)) url += $"&env={Uri.EscapeDataString(env)}";
         if (calls) url += "&calls=true";
+        if (refresh) url += "&refresh=true";
         try
         {
             using HttpResponseMessage response = await http.PostAsJsonAsync(url, profile, ct);

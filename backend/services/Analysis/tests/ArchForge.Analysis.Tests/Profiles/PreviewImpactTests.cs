@@ -201,4 +201,100 @@ public class PreviewImpactTests
     {
         Assert.All(new[] { LevelHint.Suggest(0, false, 0, 0), LevelHint.Suggest(9, true, 90, 900) }, h => Assert.NotEmpty(h.Reasons));
     }
+
+    [Fact]
+    public void Coverage_severity_problems_are_not_counted_as_findings()
+    {
+        var dir = TempDir();
+        var graph = new SystemGraph([Svc("svc-a/app")], [],
+            [P("drift", ProblemSeverity.Coverage, ProblemCategory.Convention), P("shared-db", ProblemSeverity.Critical)]);
+
+        var pv = Handler(dir, graph).Handle(new PreviewQuery(dir, ProjectProfile.Default))!;
+
+        Assert.Equal(0, pv.Current.Rules["drift"].Count);
+        var byRules = pv.Current.Rules.Values.Sum(r => r.Count);
+        Assert.Equal(pv.Current.Errors + pv.Current.Warnings + pv.Current.Infos, byRules);   // сумма по правилам = сумме по строгости
+    }
+
+    private sealed class RecordingCache : IScanCacheControl
+    {
+        public List<string> Invalidated { get; } = [];
+        public void InvalidateUnder(string root) => Invalidated.Add(root);
+    }
+
+    [Fact]
+    public void Refresh_invalidates_the_scan_cache_under_the_project_root_only_when_asked()
+    {
+        var dir = TempDir();
+        var graph = new SystemGraph([Svc("a")], [], []);
+        var cache = new RecordingCache();
+        var handler = new GetSystemHandler(new FakeSource(graph), null, null, cache);
+
+        handler.Handle(new GetSystemQuery(dir));
+        Assert.Empty(cache.Invalidated);                                  // обычный запрос кеш не трогает
+
+        handler.Handle(new GetSystemQuery(dir, Refresh: true));
+        Assert.Equal([dir], cache.Invalidated);
+    }
+
+    [Fact]
+    public void Preview_never_refreshes_the_cache()
+    {
+        var dir = TempDir();
+        var graph = new SystemGraph([Svc("a")], [], []);
+        var cache = new RecordingCache();
+        var system = new GetSystemHandler(new FakeSource(graph), null, null, cache);
+
+        new PreviewImpactHandler(system, new FakeSource(graph)).Handle(new PreviewQuery(dir, ProjectProfile.Default));
+
+        Assert.Empty(cache.Invalidated);                                  // иначе каждая правка профиля заново читала бы код
+    }
+
+    [Fact]
+    public void Huge_vocabulary_on_many_types_stays_fast_and_correct()
+    {
+        var dir = TempDir();
+        var graph = new SystemGraph([Svc("svc-a/app")], [], []);
+        var raw = Enumerable.Range(0, 5000).Select(i => T($"Create{i}Command", "Application", i % 2 == 0 ? "ICommand" : "IRequest")).ToArray();
+        // максимум, который пропускает валидатор: 64 роли × (32 маркера, 16 суффиксов); IRequest — маркер роли Command
+        var vocab = Enumerable.Range(0, 64).ToDictionary(i => i == 0 ? "Command" : "Role" + i,
+            i => new RoleVocabulary([.. Enumerable.Range(0, 31).Select(j => $"IMarker{i}_{j}"), i == 0 ? "IRequest" : "IExtra" + i], [], [.. Enumerable.Range(0, 16).Select(j => $"Suf{i}_{j}")]));
+        var profile = new ProjectProfile(Vocabulary: vocab);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var pv = Handler(dir, graph, raw).Handle(new PreviewQuery(dir, profile))!;
+        sw.Stop();
+
+        Assert.Equal(0, pv.MarkerCounts.GetValueOrDefault("ICommand"));       // ICommand заменён маркерами роли Command из профиля, в счётчиках его нет
+        Assert.Equal(2500, pv.MarkerCounts["IRequest"]);                   // счётчики верны и при максимальном словаре
+        Assert.Equal(0, pv.MarkerCounts["IMarker3_7"]);
+        Assert.True(pv.SuffixCounts.ContainsKey("Suf0_0"));
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), $"слишком долго: {sw.Elapsed}");
+    }
+
+    [Fact]
+    public void A_type_with_two_matching_markers_is_counted_once_per_marker()
+    {
+        var dir = TempDir();
+        var graph = new SystemGraph([Svc("svc-a/app")], [], []);
+        var handler = Handler(dir, graph, T("XCommand", "Application", "ICommand", "ICommand", "IRequest"));
+        var withRequest = new ProjectProfile(Vocabulary: new Dictionary<string, RoleVocabulary> { ["Command"] = new(["ICommand", "IRequest"], [], []) });
+
+        var pv = handler.Handle(new PreviewQuery(dir, withRequest))!;
+
+        Assert.Equal(1, pv.MarkerCounts["ICommand"]);                     // повтор базового типа не удваивает счётчик
+        Assert.Equal(1, pv.MarkerCounts["IRequest"]);
+    }
+
+    [Fact]
+    public void Cancelled_request_does_not_start_a_preview()
+    {
+        var dir = TempDir();
+        var graph = new SystemGraph([Svc("svc-a/app")], [], []);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => Handler(dir, graph).Handle(new PreviewQuery(dir, ProjectProfile.Default), cts.Token));
+    }
 }
+

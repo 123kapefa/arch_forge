@@ -148,5 +148,14 @@ public class ProfileEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, nopath.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, nobody.StatusCode);
     }
+
+    [Fact]
+    public async Task System_accepts_the_refresh_flag_on_get_and_post()
+    {
+        var dir = TempDir();
+
+        Assert.Equal(HttpStatusCode.OK, (await _http.GetAsync($"/api/system?path={Uri.EscapeDataString(dir)}&refresh=true")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _http.PostAsJsonAsync($"/api/system?path={Uri.EscapeDataString(dir)}&refresh=true", new ProfileDto("Standard"))).StatusCode);
+    }
 }
 

@@ -771,7 +771,7 @@ export function SystemView() {
     flowObsRef.current = ro;
   }, []);
 
-  const load = useCallback(async (rawPath: string, opts?: { cache?: boolean }) => {
+  const load = useCallback(async (rawPath: string, opts?: { cache?: boolean; refresh?: boolean }) => {
     const path = rawPath.trim();
     if (!path) return;
     const { drift, layers } = flagsRef.current; // какие код-анализы гнать (выбор пользователя)
@@ -798,7 +798,7 @@ export function SystemView() {
     setDrill2(null);
     setImports(null); // новый проект — сбросить кеш импортов (перезагрузятся при открытии экрана)
     try {
-      const g = await fetchSystem({ path, drift, layers, env }, ctrl.signal);
+      const g = await fetchSystem({ path, drift, layers, env, refresh: opts?.refresh }, ctrl.signal);
       if (loadAbortRef.current !== ctrl) return; // нас вытеснили/закрыли, пока ждали — не воскрешаем состояние
       setGraph(g);
       setLoadedPath(path);
@@ -1166,7 +1166,7 @@ export function SystemView() {
                 recents={recents}
                 onClose={() => setMenuOpen(false)}
                 actions={{
-                  reanalyze: () => void load(loadedPath),
+                  reanalyze: () => void load(loadedPath, { refresh: true }),
                   save: () => flowRef.current?.save(),
                   reset: () => flowRef.current?.reset(),
                   exportJson,

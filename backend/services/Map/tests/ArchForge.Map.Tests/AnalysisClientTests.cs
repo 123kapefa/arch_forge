@@ -187,5 +187,21 @@ public class AnalysisClientTests
             new AnalysisClient(new HttpClient(new RecordingHandler()) { BaseAddress = new Uri("http://analysis") })
                 .PreviewImpactAsync("/root", new ProfileDto("Standard"), cts.Token));
     }
+
+    [Fact]
+    public async Task Refresh_flag_reaches_analysis_on_both_system_calls()
+    {
+        var rec = new RecordingHandler();
+        var client = new AnalysisClient(new HttpClient(rec) { BaseAddress = new Uri("http://analysis") });
+
+        await client.GetSystemAsync("/root", refresh: true);
+        Assert.Contains("refresh=true", rec.Url);
+
+        await client.GetSystemWithProfileAsync("/root", new ProfileDto("Standard"), refresh: true);
+        Assert.Contains("refresh=true", rec.Url);
+
+        await client.GetSystemAsync("/root");
+        Assert.DoesNotContain("refresh", rec.Url!);                       // по умолчанию кеш не сбрасывается
+    }
 }
 

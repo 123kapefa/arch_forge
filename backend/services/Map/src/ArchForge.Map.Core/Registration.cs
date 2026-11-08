@@ -12,7 +12,12 @@ public static class Registration
     public static IServiceCollection AddCore(this IServiceCollection services, string analysisBaseUrl)
     {
         services.AddHttpClient<AnalysisClient>(client =>
-            client.BaseAddress = new Uri(analysisBaseUrl));
+        {
+            client.BaseAddress = new Uri(analysisBaseUrl);
+            // Холодный разбор большого проекта (предпросмотр профиля, первый /api/system) идёт дольше стандартных 100 секунд.
+            // Фронт ставит свои, более короткие сроки и рвёт запрос отменой — она доходит до Analysis.
+            client.Timeout = TimeSpan.FromMinutes(5);
+        });
         services.AddSingleton<IRuleCatalogProvider, AnalysisRuleCatalogProvider>();
         services.AddSingleton<ProfileService>();
         services.AddEndpoints(typeof(Registration).Assembly);

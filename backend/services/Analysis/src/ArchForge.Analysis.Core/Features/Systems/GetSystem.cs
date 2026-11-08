@@ -16,17 +16,18 @@ namespace ArchForge.Analysis.Core.Features.Systems;
 // layers — «нарушение направления слоёв» (architecture). Обе opt-in, независимы (фронт включает нужную линзе).
 // calls — «call-graph»: конкретные HTTP-вызовы между сервисами из кода (E3.1). Как drift/layers — opt-in, требует Roslyn.
 // Profile (adr/0012): уровень + переопределения правил + пороги; null → профиль по умолчанию (Standard).
-public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false, string? Env = null, bool Calls = false, ProjectProfile? Profile = null);
+// Refresh: принудительно сбросить кеш разбора кода под этим путём («Пере-анализировать»).
+public sealed record GetSystemQuery(string Path, bool Drift = false, bool Layers = false, string? Env = null, bool Calls = false, ProjectProfile? Profile = null, bool Refresh = false);
 
 public sealed class GetSystemEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapGet("/api/system", (string path, bool? drift, bool? layers, string? env, bool? calls,
+        app.MapGet("/api/system", (string path, bool? drift, bool? layers, string? env, bool? calls, bool? refresh,
             GetSystemHandler handler, ILogger<GetSystemEndpoint> log, CancellationToken ct) =>
         {
             try
             {
-                GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false, env, calls ?? false), ct);
+                GraphDto? graph = handler.Handle(new GetSystemQuery(path, drift ?? false, layers ?? false, env, calls ?? false, Refresh: refresh ?? false), ct);
                 return graph is null
                     ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
                     : Results.Ok(graph);
@@ -48,7 +49,7 @@ public sealed class GetSystemEndpoint : IEndpoint
 public sealed class GetSystemWithProfileEndpoint : IEndpoint
 {
     public void MapEndpoint(IEndpointRouteBuilder app) =>
-        app.MapPost("/api/system", (string path, bool? drift, bool? layers, string? env, bool? calls, ProfileDto? profile,
+        app.MapPost("/api/system", (string path, bool? drift, bool? layers, string? env, bool? calls, bool? refresh, ProfileDto? profile,
             GetSystemHandler handler, ILogger<GetSystemWithProfileEndpoint> log, CancellationToken ct) =>
         {
             if (!ProfileMapping.TryToProfile(profile, out var parsed, out var errors))
@@ -56,7 +57,7 @@ public sealed class GetSystemWithProfileEndpoint : IEndpoint
             try
             {
                 GraphDto? graph = handler.Handle(
-                    new GetSystemQuery(path, drift ?? false, layers ?? false, env, calls ?? false, parsed), ct);
+                    new GetSystemQuery(path, drift ?? false, layers ?? false, env, calls ?? false, parsed, refresh ?? false), ct);
                 return graph is null
                     ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
                     : Results.Ok(graph);
@@ -69,13 +70,15 @@ public sealed class GetSystemWithProfileEndpoint : IEndpoint
         });
 }
 
-public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? analyzer = null, IConstructionSource? construction = null)
+public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? analyzer = null, IConstructionSource? construction = null, IScanCacheControl? cache = null)
 {
     public GraphDto? Handle(GetSystemQuery query, CancellationToken ct = default)
     {
         // ISystemSource принимает и корень-папку, и путь к самому compose (как его тесты) — не сужаем.
         if (string.IsNullOrWhiteSpace(query.Path) ||
             !(Directory.Exists(query.Path) || File.Exists(query.Path))) return null;
+
+        if (query.Refresh) cache?.InvalidateUnder(query.Path);   // «Пере-анализировать»: не берём устаревший разбор из кеша
 
         SystemGraph graph = source.Read(query.Path, query.Env, ct);
         var profile = query.Profile ?? ProjectProfile.Default;

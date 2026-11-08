@@ -71,7 +71,7 @@ public sealed class PreviewProfileEndpoint : IEndpoint
                 if (errors.Count > 0) return ProfileHttp.Fail(400, [.. errors]);
                 return await analysis.PreviewImpactAsync(path, profile, ct) is { } dto
                     ? Results.Ok(dto)
-                    : ProfileHttp.Fail(502, ["Analysis не смог посчитать предпросмотр: проверьте путь проекта и профиль"]);
+                    : ProfileHttp.Fail(502, ["Analysis не смог посчитать предпросмотр: сервис недоступен, не принял путь или профиль, либо разбор не уложился во время"]);
             }));
 }
 

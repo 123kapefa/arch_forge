@@ -158,6 +158,8 @@ export interface SystemQuery {
   layers?: boolean;
   /** выбранная среда развёртывания (E9.1 слой 2): merge docker-compose.<env>.yml; пусто → default */
   env?: string;
+  /** «Пере-анализировать»: сбросить кеш разбора кода на сервере (иначе неизменённый код отдаётся из кеша) */
+  refresh?: boolean;
 }
 
 // Код-линзы гоняют Roslyn по каждому сервису — дольше структурного скана; но не бесконечно.
@@ -169,6 +171,7 @@ export async function fetchSystem(q: SystemQuery, signal?: AbortSignal): Promise
   if (q.drift) params.set('drift', 'true');
   if (q.layers) params.set('layers', 'true');
   if (q.env) params.set('env', q.env);
+  if (q.refresh) params.set('refresh', 'true');
 
   const res = await fetchWithTimeout(`/api/system?${params.toString()}`, TIMEOUT_MS, signal);
   if (!res.ok) {

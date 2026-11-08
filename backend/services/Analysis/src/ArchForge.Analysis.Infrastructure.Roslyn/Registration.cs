@@ -12,6 +12,7 @@ public static class Registration
         services.AddSingleton<RoslynTypeSource>();
         // Дорогие источники обёрнуты кешем по отпечатку дерева (предпросмотр влияния профиля не читает код заново).
         services.AddSingleton<ScanCache>();
+        services.AddSingleton<IScanCacheControl>(sp => sp.GetRequiredService<ScanCache>());   // «Пере-анализировать» сбрасывает кеш
         services.AddSingleton<ITypeSource>(sp => new CachingTypeSource(
             ActivatorUtilities.CreateInstance<RoslynSemanticTypeSource>(sp, sp.GetRequiredService<RoslynTypeSource>()),
             sp.GetRequiredService<ScanCache>()));
