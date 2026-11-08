@@ -40,6 +40,35 @@ public sealed class GetSystemEndpoint : IEndpoint
         });
 }
 
+/// <summary>
+/// POST /api/system?path=… — то же, что GET, но с профилем проекта в теле (adr/0012). Профиль приходит от Map
+/// (там он хранится); неверный профиль — 400 со списком ошибок, анализ не запускается. GET остаётся как был
+/// (профиль по умолчанию), контракт аддитивный.
+/// </summary>
+public sealed class GetSystemWithProfileEndpoint : IEndpoint
+{
+    public void MapEndpoint(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/system", (string path, bool? drift, bool? layers, string? env, bool? calls, ProfileDto? profile,
+            GetSystemHandler handler, ILogger<GetSystemWithProfileEndpoint> log, CancellationToken ct) =>
+        {
+            if (!ProfileMapping.TryToProfile(profile, out var parsed, out var errors))
+                return Results.BadRequest(new { error = "профиль не принят", errors });
+            try
+            {
+                GraphDto? graph = handler.Handle(
+                    new GetSystemQuery(path, drift ?? false, layers ?? false, env, calls ?? false, parsed), ct);
+                return graph is null
+                    ? Results.BadRequest(new { error = "path обязателен и должен существовать" })
+                    : Results.Ok(graph);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                log.LogInformation("Запрос POST /api/system отменён клиентом (abort): {Path}", path);
+                throw;
+            }
+        });
+}
+
 public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? analyzer = null, IConstructionSource? construction = null)
 {
     public GraphDto? Handle(GetSystemQuery query, CancellationToken ct = default)

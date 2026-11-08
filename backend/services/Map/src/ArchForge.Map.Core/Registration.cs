@@ -1,4 +1,5 @@
 using ArchForge.Analysis.Contracts;
+using ArchForge.Map.Core.Profiles;
 using ArchForge.SharedKernel;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -12,6 +13,8 @@ public static class Registration
     {
         services.AddHttpClient<AnalysisClient>(client =>
             client.BaseAddress = new Uri(analysisBaseUrl));
+        services.AddSingleton<IRuleCatalogProvider, AnalysisRuleCatalogProvider>();
+        services.AddSingleton<ProfileService>();
         services.AddEndpoints(typeof(Registration).Assembly);
         return services;
     }
