@@ -58,6 +58,37 @@ public class PreviewImpactTests
     }
 
     [Fact]
+    public void Custom_rule_is_counted_in_current_but_not_in_baseline()
+    {
+        var dir = TempDir();
+        var graph = new SystemGraph([Svc("svc-a/app")], [], []);
+        var rule = new CustomRuleDto("handlers", CustomRuleTemplates.SuffixBase, "Хендлеры", "Error", Suffix: "Handler", BaseType: "IHandler");
+        var profile = new ProjectProfile(CustomRules: [rule]);
+
+        var pv = Handler(dir, graph, T("CreateHandler", "Application", "IHandler"), T("DeleteHandler")).Handle(new PreviewQuery(dir, profile))!;
+
+        Assert.Equal(1, pv.Current.Errors);
+        Assert.Equal(1, pv.Current.Rules["custom:handlers"].Count);
+        Assert.True(pv.Current.Rules["custom:handlers"].Enabled);
+        Assert.Equal(0, pv.Baseline.Errors);
+        Assert.DoesNotContain("custom:handlers", pv.Baseline.Rules.Keys);
+    }
+
+    [Fact]
+    public void Disabled_custom_rule_is_visible_as_off_and_finds_nothing()
+    {
+        var dir = TempDir();
+        var rule = new CustomRuleDto("handlers", CustomRuleTemplates.SuffixBase, "Хендлеры", "Off", Suffix: "Handler", BaseType: "IHandler");
+
+        var pv = Handler(dir, new SystemGraph([Svc("svc-a/app")], [], []), T("DeleteHandler"))
+            .Handle(new PreviewQuery(dir, new ProjectProfile(CustomRules: [rule])))!;
+
+        Assert.False(pv.Current.Rules["custom:handlers"].Enabled);
+        Assert.Equal(0, pv.Current.Rules["custom:handlers"].Count);
+        Assert.Equal(0, pv.Current.Errors);
+    }
+
+    [Fact]
     public void Override_changes_current_but_not_baseline()
     {
         var dir = TempDir();

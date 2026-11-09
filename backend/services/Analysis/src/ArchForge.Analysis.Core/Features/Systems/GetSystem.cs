@@ -101,7 +101,8 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         IReadOnlyList<ServiceSummaryDto> services = [];
         IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null;
         List<string> degradations = []; // P1.5-H: что пропущено при разборе → «карта неполная» (видимо в контракте/UI)
-        if ((query.Drift || query.Layers || query.Calls) && analyzer is not null && Directory.Exists(query.Path))
+        var hasCustom = profile.CustomRules is { Count: > 0 };   // свои правила читают код, как линзы дрейфа и слоёв
+        if ((query.Drift || query.Layers || query.Calls || hasCustom) && analyzer is not null && Directory.Exists(query.Path))
         {
             var analyses = analyzer.Analyze(query.Path, pack, ct);
             // сервис не разобрался (изоляция ошибок) → его типы/связи отсутствуют: честно помечаем деградацию
@@ -110,6 +111,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             var extra = new List<SystemProblem>();
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
             if (query.Layers) extra.AddRange(LayerViolationDetector.Detect(analyses));
+            if (hasCustom) extra.AddRange(CustomRuleDetector.Detect(analyses, profile.CustomRules));
             // свод-линза «маппинг не централизован» — по оси конструирования (data-DTO собран инлайн в N мест)
             if (query.Drift && construction is not null)
             {

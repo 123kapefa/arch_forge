@@ -4,6 +4,7 @@ import {
   levelDefault, effectiveStrictness, withStrictness, withParam, paramValue, isRuleChanged, changedRuleCount,
   resetRule, resetCategory, resetToLevel, withLevel, roleList, isRoleChanged, withRoleList, resetRole,
   namingList, isNamingChanged, withNaming, resetNaming, addItem, removeItem, profilesEqual, filterRules, groupByCategory,
+  newCustomRule, withCustomRule, withoutCustomRule, isCustomComplete, customExample, customKind, CUSTOM_TEMPLATES, MAX_CUSTOM_RULES, completeOnly,
   exportManifest, parseImport, sanitizeProfile, impactTotal, ruleImpact, impactDelta, roleCoverage, paramSample, fetchPreview, type Preview, ProfileApiError, createConfig, updateConfig, bindProject, fetchProjectProfile,
 } from './profile';
 
@@ -360,3 +361,94 @@ describe('предпросмотр влияния', () => {
   });
 });
 
+
+describe('свои правила', () => {
+  const base: Profile = { level: 'Standard' };
+
+  it('новое правило получает свободный id и по умолчанию предупреждает', () => {
+    const a = newCustomRule('suffix-base', []);
+    const b = newCustomRule('layer-no-ref', [a]);
+    expect(a.id).toBe('rule-1');
+    expect(b.id).toBe('rule-2');
+    expect(a.strictness).toBe('Warning');
+  });
+
+  it('добавление, замена и удаление не меняют исходный профиль и чистят пустой список', () => {
+    const r = { ...newCustomRule('suffix-base', []), suffix: 'Handler', baseType: 'IHandler' };
+    const added = withCustomRule(base, r);
+    expect(added.customRules).toHaveLength(1);
+    expect(base.customRules).toBeUndefined();
+    const replaced = withCustomRule(added, { ...r, strictness: 'Error' });
+    expect(replaced.customRules).toHaveLength(1);
+    expect(replaced.customRules?.[0].strictness).toBe('Error');
+    expect(withoutCustomRule(replaced, r.id).customRules).toBeUndefined();
+  });
+
+  it('правил не больше предела', () => {
+    let p = base;
+    for (let i = 0; i < MAX_CUSTOM_RULES + 5; i++) p = withCustomRule(p, newCustomRule('role-in-folder', p.customRules ?? []));
+    expect(p.customRules).toHaveLength(MAX_CUSTOM_RULES);
+  });
+
+  it('полнота: нужны все группы полей, для «или» достаточно одного', () => {
+    const r = newCustomRule('forbid-in-folder', []);
+    expect(isCustomComplete(r)).toBe(false);
+    expect(isCustomComplete({ ...r, folder: 'Domain' })).toBe(false);
+    expect(isCustomComplete({ ...r, folder: 'Domain', baseType: 'IDto' })).toBe(true);
+    expect(isCustomComplete({ ...r, folder: 'Domain', suffix: ' ' })).toBe(false);
+    expect(isCustomComplete({ ...r, folder: 'Domain', suffix: 'Dto', title: '  ' })).toBe(false);
+  });
+
+  it('пример подставляет значения правила и подсказки, пока поля пусты', () => {
+    const r = newCustomRule('suffix-base', []);
+    expect(customExample(r).good[0]).toContain('IHandler');
+    const ex = customExample({ ...r, suffix: 'Query', baseType: 'IQuery' });
+    expect(ex.bad[0]).toContain('CreateQuery');
+    expect(ex.good[0]).toContain(': IQuery');
+    for (const t of CUSTOM_TEMPLATES) {
+      const e = customExample(newCustomRule(t.id, []));
+      expect(e.bad.length).toBeGreaterThan(0);
+      expect(e.good.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('равенство профилей видит разницу в своих правилах', () => {
+    const r = { ...newCustomRule('suffix-base', []), suffix: 'A', baseType: 'B' };
+    expect(profilesEqual(base, withCustomRule(base, r))).toBe(false);
+    expect(profilesEqual(withCustomRule(base, r), withCustomRule(base, { ...r }))).toBe(true);
+  });
+
+  it('импорт оставляет только допустимые правила и обрезает лишнее', () => {
+    const good = { id: 'a', template: 'suffix-base', title: 'T', strictness: 'Error', suffix: 'X', baseType: 'Y', evil: '<script>' };
+    const p = sanitizeProfile({
+      level: 'Standard',
+      customRules: [good, { id: 1 }, null, 'x', { ...good, id: 'b', template: 'magic' }, { ...good, id: 'c', strictness: 'Loud' }, { ...good, id: 'd', suffix: 5 }],
+    });
+    expect(p?.customRules?.map((r) => r.id)).toEqual(['a', 'd']);
+    expect(p?.customRules?.[0]).not.toHaveProperty('evil');
+    expect(p?.customRules?.[1].suffix).toBeUndefined();
+    expect(sanitizeProfile({ level: 'Standard', customRules: 'nope' })).toEqual({ level: 'Standard' });
+    const many = Array.from({ length: MAX_CUSTOM_RULES + 10 }, (_, i) => ({ ...good, id: `r${i}` }));
+    expect(sanitizeProfile({ level: 'Standard', customRules: many })?.customRules).toHaveLength(MAX_CUSTOM_RULES);
+  });
+
+  it('незаконченные правила не уходят в предпросмотр', () => {
+    const full = { ...newCustomRule('suffix-base', []), suffix: 'A', baseType: 'B' };
+    const empty = newCustomRule('layer-no-ref', [full]);
+    expect(completeOnly({ level: 'Standard', customRules: [full, empty] }).customRules).toEqual([full]);
+    expect(completeOnly({ level: 'Standard', customRules: [empty] })).toEqual({ level: 'Standard' });
+  });
+
+  it('импорт отбрасывает плохой id и дубли, приводит строгость и обрезает поля', () => {
+    const ok = { id: 'a', template: 'suffix-base', title: 'T', strictness: 'error', suffix: '  X  ', baseType: 'Y' };
+    const p = sanitizeProfile({ level: 'Standard', customRules: [ok, { ...ok }, { ...ok, id: 'Bad Id' }, { ...ok, id: 'b', suffix: 'z'.repeat(200) }] });
+    expect(p?.customRules?.map((r) => r.id)).toEqual(['a', 'b']);
+    expect(p?.customRules?.[0].strictness).toBe('Error');
+    expect(p?.customRules?.[0].suffix).toBe('X');
+    expect(p?.customRules?.[1].suffix).toHaveLength(64);
+  });
+
+  it('имя находки для предпросмотра', () => {
+    expect(customKind('rule-1')).toBe('custom:rule-1');
+  });
+});

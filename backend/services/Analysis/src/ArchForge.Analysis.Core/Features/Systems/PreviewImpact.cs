@@ -72,11 +72,17 @@ public sealed class PreviewImpactHandler(GetSystemHandler system, ISystemSource 
         return new PreviewDto(Summarize(current, query.Profile), Summarize(baseline, baselineProfile), hint, markerCounts, suffixCounts);
     }
 
+    private static bool IsEnabled(ProjectProfile profile, string kind) =>
+        kind.StartsWith(CustomRuleTemplates.KindPrefix, StringComparison.Ordinal)
+            ? !(profile.CustomRules ?? []).Any(r => CustomRuleTemplates.KindPrefix + r.Id == kind && r.Strictness.Equals("Off", StringComparison.OrdinalIgnoreCase))
+            : profile.Effective(kind) != Strictness.Off;
+
     /// <summary>Находки по строгости и по правилам. Находка — отдельный факт агрегированной проблемы (тип, пара слоёв…),
     /// а у проблемы без перечня — она сама. Покрытие и служебные отметки не считаются.</summary>
     internal static ImpactSummaryDto Summarize(GraphDto dto, ProjectProfile profile)
     {
         var counts = RuleCatalog.All.ToDictionary(r => r.Id, _ => 0, StringComparer.Ordinal);
+        foreach (var r in profile.CustomRules ?? []) counts[CustomRuleTemplates.KindPrefix + r.Id] = 0;
         int errors = 0, warnings = 0, infos = 0;
         foreach (var p in dto.Problems ?? [])
         {
@@ -92,7 +98,7 @@ public sealed class PreviewImpactHandler(GetSystemHandler system, ISystemSource 
             }
         }
         var rules = counts.ToDictionary(kv => kv.Key,
-            kv => new RuleImpactDto(kv.Value, profile.Effective(kv.Key) != Strictness.Off), StringComparer.Ordinal);
+            kv => new RuleImpactDto(kv.Value, IsEnabled(profile, kv.Key)), StringComparer.Ordinal);
         return new ImpactSummaryDto(errors, warnings, infos, rules);
     }
 }
