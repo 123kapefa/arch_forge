@@ -2,13 +2,15 @@ import { Component, type ReactNode, useCallback, useEffect, useMemo, useRef, use
 import { Icon } from './Icon';
 import {
   type ConfigManifest, type Level, type Profile, type RuleCatalog, type RuleDef, type RuleFilter, type Strictness,
-  type VocabularyDefaults, type ProfileParams, type Preview, type NamingKey, type VocabKey, type ProfileForPath,
+  type VocabularyDefaults, type ProfileParams, type CustomRule, type CustomTemplate, type Preview, type NamingKey, type VocabKey, type ProfileForPath,
   LEVELS, LEVEL_TITLE, STRICTNESS, STRICTNESS_TITLE, CATEGORY_TITLE, DEFAULT_LEVEL, RULE_PARAMS, NAMING_KEYS, NAMING_TITLE,
   ProfileApiError, addItem, removeItem, bindProject, changedRuleCount, createConfig, deleteConfig, effectiveStrictness,
   exportManifest, fetchProjectProfile, fetchRules, fetchVocabulary, filterRules, groupByCategory, isNamingChanged,
   isRoleChanged, isRuleChanged, levelDefault, listConfigs, namingList, paramValue, parseImport, profilesEqual, resetCategory,
   resetNaming, resetRole, resetRule, resetToLevel, roleList, updateConfig, withLevel, withNaming, withParam, withRoleList,
   withStrictness, fetchPreview, impactDelta, impactTotal, ruleImpact, roleCoverage, paramSample,
+  CUSTOM_TEMPLATES, LAYER_NAMES, MAX_CUSTOM_RULES, customExample, customKind, isCustomComplete, newCustomRule, templateSpec,
+  withCustomRule, withoutCustomRule,
 } from './profile';
 
 // Окно «Профиль проекта» (adr/0012, срез 3): уровень, конфигурации, строгость правил, словарь ролей, имена сервисов.
@@ -20,7 +22,7 @@ interface Props {
   onApplied: () => void;        // привязка изменилась → пере-анализировать проект
 }
 
-type Tab = 'rules' | 'dict';
+type Tab = 'rules' | 'custom' | 'dict';
 const NEW = 'new';              // несохранённая конфигурация (копия, новая, импорт)
 const levelOfId = (id?: string | null): Level | null =>
   LEVELS.find((l) => `lvl-${l.toLowerCase()}` === id) ?? null;
@@ -71,6 +73,7 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
   const [tab, setTab] = useState<Tab>('rules');
   const [selRule, setSelRule] = useState<string | null>(null);
   const [selRole, setSelRole] = useState<string | null>(null);
+  const [selCustom, setSelCustom] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<RuleFilter>('all');
   const [menu, setMenu] = useState(false);
@@ -279,6 +282,7 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
   const levelCfgs = configs.filter((c) => c.kind === 'level');
   const nChanged = ready ? changedRuleCount(rules, profile, defaults) : 0;
   const activeRule = rules.find((r) => r.id === selRule) ?? rules[0];
+  const activeCustom = (profile.customRules ?? []).find((r) => r.id === selCustom) ?? profile.customRules?.[0];
 
   return (
     <div className="pv-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -340,6 +344,8 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
               <div className="pv__tabs" role="tablist">
                 <button role="tab" aria-selected={tab === 'rules'} className={tab === 'rules' ? 'on' : ''} onClick={() => setTab('rules')}>
                   Правила{nChanged ? ` · изменено ${nChanged}` : ''}</button>
+                <button role="tab" aria-selected={tab === 'custom'} className={tab === 'custom' ? 'on' : ''} onClick={() => setTab('custom')}>
+                  Свои правила{profile.customRules?.length ? ` · ${profile.customRules.length}` : ''}</button>
                 <button role="tab" aria-selected={tab === 'dict'} className={tab === 'dict' ? 'on' : ''} onClick={() => setTab('dict')}>Словарь и имена</button>
                 <span className="pv__spacer" />
                 {!readOnly && (
@@ -347,7 +353,7 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
                     <button className="pv__btn" aria-haspopup="menu" aria-expanded={menu} onClick={(e) => { e.stopPropagation(); setMenu((m) => !m); }}>Сбросить ▾</button>
                     {menu && (
                       <div className="pv__pop" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => { edit(resetToLevel); setMenu(false); }}>К уровню {profile.level}<small>убрать все отличия: правила, пороги, словарь</small></button>
+                        <button onClick={() => { edit(resetToLevel); setMenu(false); }}>К уровню {profile.level}<small>убрать все отличия: правила, пороги, словарь, свои правила</small></button>
                         <button disabled={!parentProfile()} onClick={() => { const p = parentProfile(); if (p) edit(() => p); setMenu(false); }}>
                           К родителю<small>{parentProfile() ? 'вернуть то, что было в исходной конфигурации' : 'у конфигурации нет родителя'}</small></button>
                       </div>
@@ -362,6 +368,11 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
                   onSet={(r, s) => { setSelRule(r.id); edit((p) => withStrictness(p, r, s)); }}
                   onReset={(r) => edit((p) => resetRule(p, r))}
                   onResetCategory={(cat) => edit((p) => resetCategory(p, rules, cat))} canReset={!readOnly} />
+              ) : tab === 'custom' ? (
+                <CustomTab profile={profile} vocab={vocab} preview={preview} selected={activeCustom?.id ?? null} onSelect={setSelCustom}
+                  onChange={(r) => { setSelCustom(r.id); edit((p) => withCustomRule(p, r)); }}
+                  onAdd={(t) => { const r = newCustomRule(t, profile.customRules ?? []); setSelCustom(r.id); edit((p) => withCustomRule(p, r)); }}
+                  onRemove={(id) => edit((p) => withoutCustomRule(p, id))} />
               ) : (
                 <DictTab profile={profile} vocab={vocab} preview={preview} selRole={selRole ?? sortedRoles(vocab)[0] ?? null} onSelect={setSelRole}
                   onRole={(role, key, list) => { setSelRole(role); edit((p) => withRoleList(p, vocab, role, key, list)); }}
@@ -374,6 +385,8 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
             <section className="pv__right">
               {tab === 'rules' && activeRule
                 ? <RuleDetails rule={activeRule} profile={profile} vocab={vocab} onParam={(key, v) => edit((p) => withParam(p, key, v, defaults))} />
+                : tab === 'custom'
+                ? <CustomHelp rule={activeCustom ?? null} preview={preview} />
                 : <DictHelp profile={profile} vocab={vocab} role={selRole ?? sortedRoles(vocab)[0] ?? null} preview={preview} />}
             </section>
           </div>
@@ -496,6 +509,90 @@ function RulesTab(p: RulesTabProps) {
           })}
         </section>
       ))}
+    </div>
+  );
+}
+
+// ── вкладка «Свои правила» ──
+
+/** Правило читается как предложение: «Тип с окончанием [Handler] должен наследовать [IHandler]». Поля прямо в тексте. */
+function CustomTab(p: {
+  profile: Profile; vocab: VocabularyDefaults; preview: Preview | null; selected: string | null;
+  onSelect: (id: string) => void; onChange: (r: CustomRule) => void; onAdd: (t: CustomTemplate) => void; onRemove: (id: string) => void;
+}) {
+  const rules = p.profile.customRules ?? [];
+  const [adding, setAdding] = useState(false);
+  const roles = Object.keys(p.vocab.roles).sort();
+  const full = rules.length >= MAX_CUSTOM_RULES;
+  return (
+    <div className="pv__body">
+      <div className="pv__note">Свои правила — это шаблоны, а не код: вы подставляете имена в готовое предложение, анализатор проверяет их на коде проекта. Правила сохраняются вместе с конфигурацией, их можно экспортировать и передать. Первая правка встроенного уровня создаёт вашу копию.</div>
+      <datalist id="pv-layers">{LAYER_NAMES.map((l) => <option key={l} value={l} />)}</datalist>
+      <datalist id="pv-roles">{roles.map((r) => <option key={r} value={r} />)}</datalist>
+      {rules.length === 0 && !adding && <div className="pv__empty">Своих правил пока нет. Выберите шаблон ниже: например, «все типы на Handler реализуют IHandler».</div>}
+      {rules.map((r) => {
+        const spec = templateSpec(r.template);
+        const done = isCustomComplete(r);
+        const found = ruleImpact(p.preview, true, customKind(r.id));
+        return (
+          <div key={r.id} className={`pv__rule pv__rule--custom${p.selected === r.id ? ' pv__rule--sel' : ''}`} onClick={() => p.onSelect(r.id)} onFocus={() => p.onSelect(r.id)}>
+            <div className="pv__rule-main">
+              <input className="pv__ctitle" aria-label="Название правила" value={r.title} maxLength={100} onChange={(e) => p.onChange({ ...r, title: e.target.value })} />
+              <div className="pv__sentence">
+                {spec?.sentence.map((part, i) => typeof part === 'string'
+                  ? <span key={i}>{part}</span>
+                  : <input key={i} className={`pv__slot${r[part.field]?.trim() ? '' : ' pv__slot--empty'}`} aria-label={part.placeholder} placeholder={part.placeholder} maxLength={64}
+                      list={part.list === 'layers' ? 'pv-layers' : part.list === 'roles' ? 'pv-roles' : undefined}
+                      size={Math.max(8, (r[part.field] ?? '').length + 1)} value={r[part.field] ?? ''}
+                      onChange={(e) => p.onChange({ ...r, [part.field]: e.target.value })} />)}
+              </div>
+              <div className="pv__rule-d">
+                {!done && <span className="pv__muted pv__muted--warn">заполните поля, иначе правило не сохранится</span>}
+                {done && r.strictness !== 'Off' && found && <span className="pv__found">найдено: <b>{found.count}</b></span>}
+                {done && r.strictness === 'Off' && <span className="pv__muted">выключено</span>}
+              </div>
+            </div>
+            <div className="pv__rule-ctl">
+              <div className="pv__sev" role="group" aria-label={`Строгость: ${r.title}`}>
+                {STRICTNESS.map((s) => <button key={s} className={`pv__sev-${s}${r.strictness === s ? ' on' : ''}`} aria-pressed={r.strictness === s}
+                  onClick={(e) => { e.stopPropagation(); p.onChange({ ...r, strictness: s }); }}>{STRICTNESS_TITLE[s]}</button>)}
+              </div>
+              <button className="pv__rst" title="Удалить правило" aria-label={`Удалить правило ${r.title}`} onClick={(e) => { e.stopPropagation(); p.onRemove(r.id); }}><Icon name="close" size={13} /></button>
+            </div>
+          </div>
+        );
+      })}
+      {(
+        adding ? (
+          <div className="pv__tpls" role="group" aria-label="Шаблоны правил">
+            {CUSTOM_TEMPLATES.map((t) => (
+              <button key={t.id} className="pv__tpl" disabled={full} onClick={() => { p.onAdd(t.id); setAdding(false); }}>
+                <b>{t.title}</b><small>{t.hint}</small></button>
+            ))}
+            <button className="pv__btn" onClick={() => setAdding(false)}>Отмена</button>
+          </div>
+        ) : <button className="pv__btn" disabled={full} onClick={() => setAdding(true)}>+ Добавить правило{full ? ` (не больше ${MAX_CUSTOM_RULES})` : ''}</button>
+      )}
+    </div>
+  );
+}
+
+function CustomHelp({ rule, preview }: { rule: CustomRule | null; preview: Preview | null }) {
+  if (!rule) return <div className="pv__muted">Добавьте правило — здесь появится пример «плохо / хорошо» и число находок.</div>;
+  const ex = customExample(rule);
+  const found = ruleImpact(preview, true, customKind(rule.id));
+  return (
+    <div>
+      <h3 className="pv__h">{rule.title || 'Без названия'}</h3>
+      <p className="pv__sub">{templateSpec(rule.template)?.title}</p>
+      <div className="pv__lbl">Плохо</div><CodeBlock lines={ex.bad} kind="bad" />
+      <div className="pv__lbl">Хорошо</div><CodeBlock lines={ex.good} kind="good" />
+      <div className="pv__muted">
+        {rule.strictness === 'Off' ? 'Правило выключено: такой код не даст находок.' : `Такой код даст находку: ${STRICTNESS_TITLE[rule.strictness]}.`}
+        {found && rule.strictness !== 'Off' ? ` На этом проекте сейчас находок: ${found.count}.` : ''}
+      </div>
+      <div className="pv__lbl">Как проверяется</div>
+      <div className="pv__muted">Имена сравниваются точно (суффикс — по окончанию имени, папка — по целым сегментам пути, регистр не важен для слоёв, ролей и папок). Типы из тестов не проверяются.</div>
     </div>
   );
 }

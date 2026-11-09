@@ -20,7 +20,8 @@ public sealed record ProjectProfile(
     ProjectLevel Level = ProjectLevel.Standard,
     IReadOnlyDictionary<string, Strictness>? Overrides = null,
     ProfileParams? Params = null,
-    IReadOnlyDictionary<string, RoleVocabulary>? Vocabulary = null)
+    IReadOnlyDictionary<string, RoleVocabulary>? Vocabulary = null,
+    IReadOnlyList<ArchForge.Contracts.CustomRuleDto>? CustomRules = null)
 {
     public static ProjectProfile Default { get; } = new();
 

@@ -25,11 +25,26 @@ export interface ProfileParams {
   dtoMinFiles?: number;
   naming?: ServiceNaming;
 }
+export type CustomTemplate = 'suffix-base' | 'layer-no-ref' | 'forbid-in-folder' | 'role-in-folder';
+/** Своё правило из шаблона (adr/0012): только данные. Нужные поля зависят от шаблона. */
+export interface CustomRule {
+  id: string;
+  template: CustomTemplate;
+  title: string;
+  strictness: Strictness;
+  suffix?: string;
+  baseType?: string;
+  fromLayer?: string;
+  toLayer?: string;
+  folder?: string;
+  role?: string;
+}
 export interface Profile {
   level: string;
   overrides?: Record<string, string>;
   params?: ProfileParams;
   vocabulary?: Record<string, RoleVocabulary>;
+  customRules?: CustomRule[];
 }
 export interface ConfigManifest {
   id?: string | null;
@@ -170,6 +185,7 @@ function prune(p: Profile): Profile {
     if (!Object.keys(p.params).length) delete p.params;
   }
   if (p.vocabulary && !Object.keys(p.vocabulary).length) delete p.vocabulary;
+  if (p.customRules && !p.customRules.length) delete p.customRules;
   return p;
 }
 
@@ -384,6 +400,11 @@ export function sanitizeProfile(raw: unknown): Profile | null {
     }
     if (Object.keys(voc).length) out.vocabulary = voc;
   }
+
+  if (Array.isArray(r.customRules)) {
+    const rules = r.customRules.map(sanitizeCustomRule).filter((x): x is CustomRule => x !== null).slice(0, MAX_CUSTOM_RULES);
+    if (rules.length) out.customRules = rules;
+  }
   return out;
 }
 
@@ -441,4 +462,118 @@ export function paramSample(ruleId: string, key: ParamSpec['key'], value: number
       .map((r) => ({ label: r.label, value: `${r.n} файл.`, hit: r.n >= value }));
   }
   return null;
+}
+
+
+// ── свои правила (шаблоны без кода) ──
+
+export const MAX_CUSTOM_RULES = 32;
+export const CUSTOM_FIELDS = ['suffix', 'baseType', 'fromLayer', 'toLayer', 'folder', 'role'] as const;
+export type CustomField = typeof CUSTOM_FIELDS[number];
+
+/** Часть предложения шаблона: обычный текст или поле ввода. */
+export type SentencePart = string | { field: CustomField; placeholder: string; list?: 'layers' | 'roles' };
+
+export interface TemplateSpec {
+  id: CustomTemplate;
+  title: string;          // короткое название для выбора
+  hint: string;           // когда это нужно
+  sentence: SentencePart[];
+  required: CustomField[][];   // каждая группа: достаточно ОДНОГО заполненного поля из группы
+}
+
+export const LAYER_NAMES = ['Domain', 'Application', 'Infrastructure', 'Api', 'Contracts', 'Shared'] as const;
+
+export const CUSTOM_TEMPLATES: readonly TemplateSpec[] = [
+  { id: 'suffix-base', title: 'Суффикс → базовый тип', hint: 'Все типы с определённым окончанием имени обязаны наследовать нужный тип или интерфейс.',
+    sentence: ['Тип, имя которого оканчивается на', { field: 'suffix', placeholder: 'Handler' }, 'должен наследовать', { field: 'baseType', placeholder: 'IHandler' }],
+    required: [['suffix'], ['baseType']] },
+  { id: 'layer-no-ref', title: 'Слой не ссылается на слой', hint: 'Запрет зависимости одного слоя от другого, помимо встроенной проверки направления слоёв.',
+    sentence: ['Слой', { field: 'fromLayer', placeholder: 'Domain', list: 'layers' }, 'не должен ссылаться на слой', { field: 'toLayer', placeholder: 'Infrastructure', list: 'layers' }],
+    required: [['fromLayer'], ['toLayer']] },
+  { id: 'forbid-in-folder', title: 'Запретить тип в папке', hint: 'Типы с таким окончанием имени и/или базой не должны лежать в указанной папке.',
+    sentence: ['Тип с окончанием', { field: 'suffix', placeholder: 'Dto' }, 'и/или базой', { field: 'baseType', placeholder: 'IDto' }, 'не должен лежать в папке', { field: 'folder', placeholder: 'Domain' }],
+    required: [['suffix', 'baseType'], ['folder']] },
+  { id: 'role-in-folder', title: 'Роль живёт в папке', hint: 'Типы определённой роли свода обязаны лежать в указанной папке.',
+    sentence: ['Тип роли', { field: 'role', placeholder: 'Command', list: 'roles' }, 'должен лежать в папке', { field: 'folder', placeholder: 'Features' }],
+    required: [['role'], ['folder']] },
+];
+
+export const templateSpec = (t: string): TemplateSpec | undefined => CUSTOM_TEMPLATES.find((x) => x.id === t);
+const isTemplate = (t: unknown): t is CustomTemplate => CUSTOM_TEMPLATES.some((x) => x.id === t);
+const filled = (v: string | undefined): boolean => !!v && v.trim().length > 0;
+
+/** Все ли обязательные поля заполнены (иначе правило не сохранится: сервер вернёт ошибку). */
+export function isCustomComplete(r: CustomRule): boolean {
+  const spec = templateSpec(r.template);
+  return !!spec && r.title.trim().length > 0 && spec.required.every((g) => g.some((f) => filled(r[f])));
+}
+
+/** Свободный идентификатор вида «rule-3». */
+export function nextCustomId(rules: CustomRule[]): string {
+  const used = new Set(rules.map((r) => r.id));
+  for (let i = 1; ; i++) if (!used.has(`rule-${i}`)) return `rule-${i}`;
+}
+
+const TEMPLATE_TITLE: Record<CustomTemplate, string> = {
+  'suffix-base': 'Суффикс → базовый тип', 'layer-no-ref': 'Слой не ссылается на слой',
+  'forbid-in-folder': 'Запрет типа в папке', 'role-in-folder': 'Роль живёт в папке',
+};
+
+export function newCustomRule(template: CustomTemplate, existing: CustomRule[]): CustomRule {
+  return { id: nextCustomId(existing), template, title: TEMPLATE_TITLE[template], strictness: 'Warning' };
+}
+
+export function withCustomRule(p: Profile, rule: CustomRule): Profile {
+  const next = clone(p);
+  const list = next.customRules ?? [];
+  const i = list.findIndex((r) => r.id === rule.id);
+  if (i >= 0) list[i] = rule; else if (list.length < MAX_CUSTOM_RULES) list.push(rule);
+  next.customRules = list;
+  return prune(next);
+}
+
+export function withoutCustomRule(p: Profile, id: string): Profile {
+  const next = clone(p);
+  next.customRules = (next.customRules ?? []).filter((r) => r.id !== id);
+  return prune(next);
+}
+
+/** Имя находки в проблемах и в предпросмотре влияния. */
+export const customKind = (id: string): string => `custom:${id}`;
+
+/** Пример «плохо / хорошо», собранный из значений правила (пока поля пусты — подсказки шаблона). */
+export function customExample(r: CustomRule): RuleExample {
+  const v = (x: string | undefined, d: string) => (filled(x) ? x!.trim() : d);
+  switch (r.template) {
+    case 'suffix-base': {
+      const s = v(r.suffix, 'Handler'), b = v(r.baseType, 'IHandler');
+      return { bad: [`public class Create${s}            // нет ${b}`], good: [`public class Create${s} : ${b}`] };
+    }
+    case 'layer-no-ref': {
+      const f = v(r.fromLayer, 'Domain'), t = v(r.toLayer, 'Infrastructure');
+      return { bad: [`// слой ${f}`, `using MyApp.${t};     // зависит от ${t}`], good: [`// слой ${f}`, `// зависит только от внутренних слоёв, без ${t}`] };
+    }
+    case 'forbid-in-folder': {
+      const name = filled(r.suffix) ? `Order${r.suffix!.trim()}` : `Order${v(r.baseType, 'Dto')}`;
+      const f = v(r.folder, 'Domain');
+      return { bad: [`${f}/${name}.cs        // тип в запрещённой папке`], good: [`Contracts/${name}.cs   // тип вне папки ${f}`] };
+    }
+    case 'role-in-folder': {
+      const role = v(r.role, 'Command'), f = v(r.folder, 'Features');
+      return { bad: [`Other/Create${role}.cs       // роль ${role} вне папки ${f}`], good: [`${f}/Create${role}.cs`] };
+    }
+  }
+}
+
+/** Оставляет только допустимую форму чужого правила (JSON из импорта); недопустимое отбрасывает. */
+export function sanitizeCustomRule(raw: unknown): CustomRule | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.id !== 'string' || typeof r.title !== 'string' || !isTemplate(r.template)) return null;
+  const strictness = STRICTNESS.find((x) => x === r.strictness);
+  if (!strictness) return null;
+  const out: CustomRule = { id: r.id, template: r.template, title: r.title, strictness };
+  for (const f of CUSTOM_FIELDS) if (typeof r[f] === 'string') out[f] = r[f] as string;
+  return out;
 }

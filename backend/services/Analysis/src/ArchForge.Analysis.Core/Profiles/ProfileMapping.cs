@@ -42,7 +42,7 @@ public static class ProfileMapping
             kv => new RoleVocabulary(kv.Value.Markers ?? [], kv.Value.Fallback ?? [], kv.Value.Suffixes ?? []),
             StringComparer.Ordinal);
 
-        profile = new ProjectProfile(level, overrides, prm, vocabulary);
+        profile = new ProjectProfile(level, overrides, prm, vocabulary, dto.CustomRules is { Count: > 0 } cr ? [.. cr] : null);
         return true;
     }
 

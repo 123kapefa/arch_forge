@@ -36,6 +36,21 @@ public class ProfileServiceTests
     }
 
     [Fact]
+    public async Task Create_keeps_custom_rules_and_rejects_broken_ones()
+    {
+        var (svc, _) = Make();
+        var ok = new CustomRuleDto("handlers", "suffix-base", "Хендлеры", "Warning", Suffix: "Handler", BaseType: "IHandler");
+
+        var created = await svc.CreateAsync(Cfg(profile: new ProfileDto("Standard", CustomRules: [ok])));
+        var broken = await svc.CreateAsync(Cfg(profile: new ProfileDto("Standard", CustomRules: [ok with { BaseType = null }])));
+
+        Assert.True(created.Ok);
+        Assert.Equal("handlers", Assert.Single(created.Value!.Profile.CustomRules!).Id);
+        Assert.Equal(400, broken.Status);
+        Assert.Contains(broken.Errors, e => e.Contains("BaseType"));
+    }
+
+    [Fact]
     public async Task Create_stamps_server_fields()
     {
         var (svc, store) = Make();

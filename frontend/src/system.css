@@ -857,3 +857,18 @@
 .pv__sample-row--hit { background: rgba(224,178,74,0.16); color: var(--text); }
 .pv__tag--zero { background: rgba(224,178,74,0.12); outline: 1px solid rgba(224,178,74,0.55); }
 .pv__tag-n { font-style: normal; color: var(--muted); font-size: 11px; }
+
+/* вкладка «Свои правила» (#126) */
+.pv__empty { padding: 14px; border: 1px dashed var(--card-line); border-radius: 8px; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.pv__rule--custom { cursor: default; }
+.pv__ctitle { width: 100%; border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--text); font: inherit; font-weight: 500; font-size: 13px; padding: 1px 0; }
+.pv__ctitle:hover, .pv__ctitle:focus { border-bottom-color: var(--card-line); outline: none; }
+.pv__sentence { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-size: 13px; margin-top: 4px; }
+.pv__slot { border: 1px solid var(--card-line); border-radius: 5px; background: var(--panel); color: var(--text); font: 12px ui-monospace, monospace; padding: 2px 6px; min-width: 70px; max-width: 100%; }
+.pv__slot--empty { border-color: var(--warn); }
+.pv__slot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pv__tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; align-items: stretch; }
+.pv__tpl { text-align: left; border: 1px solid var(--card-line); border-radius: 8px; background: var(--card); color: var(--text); padding: 8px 10px; font: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
+.pv__tpl:hover:not(:disabled) { border-color: var(--accent); }
+.pv__tpl small { color: var(--muted); font-size: 12px; }
+.pv__tpl:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

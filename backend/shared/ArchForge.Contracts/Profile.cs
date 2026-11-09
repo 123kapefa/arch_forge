@@ -14,7 +14,38 @@ public sealed record ProfileDto(
     string Level,
     IReadOnlyDictionary<string, string>? Overrides = null,
     ProfileParamsDto? Params = null,
-    IReadOnlyDictionary<string, RoleVocabularyDto>? Vocabulary = null);
+    IReadOnlyDictionary<string, RoleVocabularyDto>? Vocabulary = null,
+    IReadOnlyList<CustomRuleDto>? CustomRules = null);
+
+/// <summary>Своё правило, собранное из шаблона (adr/0012): только данные, без кода. Какие поля нужны — зависит от шаблона
+/// (<see cref="CustomRuleTemplates"/>). Совпадения считаются порядковым сравнением строк, регулярных выражений нет.</summary>
+/// <param name="Id">Короткий идентификатор: a–z, 0–9, «-». В находках — «custom:{Id}».</param>
+/// <param name="Template">suffix-base | layer-no-ref | forbid-in-folder | role-in-folder.</param>
+/// <param name="Title">Название для людей.</param>
+/// <param name="Strictness">Off | Info | Warning | Error.</param>
+public sealed record CustomRuleDto(
+    string Id,
+    string Template,
+    string Title,
+    string Strictness,
+    string? Suffix = null,
+    string? BaseType = null,
+    string? FromLayer = null,
+    string? ToLayer = null,
+    string? Folder = null,
+    string? Role = null);
+
+/// <summary>Шаблоны своих правил и поля, обязательные для каждого.</summary>
+public static class CustomRuleTemplates
+{
+    public const string SuffixBase = "suffix-base";            // тип с суффиксом обязан наследовать/реализовать BaseType
+    public const string LayerNoRef = "layer-no-ref";            // слой FromLayer не ссылается на слой ToLayer
+    public const string ForbidInFolder = "forbid-in-folder";    // тип (по суффиксу и/или базе) не живёт в папке Folder
+    public const string RoleInFolder = "role-in-folder";        // тип роли Role обязан жить в папке Folder
+
+    public static readonly string[] All = [SuffixBase, LayerNoRef, ForbidInFolder, RoleInFolder];
+    public const string KindPrefix = "custom:";
+}
 
 public sealed record ProfileParamsDto(
     double? ServiceCycleMinConfidence = null,
@@ -117,6 +148,9 @@ public static class ProfileValidator
     public const int MaxNamingList = 32;
     public const int MaxNamingItemLength = 64;
     public const int MaxConfigNameLength = 100;
+    public const int MaxCustomRules = 32;
+    public const int MaxCustomRuleIdLength = 40;
+    public const int MaxCustomFieldLength = 64;
     /// <summary>Предел сериализованного профиля. Считается дефолтным кодировщиком (кириллица → \uXXXX), т.е. с запасом:
     /// то, что принял Map, заведомо проходит лимит тела запроса Analysis (256 КБ).</summary>
     public const int MaxProfileBytes = 64 * 1024;
@@ -172,8 +206,52 @@ public static class ProfileValidator
                 CheckList($"роль «{Trim(role)}», суффиксы", v.Suffixes, MaxSuffixes, errors);
             }
         }
+
+        if (profile.CustomRules is { } cr) CheckCustomRules(cr, errors);
         return errors;
     }
+
+    private static void CheckCustomRules(IReadOnlyList<CustomRuleDto> rules, List<string> errors)
+    {
+        if (rules.Count > MaxCustomRules) errors.Add($"своих правил не больше {MaxCustomRules}");
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var r in rules.Take(MaxCustomRules))
+        {
+            if (r is null) { errors.Add("своё правило не задано"); continue; }
+            var who = $"своё правило «{Trim(r.Id)}»";
+            if (!IsCustomId(r.Id)) errors.Add($"{who}: идентификатор — от 1 до {MaxCustomRuleIdLength} символов a–z, 0–9 и «-»");
+            else if (!seen.Add(r.Id)) errors.Add($"{who}: идентификатор повторяется");
+            if (string.IsNullOrWhiteSpace(r.Title) || r.Title.Length > MaxConfigNameLength) errors.Add($"{who}: название от 1 до {MaxConfigNameLength} символов");
+            if (!IsStrictness(r.Strictness)) errors.Add($"{who}: неизвестная строгость «{Trim(r.Strictness)}»");
+            if (r.Template is null || !CustomRuleTemplates.All.Contains(r.Template, StringComparer.Ordinal))
+            {
+                errors.Add($"{who}: неизвестный шаблон «{Trim(r.Template)}»; допустимо: {string.Join(", ", CustomRuleTemplates.All)}");
+                continue;
+            }
+            foreach (var (name, v) in new[] { ("Suffix", r.Suffix), ("BaseType", r.BaseType), ("FromLayer", r.FromLayer), ("ToLayer", r.ToLayer), ("Folder", r.Folder), ("Role", r.Role) })
+                if (v is not null && (v.Trim().Length == 0 || v.Length > MaxCustomFieldLength)) errors.Add($"{who}: поле {name} — от 1 до {MaxCustomFieldLength} символов");
+            bool Has(string? v) => !string.IsNullOrWhiteSpace(v);
+            switch (r.Template)
+            {
+                case CustomRuleTemplates.SuffixBase:
+                    if (!Has(r.Suffix) || !Has(r.BaseType)) errors.Add($"{who}: нужны Suffix и BaseType");
+                    break;
+                case CustomRuleTemplates.LayerNoRef:
+                    if (!Has(r.FromLayer) || !Has(r.ToLayer)) errors.Add($"{who}: нужны FromLayer и ToLayer");
+                    else if (string.Equals(r.FromLayer, r.ToLayer, StringComparison.OrdinalIgnoreCase)) errors.Add($"{who}: слои должны различаться");
+                    break;
+                case CustomRuleTemplates.ForbidInFolder:
+                    if (!Has(r.Folder) || (!Has(r.Suffix) && !Has(r.BaseType))) errors.Add($"{who}: нужны Folder и Suffix или BaseType");
+                    break;
+                case CustomRuleTemplates.RoleInFolder:
+                    if (!Has(r.Role) || !Has(r.Folder)) errors.Add($"{who}: нужны Role и Folder");
+                    break;
+            }
+        }
+    }
+
+    public static bool IsCustomId(string? id) =>
+        id is { Length: > 0 and <= MaxCustomRuleIdLength } && id.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
 
     /// <summary>Проверка манифеста конфигурации: имя, автор + вложенный профиль.</summary>
     public static IReadOnlyList<string> Validate(ConfigManifestDto? config, IReadOnlySet<string>? knownRuleIds = null)
