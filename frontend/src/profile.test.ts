@@ -4,7 +4,7 @@ import {
   levelDefault, effectiveStrictness, withStrictness, withParam, paramValue, isRuleChanged, changedRuleCount,
   resetRule, resetCategory, resetToLevel, withLevel, roleList, isRoleChanged, withRoleList, resetRole,
   namingList, isNamingChanged, withNaming, resetNaming, addItem, removeItem, profilesEqual, filterRules, groupByCategory,
-  newCustomRule, withCustomRule, withoutCustomRule, isCustomComplete, customExample, customKind, CUSTOM_TEMPLATES, MAX_CUSTOM_RULES,
+  newCustomRule, withCustomRule, withoutCustomRule, isCustomComplete, customExample, customKind, CUSTOM_TEMPLATES, MAX_CUSTOM_RULES, completeOnly,
   exportManifest, parseImport, sanitizeProfile, impactTotal, ruleImpact, impactDelta, roleCoverage, paramSample, fetchPreview, type Preview, ProfileApiError, createConfig, updateConfig, bindProject, fetchProjectProfile,
 } from './profile';
 
@@ -430,6 +430,22 @@ describe('свои правила', () => {
     expect(sanitizeProfile({ level: 'Standard', customRules: 'nope' })).toEqual({ level: 'Standard' });
     const many = Array.from({ length: MAX_CUSTOM_RULES + 10 }, (_, i) => ({ ...good, id: `r${i}` }));
     expect(sanitizeProfile({ level: 'Standard', customRules: many })?.customRules).toHaveLength(MAX_CUSTOM_RULES);
+  });
+
+  it('незаконченные правила не уходят в предпросмотр', () => {
+    const full = { ...newCustomRule('suffix-base', []), suffix: 'A', baseType: 'B' };
+    const empty = newCustomRule('layer-no-ref', [full]);
+    expect(completeOnly({ level: 'Standard', customRules: [full, empty] }).customRules).toEqual([full]);
+    expect(completeOnly({ level: 'Standard', customRules: [empty] })).toEqual({ level: 'Standard' });
+  });
+
+  it('импорт отбрасывает плохой id и дубли, приводит строгость и обрезает поля', () => {
+    const ok = { id: 'a', template: 'suffix-base', title: 'T', strictness: 'error', suffix: '  X  ', baseType: 'Y' };
+    const p = sanitizeProfile({ level: 'Standard', customRules: [ok, { ...ok }, { ...ok, id: 'Bad Id' }, { ...ok, id: 'b', suffix: 'z'.repeat(200) }] });
+    expect(p?.customRules?.map((r) => r.id)).toEqual(['a', 'b']);
+    expect(p?.customRules?.[0].strictness).toBe('Error');
+    expect(p?.customRules?.[0].suffix).toBe('X');
+    expect(p?.customRules?.[1].suffix).toHaveLength(64);
   });
 
   it('имя находки для предпросмотра', () => {

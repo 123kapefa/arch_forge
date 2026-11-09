@@ -85,6 +85,47 @@ public class CustomRuleTests
         Assert.Equal(expected, CustomRuleDetector.InFolder(file, folder));
 
     [Fact]
+    public void Folder_is_searched_relative_to_service_root_not_in_the_whole_disk_path()
+    {
+        var root = "/home/u/Domain/proj/svc";   // «Domain» в пути до проекта не должно срабатывать
+        var r = R([T("OrderDto", "Application", root + "/src/Contracts/OrderDto.cs"), T("BadDto", "Application", root + "/src/Domain/BadDto.cs")]);
+        var rule = Rule(CustomRuleTemplates.ForbidInFolder, suffix: "Dto", folder: "Domain");
+
+        var items = CustomRuleDetector.Check(rule, r, root);
+
+        Assert.Equal(["BadDto"], items.Select(i => i.Name));
+    }
+
+    [Fact]
+    public void Values_are_trimmed_and_interfaces_and_suffix_named_type_are_skipped()
+    {
+        var r = R([T("DeleteHandler", "Application", "a.cs"), new TypeInfo("IHandlerX", "interface", "Application", "", "heuristic", [], "i.cs", [], []),
+                   T("Handler", "Application", "h.cs")]);
+
+        var items = CustomRuleDetector.Check(Rule(CustomRuleTemplates.SuffixBase, suffix: " Handler ", baseType: " IHandler "), r);
+
+        Assert.Equal(["DeleteHandler"], items.Select(i => i.Name));
+    }
+
+    [Fact]
+    public void Finding_items_are_capped_but_title_keeps_full_count()
+    {
+        var many = Enumerable.Range(0, CustomRuleDetector.MaxItemsPerFinding + 50).Select(i => T($"X{i}Handler", "Application", $"a{i}.cs")).ToList();
+
+        var p = Assert.Single(Run(Rule(CustomRuleTemplates.SuffixBase, suffix: "Handler", baseType: "IHandler"), R(many)));
+
+        Assert.Equal(CustomRuleDetector.MaxItemsPerFinding, p.Items!.Count);
+        Assert.Contains((CustomRuleDetector.MaxItemsPerFinding + 50).ToString(), p.Title);
+    }
+
+    [Fact]
+    public void Hidden_and_control_characters_are_rejected()
+    {
+        Assert.Contains(Validate(Rule(CustomRuleTemplates.SuffixBase, suffix: "Hand\u202Eler", baseType: "I") ), e => e.Contains("невидимые"));
+        Assert.Contains(Validate(Rule(CustomRuleTemplates.SuffixBase, suffix: "H", baseType: "I") with { Title = "a\nb" }), e => e.Contains("невидимые"));
+    }
+
+    [Fact]
     public void Off_rule_and_failed_service_produce_nothing()
     {
         var r = R([T("DeleteHandler", "Application", "a.cs")]);

@@ -10,7 +10,7 @@ import {
   resetNaming, resetRole, resetRule, resetToLevel, roleList, updateConfig, withLevel, withNaming, withParam, withRoleList,
   withStrictness, fetchPreview, impactDelta, impactTotal, ruleImpact, roleCoverage, paramSample,
   CUSTOM_TEMPLATES, LAYER_NAMES, MAX_CUSTOM_RULES, customExample, customKind, isCustomComplete, newCustomRule, templateSpec,
-  withCustomRule, withoutCustomRule,
+  withCustomRule, withoutCustomRule, completeOnly, FIELD_TITLE,
 } from './profile';
 
 // Окно «Профиль проекта» (adr/0012, срез 3): уровень, конфигурации, строгость правил, словарь ролей, имена сервисов.
@@ -132,7 +132,7 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
     setPreviewBusy(true); setPreviewErr(null);
     const timer = setTimeout(async () => {
       try {
-        const pv = await fetchPreview(path, JSON.parse(profileKey) as Profile, ctrl.signal);
+        const pv = await fetchPreview(path, completeOnly(JSON.parse(profileKey) as Profile), ctrl.signal);   // незаконченное правило не должно ломать расчёт остального
         if (!ctrl.signal.aborted) { setPreview(pv); setPreviewErr(null); }
       } catch (e) {
         if (!ctrl.signal.aborted) setPreviewErr(messageOf(e)[0]);
@@ -187,6 +187,7 @@ function ProfileViewInner({ path, onClose, onApplied }: Props) {
   const save = async (): Promise<ConfigManifest | null> => {
     if (!draft) return persisted;
     if (!draft.name.trim()) { setErrors(['Укажите название конфигурации']); return null; }
+    if ((draft.profile.customRules ?? []).some((r) => !isCustomComplete(r))) { setTab('custom'); setErrors(['Заполните поля своих правил или удалите незаконченные']); return null; }
     let saved: ConfigManifest | null = null;
     await run(async () => {
       saved = sel === NEW || !draft.id ? await createConfig(draft) : await updateConfig(draft.id, draft);
@@ -541,20 +542,20 @@ function CustomTab(p: {
               <div className="pv__sentence">
                 {spec?.sentence.map((part, i) => typeof part === 'string'
                   ? <span key={i}>{part}</span>
-                  : <input key={i} className={`pv__slot${r[part.field]?.trim() ? '' : ' pv__slot--empty'}`} aria-label={part.placeholder} placeholder={part.placeholder} maxLength={64}
+                  : <input key={i} className={`pv__slot${r[part.field]?.trim() ? '' : ' pv__slot--empty'}`} aria-label={`${part.placeholder} — ${FIELD_TITLE[part.field]}`} placeholder={part.placeholder} maxLength={64}
                       list={part.list === 'layers' ? 'pv-layers' : part.list === 'roles' ? 'pv-roles' : undefined}
                       size={Math.max(8, (r[part.field] ?? '').length + 1)} value={r[part.field] ?? ''}
-                      onChange={(e) => p.onChange({ ...r, [part.field]: e.target.value })} />)}
+                      onChange={(e) => p.onChange({ ...r, [part.field]: e.target.value || undefined })} />)}
               </div>
               <div className="pv__rule-d">
-                {!done && <span className="pv__muted pv__muted--warn">заполните поля, иначе правило не сохранится</span>}
+                {!done && <span className="pv__muted pv__muted--warn" role="status">заполните поля, иначе правило не сохранится и не проверяется</span>}
                 {done && r.strictness !== 'Off' && found && <span className="pv__found">найдено: <b>{found.count}</b></span>}
                 {done && r.strictness === 'Off' && <span className="pv__muted">выключено</span>}
               </div>
             </div>
             <div className="pv__rule-ctl">
               <div className="pv__sev" role="group" aria-label={`Строгость: ${r.title}`}>
-                {STRICTNESS.map((s) => <button key={s} className={`pv__sev-${s}${r.strictness === s ? ' on' : ''}`} aria-pressed={r.strictness === s}
+                {STRICTNESS.map((s) => <button key={s} type="button" className={`pv__sev-${s}${r.strictness === s ? ' on' : ''}`} aria-pressed={r.strictness === s}
                   onClick={(e) => { e.stopPropagation(); p.onChange({ ...r, strictness: s }); }}>{STRICTNESS_TITLE[s]}</button>)}
               </div>
               <button className="pv__rst" title="Удалить правило" aria-label={`Удалить правило ${r.title}`} onClick={(e) => { e.stopPropagation(); p.onRemove(r.id); }}><Icon name="close" size={13} /></button>

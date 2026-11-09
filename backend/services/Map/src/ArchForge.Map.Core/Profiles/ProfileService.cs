@@ -197,6 +197,11 @@ public sealed class ProfileService(IProfileStore store, IRuleCatalogProvider cat
         {
             Level = Canonical(input.Profile.Level),
             Overrides = input.Profile.Overrides?.ToDictionary(kv => kv.Key, kv => ProfileValidator.Strictnesses.First(x => x.Equals(kv.Value, StringComparison.OrdinalIgnoreCase)), StringComparer.Ordinal),
+            CustomRules = input.Profile.CustomRules?.Select(r => r with
+            {
+                Strictness = ProfileValidator.Strictnesses.First(x => x.Equals(r.Strictness, StringComparison.OrdinalIgnoreCase)),
+                Title = r.Title.Trim(),
+            }).ToList(),
         },
         UpdatedAt = _time.GetUtcNow(),
     };

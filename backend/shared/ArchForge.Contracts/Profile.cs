@@ -221,6 +221,7 @@ public static class ProfileValidator
             var who = $"своё правило «{Trim(r.Id)}»";
             if (!IsCustomId(r.Id)) errors.Add($"{who}: идентификатор — от 1 до {MaxCustomRuleIdLength} символов a–z, 0–9 и «-»");
             else if (!seen.Add(r.Id)) errors.Add($"{who}: идентификатор повторяется");
+            if (HasHiddenChars(r.Title) || new[] { r.Suffix, r.BaseType, r.FromLayer, r.ToLayer, r.Folder, r.Role }.Any(HasHiddenChars)) errors.Add($"{who}: управляющие и невидимые символы не допускаются");
             if (string.IsNullOrWhiteSpace(r.Title) || r.Title.Length > MaxConfigNameLength) errors.Add($"{who}: название от 1 до {MaxConfigNameLength} символов");
             if (!IsStrictness(r.Strictness)) errors.Add($"{who}: неизвестная строгость «{Trim(r.Strictness)}»");
             if (r.Template is null || !CustomRuleTemplates.All.Contains(r.Template, StringComparer.Ordinal))
@@ -249,6 +250,9 @@ public static class ProfileValidator
             }
         }
     }
+
+    private static bool HasHiddenChars(string? s) =>
+        s is not null && s.Any(c => char.IsControl(c) || System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format);
 
     public static bool IsCustomId(string? id) =>
         id is { Length: > 0 and <= MaxCustomRuleIdLength } && id.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');

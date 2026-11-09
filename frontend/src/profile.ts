@@ -402,7 +402,9 @@ export function sanitizeProfile(raw: unknown): Profile | null {
   }
 
   if (Array.isArray(r.customRules)) {
-    const rules = r.customRules.map(sanitizeCustomRule).filter((x): x is CustomRule => x !== null).slice(0, MAX_CUSTOM_RULES);
+    const seen = new Set<string>();
+    const rules = r.customRules.map(sanitizeCustomRule)
+      .filter((x): x is CustomRule => x !== null && !seen.has(x.id) && !!seen.add(x.id)).slice(0, MAX_CUSTOM_RULES);
     if (rules.length) out.customRules = rules;
   }
   return out;
@@ -491,8 +493,8 @@ export const CUSTOM_TEMPLATES: readonly TemplateSpec[] = [
   { id: 'layer-no-ref', title: 'Слой не ссылается на слой', hint: 'Запрет зависимости одного слоя от другого, помимо встроенной проверки направления слоёв.',
     sentence: ['Слой', { field: 'fromLayer', placeholder: 'Domain', list: 'layers' }, 'не должен ссылаться на слой', { field: 'toLayer', placeholder: 'Infrastructure', list: 'layers' }],
     required: [['fromLayer'], ['toLayer']] },
-  { id: 'forbid-in-folder', title: 'Запретить тип в папке', hint: 'Типы с таким окончанием имени и/или базой не должны лежать в указанной папке.',
-    sentence: ['Тип с окончанием', { field: 'suffix', placeholder: 'Dto' }, 'и/или базой', { field: 'baseType', placeholder: 'IDto' }, 'не должен лежать в папке', { field: 'folder', placeholder: 'Domain' }],
+  { id: 'forbid-in-folder', title: 'Запретить тип в папке', hint: 'Типы с таким окончанием имени и базой не должны лежать в указанной папке. Заполните одно поле или оба (тогда нужны оба условия сразу).',
+    sentence: ['Тип с окончанием', { field: 'suffix', placeholder: 'Dto' }, 'и базой', { field: 'baseType', placeholder: 'IDto' }, '(хватит одного из двух) не должен лежать в папке', { field: 'folder', placeholder: 'Domain' }],
     required: [['suffix', 'baseType'], ['folder']] },
   { id: 'role-in-folder', title: 'Роль живёт в папке', hint: 'Типы определённой роли свода обязаны лежать в указанной папке.',
     sentence: ['Тип роли', { field: 'role', placeholder: 'Command', list: 'roles' }, 'должен лежать в папке', { field: 'folder', placeholder: 'Features' }],
@@ -540,6 +542,16 @@ export function withoutCustomRule(p: Profile, id: string): Profile {
 }
 
 /** Имя находки в проблемах и в предпросмотре влияния. */
+export const FIELD_TITLE: Record<CustomField, string> = {
+  suffix: 'окончание имени', baseType: 'базовый тип', fromLayer: 'слой-источник', toLayer: 'слой-цель', folder: 'папка', role: 'роль',
+};
+
+/** Профиль без незаконченных правил: для предпросмотра (сервер отклонил бы весь профиль из-за одного пустого поля). */
+export function completeOnly(p: Profile): Profile {
+  if (!p.customRules) return p;
+  return prune({ ...p, customRules: p.customRules.filter(isCustomComplete) });
+}
+
 export const customKind = (id: string): string => `custom:${id}`;
 
 /** Пример «плохо / хорошо», собранный из значений правила (пока поля пусты — подсказки шаблона). */
@@ -571,9 +583,10 @@ export function sanitizeCustomRule(raw: unknown): CustomRule | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== 'string' || typeof r.title !== 'string' || !isTemplate(r.template)) return null;
-  const strictness = STRICTNESS.find((x) => x === r.strictness);
+  const strictness = STRICTNESS.find((x) => typeof r.strictness === 'string' && x.toLowerCase() === r.strictness.toLowerCase());
   if (!strictness) return null;
-  const out: CustomRule = { id: r.id, template: r.template, title: r.title, strictness };
-  for (const f of CUSTOM_FIELDS) if (typeof r[f] === 'string') out[f] = r[f] as string;
+  if (!/^[a-z0-9-]{1,40}$/.test(r.id)) return null;
+  const out: CustomRule = { id: r.id, template: r.template, title: r.title.slice(0, 100), strictness };
+  for (const f of CUSTOM_FIELDS) if (typeof r[f] === 'string' && (r[f] as string).trim()) out[f] = (r[f] as string).trim().slice(0, 64);
   return out;
 }
