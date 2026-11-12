@@ -7,26 +7,32 @@ using Microsoft.IdentityModel.JsonWebTokens;
 namespace ArchForge.Map.Core.Auth;
 
 /// <summary>Сессия входа на этой машине (adr/0013): вход по сети один раз, дальше — локально. Токены держит только Map.
-/// Автономный срок считается от последнего успешного обмена с сервером входа; перевод часов назад срок не продлевает.</summary>
+/// Автономный срок считается от последнего успешного обмена с сервером входа; перевод часов назад срок не продлевает.
+/// Сетевые вызовы идут вне замка: молчащий сервер входа не должен подвешивать обычные запросы.</summary>
 public sealed class SessionService(ISessionVault vault, IOidcClient oidc, IOptions<LoginSessionOptions> options, AuthOptions auth,
     TimeProvider clock, ILogger<SessionService> log)
 {
     private static readonly TimeSpan PendingTtl = TimeSpan.FromMinutes(10);
     private const int MaxPending = 20;
     private static readonly TimeSpan SeenSaveEvery = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan LoadRetryEvery = TimeSpan.FromSeconds(30);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly Dictionary<string, (string Verifier, string RedirectUri, DateTimeOffset Expires)> _pending = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Verifier, string RedirectUri, string Binder, DateTimeOffset Expires)> _pending = new(StringComparer.Ordinal);
     private StoredSession? _session;
     private bool _loaded;
-    private bool _offline;
+    private DateTimeOffset _nextLoadAttempt;
+    private volatile bool _offline;
     private LoginSessionOptions Opt => options.Value;
 
     // ── вход ──
 
     /// <summary>Начало входа: запоминает одноразовое состояние и проверочный код (PKCE), отдаёт адрес сервера входа для браузера.</summary>
-    public async Task<Uri> BeginLoginAsync(string redirectUri, CancellationToken ct = default)
+    /// <returns>Адрес сервера входа и «привязка к браузеру»: её кладут в cookie браузера, который начал вход, и сверяют на возврате.
+    /// Так чужой вызов /login (процесс на машине) не подменит аккаунт: у браузера пользователя этой привязки не будет.</returns>
+    public async Task<(Uri Url, string Binder)> BeginLoginAsync(string redirectUri, CancellationToken ct = default)
     {
+        var binder = Random(16);
         var state = Random(32);
         var verifier = Random(32);
         var challenge = Base64Url(SHA256.HashData(System.Text.Encoding.ASCII.GetBytes(verifier)));
@@ -36,26 +42,35 @@ public sealed class SessionService(ISessionVault vault, IOidcClient oidc, IOptio
             var now = clock.GetUtcNow();
             foreach (var k in _pending.Where(p => p.Value.Expires <= now).Select(p => p.Key).ToList()) _pending.Remove(k);
             if (_pending.Count >= MaxPending) throw new InvalidOperationException("слишком много незавершённых входов; повторите позже");
-            _pending[state] = (verifier, redirectUri, now + PendingTtl);
+            _pending[state] = (verifier, redirectUri, binder, now + PendingTtl);
         }
         finally { _gate.Release(); }
-        return await oidc.BuildAuthorizeUrlAsync(redirectUri, state, challenge, ct);
+        return (await oidc.BuildAuthorizeUrlAsync(redirectUri, state, challenge, ct), binder);
     }
 
     /// <summary>Завершение входа: состояние одноразовое и с ограниченным сроком; чужой или повторный вызов отклоняется.</summary>
-    public async Task CompleteLoginAsync(string state, string code, CancellationToken ct = default)
+    public async Task CompleteLoginAsync(string state, string code, string? binder, CancellationToken ct = default)
     {
+        (string Verifier, string RedirectUri, string Binder, DateTimeOffset Expires) p;
         await _gate.WaitAsync(ct);
         try
         {
-            if (!_pending.Remove(state, out var p) || p.Expires <= clock.GetUtcNow())
-                throw new OidcException(OidcFailure.Rejected, "вход не начинался или устарел; начните заново");
-            var tokens = await oidc.ExchangeCodeAsync(code, p.RedirectUri, p.Verifier, ct);
-            if (string.IsNullOrEmpty(tokens.RefreshToken)) throw new OidcException(OidcFailure.Invalid, "сервер входа не выдал токен обновления");
-            var now = clock.GetUtcNow();
-            var s = Build(tokens, tokens.RefreshToken, now, now);
-            await vault.SaveAsync(s, ct);
-            _session = s; _loaded = true; _offline = false;
+            if (!_pending.Remove(state, out p) || p.Expires <= clock.GetUtcNow()
+                || !CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(binder ?? ""), System.Text.Encoding.UTF8.GetBytes(p.Binder)))
+                throw new OidcException(OidcFailure.Rejected, "вход не начинался, устарел или начат в другом браузере; начните заново");
+        }
+        finally { _gate.Release(); }
+
+        var tokens = await oidc.ExchangeCodeAsync(code, p.RedirectUri, p.Verifier, ct);   // сеть — вне замка
+        if (string.IsNullOrEmpty(tokens.RefreshToken)) throw new OidcException(OidcFailure.Invalid, "сервер входа не выдал токен обновления");
+        var now = clock.GetUtcNow();
+        var s = Build(tokens, tokens.RefreshToken, now, now);
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            _session = s; _loaded = true; _offline = false;   // в памяти сразу: код авторизации уже потрачен
+            await TrySaveAsync(s, ct);
         }
         finally { _gate.Release(); }
     }
@@ -73,10 +88,9 @@ public sealed class SessionService(ISessionVault vault, IOidcClient oidc, IOptio
     {
         var s = await TouchAsync(ct);
         var (state, graceEnd) = Evaluate(s);
-        var left = graceEnd is { } g && state is SessionState.Active or SessionState.Offline
-            ? Math.Max(0, (int)Math.Ceiling((g - clock.GetUtcNow()).TotalDays)) : (int?)null;
-        return new SessionStatusDto(Name(state), state is SessionState.Active or SessionState.Offline ? s!.Subject : null,
-            state is SessionState.Active or SessionState.Offline ? graceEnd : null, left,
+        var live = state is SessionState.Active or SessionState.Offline;
+        int? left = live && graceEnd is { } g ? Math.Max(0, (int)Math.Ceiling((g - clock.GetUtcNow()).TotalDays)) : null;
+        return new SessionStatusDto(Name(state), live ? s!.Subject : null, live ? graceEnd : null, left,
             state == SessionState.Offline && left is { } d && d <= Opt.WarnDays, vault.Storage);
     }
 
@@ -88,37 +102,59 @@ public sealed class SessionService(ISessionVault vault, IOidcClient oidc, IOptio
     }
 
     /// <summary>Фоновое обновление: продлевает токены, пока они близки к истечению или связь была потеряна. Сети нет — работаем по кешу;
-    /// сервер отклонил обновление (доступ отозван) — сессию стираем.</summary>
+    /// сервер отказал по существу (доступ отозван) — сессию стираем; срок вышел — стираем токены, оставляя запись «нужен вход».</summary>
     public async Task TickAsync(CancellationToken ct = default)
     {
         var s = await TouchAsync(ct);
-        if (Evaluate(s).State is not (SessionState.Active or SessionState.Offline)) return;
-        var now = clock.GetUtcNow();
-        if (!_offline && s!.AccessExpiresAt - now > TimeSpan.FromMinutes(2)) return;
+        var state = Evaluate(s).State;
+        if (state == SessionState.Expired && s is { RefreshToken.Length: > 0 }) { await WipeTokensAsync(s, ct); return; }
+        if (state is not (SessionState.Active or SessionState.Offline)) return;
+        if (!_offline && s!.AccessExpiresAt - clock.GetUtcNow() > TimeSpan.FromMinutes(2)) return;
+
+        var used = s!.RefreshToken;
+        TokenSet tokens;
+        try { tokens = await oidc.RefreshAsync(used, ct); }   // сеть — вне замка
+        catch (OidcException e) when (e.Kind == OidcFailure.Rejected)
+        {
+            await _gate.WaitAsync(ct);
+            try
+            {
+                if (_session?.RefreshToken == used)   // за время запроса не вышли и не вошли заново
+                {
+                    log.LogWarning("Сервер входа отклонил обновление сессии — доступ отозван или истёк; сессия стёрта.");
+                    await vault.ClearAsync(ct); _session = null;
+                }
+            }
+            finally { _gate.Release(); }
+            return;
+        }
+        catch (OidcException e)
+        {
+            _offline = true;   // сеть/ответ сервера недоступны: остаёмся по кешу в пределах срока
+            log.LogInformation("Сервер входа недоступен ({Kind}); работаем по кешу.", e.Kind);
+            return;
+        }
 
         await _gate.WaitAsync(ct);
         try
         {
             var cur = _session;
-            if (cur is null) return;
-            try
-            {
-                var tokens = await oidc.RefreshAsync(cur.RefreshToken, ct);
-                var t = clock.GetUtcNow();
-                var next = Build(tokens, tokens.RefreshToken ?? cur.RefreshToken, t, Max(t, cur.LastSeenUtc));
-                await vault.SaveAsync(next, ct);
-                _session = next; _offline = false;
-            }
-            catch (OidcException e) when (e.Kind == OidcFailure.Rejected)
-            {
-                log.LogWarning("Сервер входа отклонил обновление сессии — доступ отозван или истёк; сессия стёрта.");
-                await vault.ClearAsync(ct); _session = null;
-            }
+            if (cur is null || cur.RefreshToken != used) return;   // выход или новый вход во время запроса
+            var t = clock.GetUtcNow();
+            var newRefresh = tokens.RefreshToken ?? cur.RefreshToken;
+            StoredSession next;
+            try { next = Build(tokens, newRefresh, t, Max(t, cur.LastSeenUtc)); }
             catch (OidcException e)
             {
-                _offline = true;   // сеть/ответ сервера недоступны: остаёмся по кешу в пределах срока
-                log.LogInformation("Сервер входа недоступен ({Kind}); работаем по кешу.", e.Kind);
+                // Токен непонятный, но refresh уже выдан и старый, возможно, погашен: новый не теряем.
+                log.LogWarning("Обновление вернуло неподходящий токен ({Message}); срок не продлён.", e.Message);
+                next = cur with { RefreshToken = newRefresh };
+                _offline = true;
+                _session = next; await TrySaveAsync(next, ct);
+                return;
             }
+            _session = next; _offline = false;   // в памяти сразу: ошибка записи не должна терять свежий refresh-токен
+            await TrySaveAsync(next, ct);
         }
         finally { _gate.Release(); }
     }
@@ -135,30 +171,56 @@ public sealed class SessionService(ISessionVault vault, IOidcClient oidc, IOptio
         return (_offline ? SessionState.Offline : SessionState.Active, end);
     }
 
-    /// <summary>Загружает сессию (один раз) и продвигает «последнее виденное время», но не при подозрительных часах.</summary>
+    /// <summary>Загружает сессию и продвигает «последнее виденное время» (но не при подозрительных часах).
+    /// Сбой чтения не залипает: повтор не чаще раза в 30 секунд.</summary>
     private async Task<StoredSession?> TouchAsync(CancellationToken ct)
     {
         await _gate.WaitAsync(ct);
         try
         {
-            if (!_loaded)
+            var now = clock.GetUtcNow();
+            if (!_loaded && now >= _nextLoadAttempt)
             {
-                try { _session = await vault.LoadAsync(ct); }
-                catch (Exception e) when (e is not OperationCanceledException) { log.LogWarning(e, "Не удалось прочитать сохранённую сессию — считаем, что входа нет."); _session = null; }
-                _loaded = true;
+                try { _session = await vault.LoadAsync(ct); _loaded = true; }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    log.LogWarning(e, "Не удалось прочитать сохранённую сессию; повторю позже.");
+                    _nextLoadAttempt = now + LoadRetryEvery;
+                }
             }
             var s = _session;
             if (s is null) return null;
-            var now = clock.GetUtcNow();
             if (Evaluate(s).State != SessionState.Clock && now - s.LastSeenUtc >= SeenSaveEvery)
             {
-                s = s with { LastSeenUtc = now };
-                _session = s;
-                try { await vault.SaveAsync(s, ct); } catch (Exception e) when (e is not OperationCanceledException) { log.LogWarning(e, "Не удалось сохранить метку времени сессии."); }
+                var seen = s with { LastSeenUtc = now };
+                if (await TrySaveAsync(seen, ct)) { _session = seen; s = seen; }   // метка времени растёт, только если записалась
             }
             return s;
         }
         finally { _gate.Release(); }
+    }
+
+    private async Task WipeTokensAsync(StoredSession s, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            if (_session is not { RefreshToken.Length: > 0 } cur || cur.RefreshToken != s.RefreshToken) return;
+            var wiped = cur with { AccessToken = "", RefreshToken = "" };   // просроченный токен обновления на диске не нужен
+            _session = wiped;
+            await TrySaveAsync(wiped, ct);
+        }
+        finally { _gate.Release(); }
+    }
+
+    private async Task<bool> TrySaveAsync(StoredSession s, CancellationToken ct)
+    {
+        try { await vault.SaveAsync(s, ct); return true; }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            log.LogWarning(e, "Не удалось сохранить сессию на диск; она остаётся только в памяти до перезапуска.");
+            return false;
+        }
     }
 
     private StoredSession Build(TokenSet tokens, string refresh, DateTimeOffset lastOnline, DateTimeOffset lastSeen)
@@ -167,7 +229,7 @@ public sealed class SessionService(ISessionVault vault, IOidcClient oidc, IOptio
         try { jwt = new JsonWebTokenHandler().ReadJsonWebToken(tokens.AccessToken); }
         catch (Exception) { throw new OidcException(OidcFailure.Invalid, "сервер входа вернул непонятный токен"); }
 
-        // Токен получен напрямую от сервера входа по TLS, но свою роль всё равно сверяем: издатель, адресат, субъект.
+        // Токен получен напрямую от сервера входа по TLS (подпись здесь не проверяется), но издателя, адресата и субъект сверяем.
         if (!string.Equals(jwt.Issuer?.TrimEnd('/'), auth.Authority.TrimEnd('/'), StringComparison.Ordinal))
             throw new OidcException(OidcFailure.Invalid, "токен выдан не тем издателем");
         if (!string.IsNullOrEmpty(auth.Audience) && !jwt.Audiences.Contains(auth.Audience, StringComparer.Ordinal))

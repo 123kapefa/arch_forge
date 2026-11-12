@@ -37,7 +37,7 @@ public static class SessionRegistration
         services.AddAuthentication()
             .AddScheme<AuthenticationSchemeOptions, LocalSessionHandler>(LocalScheme, null)
             .AddPolicyScheme(SmartScheme, SmartScheme, o => o.ForwardDefaultSelector = ctx =>
-                ctx.Request.Headers.ContainsKey("Authorization")
+                ctx.Request.Headers.ContainsKey("Authorization") || !opt.AllowLocalSession
                     ? Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme
                     : LocalScheme);
         services.Configure<AuthenticationOptions>(o => { o.DefaultAuthenticateScheme = SmartScheme; o.DefaultChallengeScheme = SmartScheme; });
@@ -64,6 +64,10 @@ internal sealed class LocalSessionHandler(IOptionsMonitor<AuthenticationSchemeOp
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         if (Context.Connection.RemoteIpAddress is not { } ip || !IPAddress.IsLoopback(ip)) return AuthenticateResult.NoResult();
+        // Запрос из браузера пускаем, только если он со страницы самого приложения (тот же источник) или это переход пользователя.
+        // Чужой сайт (даже обычный GET из <img>) и страница на другом порту этой машины сессии не получают. Без заголовка — не браузер.
+        var site = Context.Request.Headers["Sec-Fetch-Site"].ToString();
+        if (site.Length > 0 && site is not ("same-origin" or "none")) return AuthenticateResult.NoResult();
         if (await sessions.GetUsableAsync(Context.RequestAborted) is not { } s) return AuthenticateResult.NoResult();
         var claims = new List<Claim> { new(AuthClaims.Subject, s.Subject) };
         claims.AddRange(s.Roles.Select(r => new Claim(AuthClaims.Role, r)));
@@ -78,11 +82,16 @@ internal sealed class SessionRefreshService(SessionService sessions, ILogger<Ses
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
+        await Task.Yield();   // первый круг (чтение Keychain, сеть) не должен задерживать запуск сервера
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(2));
-        do
+        try
         {
-            try { await sessions.TickAsync(ct); }
-            catch (Exception e) when (e is not OperationCanceledException) { log.LogWarning(e, "Не удалось обновить сессию в фоне."); }
-        } while (await timer.WaitForNextTickAsync(ct).AsTask().ContinueWith(t => t.IsCompletedSuccessfully && t.Result, CancellationToken.None));
+            do
+            {
+                try { await sessions.TickAsync(ct); }
+                catch (Exception e) when (e is not OperationCanceledException) { log.LogWarning(e, "Не удалось обновить сессию в фоне."); }
+            } while (await timer.WaitForNextTickAsync(ct));
+        }
+        catch (OperationCanceledException) { /* остановка приложения */ }
     }
 }

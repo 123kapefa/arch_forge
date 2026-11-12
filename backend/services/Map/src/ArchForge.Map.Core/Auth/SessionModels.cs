@@ -28,6 +28,10 @@ public sealed class LoginSessionOptions
 
     /// <summary>Папка данных сессии. null → папка данных пользователя.</summary>
     public string? Directory { get; init; }
+
+    /// <summary>Пускать запросы с этой машины без заголовка Authorization как вошедшего пользователя (локальное приложение).
+    /// Отключайте, если перед Map стоит прокси на этой же машине или он доступен по сети: тогда только токены.</summary>
+    public bool AllowLocalSession { get; init; } = true;
 }
 
 /// <summary>Что хранится на машине. Токены наружу (во фронт) не отдаются.</summary>

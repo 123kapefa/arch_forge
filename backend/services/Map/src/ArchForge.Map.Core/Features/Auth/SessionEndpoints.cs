@@ -15,6 +15,7 @@ namespace ArchForge.Map.Core.Features.Auth;
 public sealed class SessionEndpoints : IEndpoint
 {
     private const string CallbackPath = "/api/auth/callback";
+    private const string BinderCookie = "archforge_login";
 
     public void MapEndpoint(IEndpointRouteBuilder app)
     {
@@ -28,11 +29,14 @@ public sealed class SessionEndpoints : IEndpoint
 
         app.MapPost("/api/auth/login", async (HttpContext ctx, [FromServices] SessionService? sessions, [FromServices] IOptions<LoginSessionOptions>? opt, CancellationToken ct) =>
         {
-            if (!Local(ctx)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (!Local(ctx) || !SameOrigin(ctx)) return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (sessions is null || opt is null) return Results.BadRequest(new { error = "вход не настроен (режим разработки или нет Authentication:Authority)" });
             try
             {
-                var url = await sessions.BeginLoginAsync(opt.Value.RedirectBaseUrl.TrimEnd('/') + CallbackPath, ct);
+                var (url, binder) = await sessions.BeginLoginAsync(opt.Value.RedirectBaseUrl.TrimEnd('/') + CallbackPath, ct);
+                // Привязка входа к этому браузеру: HttpOnly, только для адреса возврата; Lax пропускает переход с сервера входа.
+                ctx.Response.Cookies.Append(BinderCookie, binder, new CookieOptions
+                { HttpOnly = true, SameSite = SameSiteMode.Lax, Path = CallbackPath, MaxAge = TimeSpan.FromMinutes(10), IsEssential = true });
                 return Results.Ok(new { url = url.ToString() });
             }
             catch (OidcException e) { return Results.Json(new { error = e.Message }, statusCode: StatusCodes.Status503ServiceUnavailable); }
@@ -49,17 +53,26 @@ public sealed class SessionEndpoints : IEndpoint
             var sep = back.Contains('?') ? '&' : '?';
             if (error is not null || string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state) || code.Length > 2048 || state.Length > 256)
                 return Results.Redirect(back + sep + "login=failed");
-            try { await sessions.CompleteLoginAsync(state, code, ct); }
-            catch (OidcException) { return Results.Redirect(back + sep + "login=failed"); }
+            try { await sessions.CompleteLoginAsync(state, code, ctx.Request.Cookies[BinderCookie], ct);
+                ctx.Response.Cookies.Delete(BinderCookie, new CookieOptions { Path = CallbackPath }); }
+            catch (Exception e) when (e is not OperationCanceledException) { return Results.Redirect(back + sep + "login=failed"); }
             return Results.Redirect(back + sep + "login=ok");
         }).AllowAnonymous();
 
         app.MapPost("/api/auth/logout", async (HttpContext ctx, [FromServices] SessionService? sessions, CancellationToken ct) =>
         {
-            if (!Local(ctx)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (!Local(ctx) || !SameOrigin(ctx)) return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (sessions is not null) await sessions.LogoutAsync(ct);
             return Results.NoContent();
         }).AllowAnonymous();
+    }
+
+    /// <summary>Изменяющие запросы — только со страницы приложения (тот же источник) или не из браузера. Страница на другом порту этой же
+    /// машины (same-site) войти и выйти за пользователя не может.</summary>
+    private static bool SameOrigin(HttpContext ctx)
+    {
+        var site = ctx.Request.Headers["Sec-Fetch-Site"].ToString();
+        return site.Length == 0 || site is "same-origin" or "none";
     }
 
     private static bool Local(HttpContext ctx) => ctx.Connection.RemoteIpAddress is { } ip && IPAddress.IsLoopback(ip);

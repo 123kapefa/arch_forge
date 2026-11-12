@@ -26,7 +26,11 @@ public sealed class DpapiKeyProtector(string directory) : IKeyProtector
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("DPAPI есть только в Windows");
         var path = Path.Combine(directory, "session.key");
-        if (File.Exists(path)) return ProtectedData.Unprotect(File.ReadAllBytes(path), Entropy, DataProtectionScope.CurrentUser);
+        if (File.Exists(path))
+        {
+            try { return ProtectedData.Unprotect(File.ReadAllBytes(path), Entropy, DataProtectionScope.CurrentUser); }
+            catch (CryptographicException) { /* ключ от другого пользователя/профиля: создаём новый, прежняя сессия станет нечитаемой — войдёте заново */ }
+        }
         var key = RandomNumberGenerator.GetBytes(32);
         FileSecurity.WriteAtomic(path, ProtectedData.Protect(key, Entropy, DataProtectionScope.CurrentUser));
         return key;
@@ -34,7 +38,8 @@ public sealed class DpapiKeyProtector(string directory) : IKeyProtector
 }
 
 /// <summary>macOS: ключ лежит в связке ключей Keychain (утилита <c>security</c> есть в системе).
-/// Ограничение: на миг записи ключ виден в списке процессов этого же пользователя.</summary>
+/// Ограничение: запись создана утилитой <c>security</c>, поэтому процесс этого же пользователя может прочитать ключ тем же способом, а на
+/// миг записи он виден в списке процессов. Защита — от чтения файла сессии без доступа к связке (резервная копия, другая учётная запись).</summary>
 public sealed class KeychainKeyProtector(string account = "archforge", string service = "archforge-session-key") : IKeyProtector
 {
     public string Name => "keychain";
@@ -44,6 +49,8 @@ public sealed class KeychainKeyProtector(string account = "archforge", string se
     {
         var (code, output) = Run("find-generic-password", "-a", account, "-s", service, "-w");
         if (code == 0 && TryDecode(output.Trim(), out var existing)) return existing;
+        // 44 — записи нет. Любой другой сбой (связка заблокирована, отказ пользователя) ключ не создаёт: иначе мы затёрли бы рабочий.
+        if (code != 0 && code != 44) throw new InvalidOperationException("Keychain недоступна (код " + code + ")");
         var key = RandomNumberGenerator.GetBytes(32);
         var (add, _) = Run("add-generic-password", "-U", "-a", account, "-s", service, "-w", Convert.ToBase64String(key));
         if (add != 0) throw new InvalidOperationException("не удалось записать ключ в Keychain");
@@ -72,11 +79,13 @@ public sealed class KeychainKeyProtector(string account = "archforge", string se
 /// Слабее системного хранилища: защищает от других пользователей машины, но не от процессов самого пользователя.</summary>
 public sealed class FileKeyProtector(string directory) : IKeyProtector
 {
+    private static bool OwnerOnly(string p) => FileSecurity.OwnerOnly(p);
     public string Name => "file";
     public byte[] GetOrCreateKey()
     {
         var path = Path.Combine(directory, "session.key");
-        if (File.Exists(path) && File.ReadAllBytes(path) is { Length: 32 } existing) return existing;
+        // Готовый файл ключа доверяем, только если он доступен одному владельцу: чужой/общий файл мог подложить кто-то другой.
+        if (File.Exists(path) && OwnerOnly(path) && File.ReadAllBytes(path) is { Length: 32 } existing) return existing;
         var key = RandomNumberGenerator.GetBytes(32);
         FileSecurity.WriteAtomic(path, key);
         return key;
@@ -85,10 +94,19 @@ public sealed class FileKeyProtector(string directory) : IKeyProtector
 
 internal static class FileSecurity
 {
+    public static bool OwnerOnly(string path) =>
+        OperatingSystem.IsWindows() || (File.GetUnixFileMode(path) & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) == 0;
+
     /// <summary>Атомарная запись (временный файл + замена), права только владельцу на Unix.</summary>
     public static void WriteAtomic(string path, byte[] data)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var dir = Path.GetDirectoryName(path)!;
+        if (!Directory.Exists(dir))
+        {
+            if (OperatingSystem.IsWindows()) Directory.CreateDirectory(dir);
+            else Directory.CreateDirectory(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);   // 0700
+        }
         var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
