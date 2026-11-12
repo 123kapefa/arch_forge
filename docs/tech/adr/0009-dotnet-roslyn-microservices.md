@@ -8,7 +8,7 @@
 
 ## Решение
 - **Бэк — .NET/C#** строго по своду: каждый сервис — Domain/Contracts/Core/Infrastructure/Web, вертикальные срезы, `Result<T,Error>`, маркеры `ICommand/ICommandHandler/IEndpoint/AbstractValidator`, само-регистрация `IEndpoint`, `SharedKernel`/PlatformBootstrap.
-- **Движок — Roslyn** нативно (см. `docs/roslyn.md`); C#-спайк `archforge-spike` — зародыш ядра.
+- **Движок — Roslyn** нативно (см. `docs/tech/reference/roslyn.md`); C#-спайк `archforge-spike` — зародыш ядра.
 - **Фронт — свой клиент** на React + React Flow (`@xyflow/react`) на контракте `Map` (`/api/map`); archlens — только референс идей, код не переиспользуется. Детали — `adr/0010`.
 - **Микросервисы (по возможностям, не по слоям):**
   - `Analysis` — Roslyn/MSBuild: `путь → IR`. Тяжёлый, async-friendly, изолирован; сюда же позже другие языки.
@@ -25,4 +25,4 @@
 ## Последствия
 - Прежние TS-наработки в archlens (роли / тип-уровень / линт) — не бэкенд продукта; логика переносится в `Analysis` на C# (спайк уже это делал).
 - `Analysis` тяжёлый (семантика требует сборки) → отдельный сервис/воркер оправдан.
-- Скелет solution раскладывается по своду; движок зафиксирован в `docs/roslyn.md`.
+- Скелет solution раскладывается по своду; движок зафиксирован в `docs/tech/reference/roslyn.md`.

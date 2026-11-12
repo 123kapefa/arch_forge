@@ -2,7 +2,7 @@
 
 Настройка конкретного репозитория: процесс задач и веток.
 
-- **Трекер:** GitHub Project V2 «arch_forge — трекер» (#2, `github.com/users/123kapefa/projects/2`). Поля: Status, Area, Side, Priority, Effort, Phase (Фаза 1 / 1.5 / 1.6 / 2 / 3). Карточка — реальный Issue (тело: Контекст / Что сделано / Критерии приёмки / Итог / Источник), тип — лейблом. Эпики — нативные sub-issues (текущий: #96 «Фаза 1.6»). Содержание эпиков и статусы — `docs/roadmap-epics.md`, вехи — `docs/ROADMAP.md`.
+- **Трекер:** GitHub Project V2 «arch_forge — трекер» (#2, `github.com/users/123kapefa/projects/2`). Поля: Status, Area, Side, Priority, Effort, Phase (Фаза 1 / 1.5 / 1.6 / 2 / 3). Карточка — реальный Issue (тело: Контекст / Что сделано / Критерии приёмки / Итог / Источник), тип — лейблом. Эпики — нативные sub-issues (текущий: #96 «Фаза 1.6»). Содержание эпиков и статусы — `docs/tech/roadmap/epics.md`, вехи — `docs/tech/roadmap/ROADMAP.md`.
 - **Репозиторий:** приватный `github.com/123kapefa/arch_forge`.
 - **Грабли:** авто-закрытие по `Closes #NN` не срабатывает при мердже в `dev` (дефолтная ветка — `main`) — закрывать issue вручную.
 - **Ветки:**
