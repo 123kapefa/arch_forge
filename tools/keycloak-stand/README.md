@@ -34,3 +34,31 @@ python3 tools/keycloak-stand/check.py --fast   # без обновления и 
 Вход до конца; состояние `active`; claims роли и права; токен Keycloak принят, испорченная подпись и токен без аудитории — 401; callback без cookie привязки не даёт входа; выход; фоновое обновление сдвигает автономный срок; отзыв сессии на сервере входа (`invalid_grant`) стирает сессию.
 
 Не покрыто: автономная работа без связи с Keycloak и истечение 14 дней (покрыто быстрыми тестами с подменой часов).
+
+## Проверка на стенде `auth_service`
+
+Тот же `check.py` проходит и против настоящего `auth_service` (его Keycloak с realm проекта). Проверено на Keycloak 26.4 из `microservices/auth_service`.
+
+Подготовка (в репозитории `auth_service`, стенд: `docker compose up -d --wait keycloak`):
+```bash
+DEV=1 scripts/project/create-project.sh archforge "arch_forge" http://localhost:8081
+python3 scripts/project/add-app.py archforge archforge "arch_forge" --default-role user --web http://localhost:5200
+python3 scripts/project/add-admin.py archforge 79990001111 --email tester@archforge.test --password 'Test1234!'   # только DEV
+```
+`--web http://localhost:5200` создаёт публичный клиент `archforge-web` (PKCE) с возвратом `http://localhost:5200/*`.
+
+Map против него:
+```bash
+ASPNETCORE_ENVIRONMENT=Development Authentication__DevMode=false \
+Authentication__Authority=http://localhost:8180/realms/archforge Authentication__Audience=archforge \
+Authentication__AllowInsecureMetadata=true Auth__ClientId=archforge-web Auth__Directory=/tmp/af-stand \
+dotnet run --project backend/services/Map/src/ArchForge.Map.Web --urls http://localhost:5200
+```
+Проверки (пароль админа Keycloak — из `.env` `auth_service`, нужен только для шага «отзыв»):
+```bash
+AF_KC=http://localhost:8180 AF_USER=79990001111 AF_PASS='Test1234!' AF_PROBE=0 AF_PERMISSION= AF_ADMIN_PASS=<KEYCLOAK_ADMIN_PASSWORD> \
+  python3 tools/keycloak-stand/check.py
+```
+Токен доступа в `auth_service` живёт 15 минут, Map обновляет его за 2 минуты до конца, поэтому шаг «обновление» дождётся не за 3 минуты. Для проверки временно поставьте realm `accessTokenLifespan=120` (Admin API) и верните 900.
+
+Что подтверждено: вход по коду + PKCE клиентом `archforge-web` с экраном входа темы `auth_service`; `aud` = код приложения (`archforge`); роль приложения приходит в claim `role`; ротация refresh-токена (в realm `revokeRefreshToken=true`) переживается; отзыв сессии стирает сессию. Права (`permissions`) пока пустые: роль `user` создана без прав — их объявит каталог приложения (`AddAppCatalog`) или админка, когда у arch_forge появятся платные функции.
