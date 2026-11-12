@@ -243,6 +243,10 @@ public class AuthTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync("/api/rules")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync("/api/profile/configs")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Get("/api/me", Token()))).StatusCode);   // с токеном — пропускает
+        // вошёл, но права пользоваться нет — закрыто (403), с правом — открыто
+        Assert.Equal(HttpStatusCode.Forbidden, (await http.SendAsync(Get("/api/rules", Token(perms: [])))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await http.SendAsync(Get("/api/rules", Token(perms: ["other.right"])))).StatusCode);
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await http.SendAsync(Get("/api/rules", Token()))).StatusCode);
     }
 
     [Fact]
