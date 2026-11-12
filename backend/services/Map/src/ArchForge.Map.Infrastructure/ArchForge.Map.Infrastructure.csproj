@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ArchForge.Map.Core\ArchForge.Map.Core.csproj" />
     <ProjectReference Include="..\ArchForge.Map.Domain\ArchForge.Map.Domain.csproj" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
   </ItemGroup>
 
   <PropertyGroup>
