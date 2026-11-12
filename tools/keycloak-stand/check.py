@@ -4,12 +4,23 @@
 Перед запуском: стенд поднят (compose.yaml) и Map запущен так, как описано в README.md.
   python3 tools/keycloak-stand/check.py          # всё, включая обновление токена и отзыв (~2-3 минуты)
   python3 tools/keycloak-stand/check.py --fast   # без ожидания фоновой службы
+
+Другой сервер входа (например, стенд auth_service) — через переменные окружения, см. README.md:
+  AF_KC (адрес Keycloak), AF_REALM, AF_USER, AF_PASS, AF_ADMIN_PASS, AF_PROBE=0 (нет служебных клиентов для токенов),
+  AF_ROLE, AF_PERMISSION (ожидаемые роль и право в /api/me; пусто — только показать).
 """
-import json, re, sys, time, html, urllib.request, urllib.parse, urllib.error, http.cookiejar
+import json, os, re, sys, time, html, urllib.request, urllib.parse, urllib.error, http.cookiejar
 
 MAP = 'http://localhost:5200'
-KC = 'http://localhost:8280'
-REALM = f'{KC}/realms/archforge'
+KC = os.environ.get('AF_KC', 'http://localhost:8280')
+REALM_NAME = os.environ.get('AF_REALM', 'archforge')
+REALM = f'{KC}/realms/{REALM_NAME}'
+USER = os.environ.get('AF_USER', 'tester')
+PASS = os.environ.get('AF_PASS', 'tester')
+ADMIN_PASS = os.environ.get('AF_ADMIN_PASS', 'admin')
+PROBE = os.environ.get('AF_PROBE', '1') != '0'
+ROLE = os.environ.get('AF_ROLE', 'user')
+PERMISSION = os.environ.get('AF_PERMISSION', 'archforge.use')
 FAST = '--fast' in sys.argv
 fails = []
 
@@ -49,10 +60,19 @@ def session(op):
 
 
 def probe_token(client='archforge-probe'):
-    form = urllib.parse.urlencode({'grant_type': 'password', 'client_id': client, 'username': 'tester', 'password': 'tester'}).encode()
+    form = urllib.parse.urlencode({'grant_type': 'password', 'client_id': client, 'username': USER, 'password': PASS}).encode()
     s, _, b = call(urllib.request.build_opener(), 'POST', f'{REALM}/protocol/openid-connect/token', form,
                    {'Content-Type': 'application/x-www-form-urlencoded'})
     return json.loads(b)['access_token'] if s == 200 else None
+
+
+def login_action(page):
+    """Адрес формы входа: обычная форма Keycloak или kcContext темы Keycloakify (страницу рисует React)."""
+    m = re.search(r'<form[^>]*id="kc-form-login"[^>]*action="([^"]+)"', page) or re.search(r'action="([^"]+login-actions/authenticate[^"]*)"', page)
+    if m:
+        return html.unescape(m.group(1))
+    m = re.search(r'"loginAction"\s*:\s*"([^"]+)"', page)
+    return html.unescape(m.group(1).replace('\\/', '/')) if m else None
 
 
 def browser_login(op):
@@ -64,11 +84,11 @@ def browser_login(op):
     kcjar = new_jar()
     kop = opener(kcjar)
     s, _, page = call(kop, 'GET', url)
-    m = re.search(r'<form[^>]*id="kc-form-login"[^>]*action="([^"]+)"', page) or re.search(r'action="([^"]+login-actions/authenticate[^"]*)"', page)
-    if s != 200 or not m:
+    action = login_action(page)
+    if s != 200 or not action:
         return None, f'нет формы входа (HTTP {s})'
-    form = urllib.parse.urlencode({'username': 'tester', 'password': 'tester', 'credentialId': ''}).encode()
-    s, h, _ = call(kop, 'POST', html.unescape(m.group(1)), form, {'Content-Type': 'application/x-www-form-urlencoded'})
+    form = urllib.parse.urlencode({'username': USER, 'password': PASS, 'credentialId': ''}).encode()
+    s, h, _ = call(kop, 'POST', action, form, {'Content-Type': 'application/x-www-form-urlencoded'})
     loc = h.get('Location') or h.get('location')
     if s != 302 or not loc or not loc.startswith(f'{MAP}/api/auth/callback'):
         return None, f'Keycloak не вернул на callback (HTTP {s}, {loc})'
@@ -104,18 +124,22 @@ check('способ хранения сессии известен', s1.get('sto
 s, _, b = call(op, 'GET', f'{MAP}/api/me')
 me = json.loads(b) if s == 200 else {}
 check('/api/me по локальной сессии: 200, не режим разработки', s == 200 and me.get('devMode') is False, f'{s} {b[:120]}')
-check('/api/me: роль и право из claims Keycloak', 'user' in me.get('roles', []) and 'archforge.use' in me.get('permissions', []), me)
+print('     claims в /api/me:', json.dumps({k: me.get(k) for k in ('subject', 'roles', 'permissions')}, ensure_ascii=False))
+check(f'/api/me: роль «{ROLE}» и право «{PERMISSION}» из claims' if PERMISSION else f'/api/me: роль «{ROLE}» из claims',
+      (not ROLE or ROLE in me.get('roles', [])) and (not PERMISSION or PERMISSION in me.get('permissions', [])), me)
 
-tok = probe_token()
-hdr = {'Authorization': f'Bearer {tok}'} if tok else {}
 anon = opener(new_jar())
-s, _, b = call(anon, 'GET', f'{MAP}/api/me', headers=hdr)
-check('токен Keycloak в Authorization принимается', bool(tok) and s == 200, f'{s} {b[:120]}')
-s, _, _ = call(anon, 'GET', f'{MAP}/api/me', headers={'Authorization': f'Bearer {tok}x'} if tok else {})
-check('испорченная подпись отклоняется (401)', s == 401, s)
-bad = probe_token('archforge-probe-noaud')
-s, _, _ = call(anon, 'GET', f'{MAP}/api/me', headers={'Authorization': f'Bearer {bad}'} if bad else {})
-check('токен без нужной аудитории отклоняется (401)', bool(bad) and s == 401, s)
+if PROBE:
+    tok = probe_token()
+    hdr = {'Authorization': f'Bearer {tok}'} if tok else {}
+    s, _, b = call(anon, 'GET', f'{MAP}/api/me', headers=hdr)
+    check('токен Keycloak в Authorization принимается', bool(tok) and s == 200, f'{s} {b[:120]}')
+    s, _, _ = call(anon, 'GET', f'{MAP}/api/me', headers={'Authorization': f'Bearer {tok}x'} if tok else {})
+    check('испорченная подпись отклоняется (401)', s == 401, s)
+    bad = probe_token('archforge-probe-noaud')
+    s, _, _ = call(anon, 'GET', f'{MAP}/api/me', headers={'Authorization': f'Bearer {bad}'} if bad else {})
+    check('токен без нужной аудитории отклоняется (401)', bool(bad) and s == 401, s)
+
 
 # 3. привязка входа к браузеру: чужой callback не подменяет аккаунт
 call(op, 'POST', f'{MAP}/api/auth/logout', b'', {'Content-Length': '0'})
@@ -124,8 +148,7 @@ s, _, b = call(op, 'POST', f'{MAP}/api/auth/login', b'', {'Content-Length': '0'}
 url = json.loads(b)['url']
 kop = opener(new_jar())
 _, _, page = call(kop, 'GET', url)
-m = re.search(r'action="([^"]+login-actions/authenticate[^"]*)"', page)
-_, h, _ = call(kop, 'POST', html.unescape(m.group(1)), urllib.parse.urlencode({'username': 'tester', 'password': 'tester'}).encode(),
+_, h, _ = call(kop, 'POST', login_action(page), urllib.parse.urlencode({'username': USER, 'password': PASS}).encode(),
                {'Content-Type': 'application/x-www-form-urlencoded'})
 loc = h.get('Location') or h.get('location') or ''
 _, h2, _ = call(other, 'GET', loc)   # без cookie привязки
@@ -153,15 +176,15 @@ else:
     check('обновление токена прошло, автономный срок сдвинулся', moved, session(op))
 
     # 6. отзыв доступа на сервере входа стирает сессию (invalid_grant)
-    adm = urllib.parse.urlencode({'grant_type': 'password', 'client_id': 'admin-cli', 'username': 'admin', 'password': 'admin'}).encode()
+    adm = urllib.parse.urlencode({'grant_type': 'password', 'client_id': 'admin-cli', 'username': 'admin', 'password': ADMIN_PASS}).encode()
     s, _, b = call(urllib.request.build_opener(), 'POST', f'{KC}/realms/master/protocol/openid-connect/token', adm,
                    {'Content-Type': 'application/x-www-form-urlencoded'})
     at = json.loads(b)['access_token']
     a = {'Authorization': f'Bearer {at}'}
     plain = urllib.request.build_opener()
-    _, _, ub = call(plain, 'GET', f'{KC}/admin/realms/archforge/users?username=tester&exact=true', headers=a)
+    _, _, ub = call(plain, 'GET', f'{KC}/admin/realms/{REALM_NAME}/users?username={urllib.parse.quote(USER)}&exact=true', headers=a)
     uid = json.loads(ub)[0]['id']
-    s, _, _ = call(plain, 'POST', f'{KC}/admin/realms/archforge/users/{uid}/logout', b'', {**a, 'Content-Length': '0'})
+    s, _, _ = call(plain, 'POST', f'{KC}/admin/realms/{REALM_NAME}/users/{uid}/logout', b'', {**a, 'Content-Length': '0'})
     check('сессии пользователя на сервере входа завершены', s == 204, s)
     print('Жду, пока Map заметит отзыв (до 3 минут)…')
     gone = False
