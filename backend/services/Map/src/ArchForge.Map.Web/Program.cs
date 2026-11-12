@@ -1,4 +1,5 @@
 using ArchForge.Map.Core;
+using ArchForge.Map.Core.Auth;
 using ArchForge.Map.Infrastructure;
 using ArchForge.SharedKernel;
 using ArchForge.SharedKernel.Auth;
@@ -10,6 +11,9 @@ string analysisUrl = builder.Configuration["Analysis:BaseUrl"] ?? "http://localh
 builder.Services.AddCore(analysisUrl, AuthExtensions.ValidateInternalKey(builder.Configuration, builder.Environment));
 // Вход (adr/0013): проверка токена auth_service либо режим разработки (флаг + Development + loopback); иначе сервис не стартует.
 builder.Services.AddArchForgeAuth(builder.Configuration, builder.Environment);
+// Вход через браузер и локальная сессия (adr/0013): токены держит только Map, на диске — шифрованный файл.
+builder.Services.AddLocalSession(builder.Configuration);
+builder.Services.AddSessionVault(builder.Configuration["Auth:Directory"]);
 // Хранилище профилей проекта (adr/0012): папка переопределяется конфигом Profiles:Directory.
 builder.Services.AddInfrastructure(builder.Configuration["Profiles:Directory"]);
 // Тела запросов (профиль, привязка) малы: ограничиваем, чтобы не принимать произвольно большие JSON.
