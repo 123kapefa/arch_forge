@@ -128,6 +128,9 @@ print('     claims в /api/me:', json.dumps({k: me.get(k) for k in ('subject', '
 check(f'/api/me: роль «{ROLE}» и право «{PERMISSION}» из claims' if PERMISSION else f'/api/me: роль «{ROLE}» из claims',
       (not ROLE or ROLE in me.get('roles', [])) and (not PERMISSION or PERMISSION in me.get('permissions', [])), me)
 
+s, _, _ = call(op, 'GET', f'{MAP}/api/rules')
+check('вошедшему с правом остальное API не закрыто (не 401/403; при RequireLogin важно)', s not in (401, 403), s)
+
 anon = opener(new_jar())
 if PROBE:
     tok = probe_token()

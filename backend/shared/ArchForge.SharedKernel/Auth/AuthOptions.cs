@@ -37,10 +37,26 @@ public static class AuthClaims
     public const string Permissions = "permissions";
 }
 
+/// <summary>Права и роли arch_forge — единый источник (adr/0013). В <c>auth_service</c> их объявляет
+/// <c>tools/keycloak-stand/declare-app-rights.py</c> (держать в согласии с этим списком).</summary>
+public static class ArchForgeRights
+{
+    /// <summary>Пользоваться приложением: открывать проекты, смотреть карту, настраивать профили.</summary>
+    public const string Use = "archforge.use";
+
+    /// <summary>Код приложения в auth_service (клиент-носитель ролей, адресат токенов — <c>Authentication:Audience</c>).</summary>
+    public const string App = "archforge";
+
+    /// <summary>Роль по умолчанию у каждого пользователя проекта и права, которые она даёт.</summary>
+    public const string DefaultRole = "user";
+
+    public static readonly string[] DefaultRolePermissions = [Use];
+}
+
 /// <summary>Права локальной личности dev: пользоваться приложением, но не администрировать.</summary>
 public static class DevIdentity
 {
     public const string Subject = "dev";
     public const string Scheme = "ArchForgeDev";
-    public static readonly string[] Permissions = ["archforge.use"];
+    public static readonly string[] Permissions = [ArchForgeRights.Use];
 }

@@ -77,10 +77,14 @@ public static class AuthExtensions
         services.AddAuthorization(a =>
         {
             a.AddPolicy(UserPolicy, p => p.RequireAuthenticatedUser());
-            if (o.RequireLogin) a.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();   // всё API — только для вошедших
+            // всё API — только для вошедших с правом пользоваться приложением (без входа 401, без права 403)
+            if (o.RequireLogin) a.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().RequireAssertion(HasUseRight).Build();
         });
         return services;
     }
+
+    private static bool HasUseRight(AuthorizationHandlerContext ctx) =>
+        ctx.User.FindAll(AuthClaims.Permissions).Any(c => c.Value == ArchForgeRights.Use);
 
     public static IApplicationBuilder UseArchForgeAuth(this IApplicationBuilder app) => app.UseAuthentication().UseAuthorization();
 

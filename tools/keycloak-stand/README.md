@@ -56,9 +56,15 @@ dotnet run --project backend/services/Map/src/ArchForge.Map.Web --urls http://lo
 ```
 Проверки (пароль админа Keycloak — из `.env` `auth_service`, нужен только для шага «отзыв»):
 ```bash
-AF_KC=http://localhost:8180 AF_USER=79990001111 AF_PASS='Test1234!' AF_PROBE=0 AF_PERMISSION= AF_ADMIN_PASS=<KEYCLOAK_ADMIN_PASSWORD> \
+AF_KC=http://localhost:8180 AF_USER=79990001111 AF_PASS='Test1234!' AF_PROBE=0 AF_ADMIN_PASS=<KEYCLOAK_ADMIN_PASSWORD> \
   python3 tools/keycloak-stand/check.py
 ```
 Токен доступа в `auth_service` живёт 15 минут, Map обновляет его за 2 минуты до конца, поэтому шаг «обновление» дождётся не за 3 минуты. Для проверки временно поставьте realm `accessTokenLifespan=120` (Admin API) и верните 900.
 
-Что подтверждено: вход по коду + PKCE клиентом `archforge-web` с экраном входа темы `auth_service`; `aud` = код приложения (`archforge`); роль приложения приходит в claim `role`; ротация refresh-токена (в realm `revokeRefreshToken=true`) переживается; отзыв сессии стирает сессию. Права (`permissions`) пока пустые: роль `user` создана без прав — их объявит каталог приложения (`AddAppCatalog`) или админка, когда у arch_forge появятся платные функции.
+Права приложения объявляются отдельно (после `add-app.py`):
+```bash
+AF_KC=http://localhost:8180 AF_REALM=archforge AF_ADMIN_PASS=<KEYCLOAK_ADMIN_PASSWORD> python3 tools/keycloak-stand/declare-app-rights.py
+```
+Скрипт заводит право `archforge.use` и кладёт его в роль `user`; `check.py` тогда видит право в `/api/me` (по умолчанию `AF_PERMISSION=archforge.use`, для проверки без прав — пусто).
+
+Что подтверждено: вход по коду + PKCE клиентом `archforge-web` с экраном входа темы `auth_service`; `aud` = код приложения (`archforge`); роль приложения приходит в claim `role`; ротация refresh-токена (в realm `revokeRefreshToken=true`) переживается; отзыв сессии стирает сессию. Права (`permissions`) приходят после `declare-app-rights.py`; без него роль `user` пуста.
