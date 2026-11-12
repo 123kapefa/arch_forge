@@ -30,3 +30,8 @@ arch_forge — локальное приложение (`adr/0002`): целев�
 - Длина льготного периода и что видно пользователю в последние дни.
 - Нужен ли режим без входа в публичной сборке.
 - Где хранить токены, если приложение запущено как сайдкар без доступа к хранилищу ОС.
+
+## Статус реализации
+- **Срез 1 (#131):** `ArchForge.SharedKernel/Auth` — `AddArchForgeAuth` (три исхода: проверка токена `Authentication:Authority` + `Audience`; режим разработки `Authentication:DevMode=true`; иначе приложение не стартует), `UseInternalGuard` (Analysis принимает вызовы только с loopback и, если задан `Internal:Key`, с этим ключом в заголовке `X-ArchForge-Internal-Key`; без ключа допустимо только в Development). Проверка токена: подпись RS256 по ключам из discovery, `iss`, `aud`, срок (без допуска по времени), токен только из заголовка `Authorization`; имена claims — как в `auth_service` (`sub`, `role`, `permissions`). Пакеты `Platform.Authentication*` не подключены (они из внутреннего фида), используется публичный `Microsoft.AspNetCore.Authentication.JwtBearer`; мгновенный отзыв через Redis — позже. `GET /api/me` (Map) отдаёт сведения о вошедшем. Права проверяет `RequirePermissions(...)`. Существующие эндпоинты пока открыты (решение п. 9); `appsettings.Development.json` Map включает `DevMode`.
+- Режим разработки: личность `dev` с правом `archforge.use` (без администраторских), только для запросов с loopback, только Development, не вместе с `Authority`.
+- Настройка вне разработки: `Authentication__Authority`, `Authentication__Audience`, `Internal__Key` (одинаковый у Map и Analysis).
