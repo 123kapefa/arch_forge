@@ -872,3 +872,35 @@
 .pv__tpl:hover:not(:disabled) { border-color: var(--accent); }
 .pv__tpl small { color: var(--muted); font-size: 12px; }
 .pv__tpl:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* --- состояние входа в шапке (adr/0013, #133) --- */
+.sess { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.sess__btn {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: transparent; border: 1px solid var(--card-line); color: var(--muted); border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.sess__btn:hover { border-color: var(--accent); color: var(--text); }
+.sess__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.sess__btn--ok .sess__dot { background: var(--ok); }
+.sess__btn--warn { border-color: var(--warn); color: var(--warn); }
+.sess__btn--warn .sess__dot { background: var(--warn); }
+.sess__btn--bad { border-color: #e5484d; color: #e5484d; }
+.sess__btn--bad .sess__dot { background: #e5484d; }
+.sess__btn--dev { border-style: dashed; color: var(--accent); }
+.sess__btn--dev .sess__dot { background: var(--accent); }
+.sess__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.sess__note { font-size: 12px; white-space: nowrap; }
+.sess__note--ok { color: var(--ok); }
+.sess__note--bad { color: #e5484d; }
+.sess__pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; width: 280px; padding: 12px 14px;
+  background: var(--card, #1c2030); border: 1px solid var(--card-line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.sess__title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.sess__text { margin: 0 0 6px; font-size: 12px; line-height: 1.45; }
+.sess__hint { margin: 0 0 8px; font-size: 11px; color: var(--muted); line-height: 1.4; }
+.sess__actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.sess__act { background: transparent; border: 1px solid var(--card-line); color: var(--text); border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+.sess__act:hover:not(:disabled) { border-color: var(--accent); }
+.sess__act:disabled { opacity: .6; cursor: default; }
+.sess__act--main { background: rgba(108, 140, 255, 0.16); border-color: var(--accent); color: var(--accent); }

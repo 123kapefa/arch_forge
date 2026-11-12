@@ -1,3 +1,4 @@
+import { SessionBadge } from './SessionBadge';
 import {
   forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
   type MouseEvent as ReactMouseEvent,
@@ -1199,6 +1200,7 @@ export function SystemView() {
           )}
         </nav>
         <div className="sysview__right">
+          <SessionBadge />
           {graph?.environments && graph.environments.length > 1 && !importsOpen && (
             <div className="envsw" role="group" aria-label="Среда развёртывания">
               <span className="envsw__label">СРЕДА</span>
