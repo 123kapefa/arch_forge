@@ -1,4 +1,6 @@
 import { SessionBadge } from './SessionBadge';
+import { EdgeInspector, type SelectedEdge } from './EdgeInspector';
+import type { EdgeData } from './systemFlow';
 import {
   forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
   type MouseEvent as ReactMouseEvent,
@@ -59,10 +61,11 @@ const Flow = forwardRef<FlowHandle, {
   onDirty: (saved: boolean) => void; // true = совпадает с сохранённой, false = есть изменения
   selectedId: string | null;         // выбранный узел — его связи подсвечиваем
   onSelect: (n: Node) => void;
+  onSelectEdge?: (e: Edge) => void;  // клик по связи (инспектор связи, E3.1)
   onDoubleClick: (n: Node) => void;  // двойной клик — drill на следующий уровень
   onClear: () => void;
   focusTargetRef?: { current: string | null }; // id карточки для центровки при пересборке (переход «к плашке»)
-}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, onSelect, onDoubleClick, onClear, focusTargetRef }, ref) {
+}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, onSelect, onSelectEdge, onDoubleClick, onClear, focusTargetRef }, ref) {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
@@ -230,6 +233,7 @@ const Flow = forwardRef<FlowHandle, {
       onNodeMouseEnter={(_, n) => setHoverId(n.id)}
       onNodeMouseLeave={() => setHoverId(null)}
       onNodeClick={(_, n) => onSelect(n)}
+      onEdgeClick={(_, e) => onSelectEdge?.(e)}
       onNodeDoubleClick={(_, n) => onDoubleClick(n)}
       onPaneClick={onClear}
       onMoveEnd={(e, vp) => { if (e && storageKey) writeViewport(storageKey, vp); }} // сохраняем только пользовательский пан/зум (event≠null), не программный fitView
@@ -723,6 +727,11 @@ export function SystemView() {
   const [bottomH, setBottomH] = useState(() => Math.max(BOTTOM_MIN, Math.min(readNum('af_bottomH', BOTTOM_DEFAULT, BOTTOM_MIN), Math.round(window.innerHeight * 0.7))));
   const [expandedProblems, setExpandedProblems] = useState<ReadonlySet<string>>(new Set()); // раскрытые проблемы (можно несколько сразу)
   const [selectedFact, setSelectedFact] = useState<{ item: ProblemItem; problem: Problem } | null>(null); // выбранный факт (инспектор)
+  const [callsAsked, setCallsAsked] = useState(false); // загруженная карта собрана с вызовами (calls)
+  const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null); // выбранная связь (инспектор связи, E3.1)
+  // выбрали узел или факт любым путём (клик, переход к плашке, список проблем) — инспектор связи уступает
+  useEffect(() => { if (selected || selectedFact) setSelectedEdge(null); }, [selected, selectedFact]);
+  useEffect(() => { setSelectedEdge(null); }, [graph]); // новая карта — связи прежней уже нет
   // цель перехода «к плашке»: сервис-владелец + файл/имя типа; focusId — id карточки в L2 (когда найдена)
   const revealRef = useRef<{ serviceId: string; file: string; name: string; focusId?: string } | null>(null);
   // id карточки, которую Flow центрирует при ближайшей пересборке (вместо fitView всех) — без гонки таймеров
@@ -783,6 +792,7 @@ export function SystemView() {
       const cached = readGraphCache(path, drift, layers, env);
       if (cached) {
         setGraph(cached);
+        setCallsAsked(layers || drift);
         setLoadedPath(path);
         setEdgeKinds(new Set(edgeKindsOf(cached)));
         void fetchGitBranch(path).then(setBranch);
@@ -799,9 +809,10 @@ export function SystemView() {
     setDrill2(null);
     setImports(null); // новый проект — сбросить кеш импортов (перезагрузятся при открытии экрана)
     try {
-      const g = await fetchSystem({ path, drift, layers, env, refresh: opts?.refresh }, ctrl.signal);
+      const g = await fetchSystem({ path, drift, layers, env, calls: layers || drift, refresh: opts?.refresh }, ctrl.signal);
       if (loadAbortRef.current !== ctrl) return; // нас вытеснили/закрыли, пока ждали — не воскрешаем состояние
       setGraph(g);
+      setCallsAsked(layers || drift);
       setLoadedPath(path);
       setEdgeKinds(new Set(edgeKindsOf(g))); // по умолчанию все виды рёбер включены
       writeGraphCache(path, drift, layers, g, env); // обновить кэш на следующую перезагрузку (#64)
@@ -1383,9 +1394,14 @@ export function SystemView() {
                     storageKey={drill ? '' : storageKey}
                     onDirty={setSaved}
                     selectedId={selected?.id ?? null}
-                    onSelect={(n) => { setSelected(n); setSelectedFact(null); }}
+                    onSelect={(n) => { setSelected(n); setSelectedFact(null); setSelectedEdge(null); }}
+                    onSelectEdge={(e) => {
+                      const d = e.data as EdgeData;
+                      setSelected(null); setSelectedFact(null);
+                      setSelectedEdge({ id: e.id, source: e.source, target: e.target, kind: d.kind, confidence: d.confidence, via: d.via, violation: d.violation, calls: d.calls });
+                    }}
                     onDoubleClick={onDoubleClick}
-                    onClear={() => setSelected(null)}
+                    onClear={() => { setSelected(null); setSelectedEdge(null); }}
                     focusTargetRef={focusCardRef}
                   />
                 </ReactFlowProvider>
@@ -1428,6 +1444,9 @@ export function SystemView() {
               <div className="panel__body">
                 {selected && graph
                   ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />
+                  : selectedEdge && graph
+                    ? <EdgeInspector edge={selectedEdge} scanRoot={loadedPath} callsRequested={callsAsked}
+                        names={Object.fromEntries(graph.nodes.map((n) => [n.id, n.name]))} />
                   : selectedFact
                     ? <FactInspector fact={selectedFact} scanRoot={loadedPath}
                         canGoto={!!ownerService(selectedFact.item.file)} onGoto={gotoBlock} />

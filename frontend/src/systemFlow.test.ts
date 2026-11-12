@@ -137,3 +137,25 @@ describe('deploy — выставленность портов (зеркалит
     expect(nodeHasExposedPort({ id: 'x', name: 'x', kind: 'datastore' })).toBe(false); // нет deploy
   });
 });
+
+describe('buildSystemFlow — вызовы на рёбрах (E3.1)', () => {
+  const call = (route: string, line: number) => ({ method: 'GET', route, file: '/p/catalog-api/A.cs', line, confidence: 0.9, matched: true });
+  const g: SystemGraph = {
+    ...graph,
+    edges: [
+      { id: 'a', source: 'p/catalog-api', target: 'p/cart-api', kind: 'http-call', via: 'code', calls: [call('/api/cart', 1)] },
+      { id: 'b', source: 'p/catalog-api', target: 'p/cart-api', kind: 'http-call', calls: [call('/api/cart', 1), call('/api/cart/items', 7)] },
+      { id: 'c', source: 'p/cart-api', target: 'http://sms', kind: 'http-call' },
+    ],
+  };
+  const { edges } = buildSystemFlow(g);
+
+  it('вызовы слитых рёбер собираются без повторов', () => {
+    const d = edges.find((e) => e.source === 'p/catalog-api')!.data as { calls?: unknown[]; via?: string };
+    expect(d.calls).toHaveLength(2);
+    expect(d.via).toBe('code');
+  });
+  it('нет данных о вызовах — поля нет (не пустой список)', () => {
+    expect((edges.find((e) => e.target === 'http://sms')!.data as { calls?: unknown[] }).calls).toBeUndefined();
+  });
+});

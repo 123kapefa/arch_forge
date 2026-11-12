@@ -34,7 +34,8 @@ export const setSS = (key: string, val: string) => { try { sessionStorage.setIte
 
 // Версия ключа инвалидирует кэш при смене формы контракта (вкладка пережила деплой) — как v3 у раскладки.
 // v2: контракт получил Environments/Deploy и граф стал зависеть от среды (env в ключе).
-const GCACHE_V = 'v2';
+// v3: граф может нести вызовы на рёбрах (E3.1); кэш v2 их не содержит и выдал бы «вызовов нет»
+const GCACHE_V = 'v3';
 const gcachePrefix = `af_gcache:${GCACHE_V}:`;
 // env перед путём (не после) — чтобы cleanup по endsWith(":path") в writeGraphCache продолжал работать.
 export const gcacheKey = (path: string, drift: boolean, layers: boolean, env?: string) =>

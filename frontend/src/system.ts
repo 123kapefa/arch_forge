@@ -67,6 +67,8 @@ export interface SystemMember {
   line?: number;
 }
 
+import type { HttpCall } from './edgeCalls';
+
 export interface SystemEdge {
   id: string;
   source: string;
@@ -76,6 +78,7 @@ export interface SystemEdge {
   confidence?: number;   // 0..1 (уверенность по источнику)
   violation?: boolean;   // связь-нарушение (подсветка красным)
   problem?: string;      // id проблемы (навигация клик-по-ребру → проблема)
+  calls?: HttpCall[];    // конкретные HTTP-вызовы ребра (E3.1); нет поля — вызовы не запрашивались
 }
 
 /** Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, заметка + где живёт тип. */
@@ -158,6 +161,8 @@ export interface SystemQuery {
   layers?: boolean;
   /** выбранная среда развёртывания (E9.1 слой 2): merge docker-compose.<env>.yml; пусто → default */
   env?: string;
+  /** вызовы между сервисами на рёбрах http-call (E3.1) — разбор кода per-service, как и линзы */
+  calls?: boolean;
   /** «Пере-анализировать»: сбросить кеш разбора кода на сервере (иначе неизменённый код отдаётся из кеша) */
   refresh?: boolean;
 }
@@ -171,6 +176,7 @@ export async function fetchSystem(q: SystemQuery, signal?: AbortSignal): Promise
   if (q.drift) params.set('drift', 'true');
   if (q.layers) params.set('layers', 'true');
   if (q.env) params.set('env', q.env);
+  if (q.calls) params.set('calls', 'true');
   if (q.refresh) params.set('refresh', 'true');
 
   const res = await fetchWithTimeout(`/api/system?${params.toString()}`, TIMEOUT_MS, signal);
