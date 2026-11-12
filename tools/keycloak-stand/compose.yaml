@@ -1,0 +1,15 @@
+# Тестовый Keycloak для проверки входа arch_forge (adr/0013). Только для локальной проверки: пароли здесь тестовые.
+# Запуск: docker compose -f tools/keycloak-stand/compose.yaml up -d      Сброс (после правки realm): down -v
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.7
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "127.0.0.1:8280:8280"   # только с этой машины
+    environment:
+      KC_HTTP_PORT: "8280"
+      KC_HOSTNAME: http://localhost:8280      # от этого адреса зависит `iss` в токенах
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    volumes:
+      - ./realm/archforge-realm.json:/opt/keycloak/data/import/archforge-realm.json:ro
