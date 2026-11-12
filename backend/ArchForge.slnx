@@ -23,6 +23,14 @@
   <Folder Name="/services/Map/tests/">
     <Project Path="services/Map/tests/ArchForge.Map.Tests/ArchForge.Map.Tests.csproj" />
   </Folder>
+  <Folder Name="/services/Agent/" />
+  <Folder Name="/services/Agent/src/">
+    <Project Path="services/Agent/src/ArchForge.Agent.Domain/ArchForge.Agent.Domain.csproj" />
+    <Project Path="services/Agent/src/ArchForge.Agent.Infrastructure/ArchForge.Agent.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/services/Agent/tests/">
+    <Project Path="services/Agent/tests/ArchForge.Agent.Tests/ArchForge.Agent.Tests.csproj" />
+  </Folder>
   <Folder Name="/shared/">
     <Project Path="shared/ArchForge.Contracts/ArchForge.Contracts.csproj" />
     <Project Path="shared/ArchForge.SharedKernel/ArchForge.SharedKernel.csproj" />

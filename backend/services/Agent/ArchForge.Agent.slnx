@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ArchForge.Agent.Domain/ArchForge.Agent.Domain.csproj" />
+    <Project Path="src/ArchForge.Agent.Infrastructure/ArchForge.Agent.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ArchForge.Agent.Tests/ArchForge.Agent.Tests.csproj" />
+  </Folder>
+</Solution>
