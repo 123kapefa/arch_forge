@@ -17,6 +17,8 @@ public static class HttpCallGraphBuilder
     // Уверенность ребра по виду резолва цели (code-провенанс): свой compose — высокая, единственная в чужом — средняя.
     private const double SameSystemConfidence = 0.9;
     private const double InferredConfidence = 0.6;
+    // Адрес из относительного пути и BaseAddress (срез 2): привязка к клиенту — вывод, поэтому доверие ниже, чем к абсолютному литералу.
+    private const double ViaBasePenalty = 0.1;
 
     public static SystemGraph Enrich(SystemGraph graph, IReadOnlyList<ServiceAnalysis> analyses,
         IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null, Profiles.ServiceNaming? naming = null)
@@ -74,11 +76,12 @@ public static class HttpCallGraphBuilder
                     continue;
                 }
                 if (t.NodeId is null) continue;                           // external/self — вне scope среза 1 (не «пробел»)
-                var conf = t.Kind == HttpTargetKind.SameSystem ? SameSystemConfidence : InferredConfidence;
+                var conf = Math.Round((t.Kind == HttpTargetKind.SameSystem ? SameSystemConfidence : InferredConfidence) - (hit.ViaBase ? ViaBasePenalty : 0), 2);
+                var route = uri.AbsolutePath.Replace("%7B", "{", StringComparison.OrdinalIgnoreCase).Replace("%7D", "}", StringComparison.OrdinalIgnoreCase);   // {id} читаемо, не %7Bid%7D; прочее не раскодируем (%2F, %3F)
                 bool? matched = endpointsById.TryGetValue(t.NodeId, out var eps)
-                    ? RouteMatch.Matches(hit.Method, uri.AbsolutePath, eps)
+                    ? RouteMatch.Match(hit.Method, route, eps)
                     : null;                                               // эндпоинты цели неизвестны → не сопоставляли
-                var call = new HttpCall(hit.Method, uri.AbsolutePath, conf, matched, hit.File, hit.Line, hit.Evidence);
+                var call = new HttpCall(hit.Method, route, conf, matched, hit.File, hit.Line, hit.Evidence);
                 var k = (srcId, t.NodeId);
                 if (!byEdge.TryGetValue(k, out var list)) byEdge[k] = list = [];
                 list.Add(call);

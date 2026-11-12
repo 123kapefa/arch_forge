@@ -176,4 +176,31 @@ public class HttpCallGraphBuilderTests
         Assert.Single(edge.Calls!);
         Assert.Null(edge.Calls![0].Matched);              // эндпоинты недоступны → matched неизвестен
     }
+
+    // ── срез 2: относительные адреса ──
+
+    [Fact]
+    public void Via_base_call_has_lower_confidence_than_absolute_literal()
+    {
+        var abs = Call("GET", "http://catalog/api/a");
+        var rel = new HttpCallHit("GET", "http://catalog/api/b", "/repo/orders/Client.cs", 20, "GET http://catalog/api/b", ViaBase: true);
+        var g = HttpCallGraphBuilder.Enrich(TwoServices(), [Orders(abs, rel)]);
+
+        var calls = Assert.Single(g.Edges).Calls!;
+        Assert.Equal(0.9, calls.Single(c => c.Route == "/api/a").Confidence);
+        Assert.Equal(0.8, calls.Single(c => c.Route == "/api/b").Confidence);   // 0.9 − 0.1
+    }
+
+    [Fact]
+    public void Interpolated_route_keeps_placeholders_and_matches_endpoint_template()
+    {
+        var hit = new HttpCallHit("GET", "http://catalog/api/items/{id}", "/repo/orders/Client.cs", 7, "GET http://catalog/api/items/{id}", ViaBase: true);
+        var g = HttpCallGraphBuilder.Enrich(
+            TwoServices(), [Orders(hit)],
+            Layers(new EndpointDto("GET", "/api/items/{id}", "controller")));
+
+        var call = Assert.Single(Assert.Single(g.Edges).Calls!);
+        Assert.Equal("/api/items/{id}", call.Route);      // не «%7Bid%7D»
+        Assert.True(call.Matched);
+    }
 }
