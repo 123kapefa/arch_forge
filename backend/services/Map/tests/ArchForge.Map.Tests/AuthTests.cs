@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using ArchForge.Map.Core;
+using ArchForge.SharedKernel;
 using ArchForge.SharedKernel.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
@@ -14,8 +15,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Routing;
 
 namespace ArchForge.Map.Tests;
 
@@ -175,6 +174,115 @@ public class AuthTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(r)).StatusCode);
     }
 
+    [Fact]
+    public async Task Real_me_endpoint_returns_roles_and_permissions_from_token()
+    {
+        var b = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Production" });
+        b.WebHost.UseTestServer();
+        b.Configuration.AddInMemoryCollection(Jwt());
+        b.Services.AddCore("http://analysis");
+        b.Services.AddArchForgeAuth(b.Configuration, b.Environment);
+        b.Services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, o =>
+        {
+            var c = new OpenIdConnectConfiguration { Issuer = Issuer };
+            c.SigningKeys.Add(SigningKey);
+            o.ConfigurationManager = new Microsoft.IdentityModel.Protocols.StaticConfigurationManager<OpenIdConnectConfiguration>(c);
+        });
+        await using var app = b.Build();
+        app.UseArchForgeAuth();
+        app.MapEndpoints();   // настоящие эндпоинты Map, включая /api/me
+        await app.StartAsync();
+        var http = app.GetTestClient();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync("/api/me")).StatusCode);
+        var me = await (await http.SendAsync(Get("/api/me", Token(perms: ["archforge.use", "x.y"])))).Content.ReadFromJsonAsync<ArchForge.Map.Core.Features.Auth.MeDto>();
+        Assert.Equal("user-1", me!.Subject);
+        Assert.Equal(["member"], me.Roles);
+        Assert.Equal(["archforge.use", "x.y"], me.Permissions);
+        Assert.False(me.DevMode);
+    }
+
+    [Fact]
+    public async Task Require_permissions_needs_all_listed_permissions_and_future_or_unsigned_tokens_fail()
+    {
+        var (app, http) = await Host("Production", Jwt(), IPAddress.Loopback);
+        using var _ = app;
+        app.MapGet("/both", () => "ok").RequirePermissions("archforge.use", "archforge.admin");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await http.SendAsync(Get("/both", Token()))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Get("/both", Token(perms: ["archforge.use", "archforge.admin"])))).StatusCode);
+        // nbf в будущем (сверх допуска часов)
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(Get("/api/me", Token(d => { d.NotBefore = DateTime.UtcNow.AddMinutes(5); d.Expires = DateTime.UtcNow.AddMinutes(15); })))).StatusCode);
+        // alg=none
+        static string B64(string json) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json)).TrimEnd('=');
+        var none = B64("{\"alg\":\"none\",\"typ\":\"JWT\"}") + "." + B64("{\"sub\":\"x\",\"iss\":\"" + Issuer + "\",\"aud\":\"" + Audience + "\",\"exp\":9999999999}") + ".";
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(Get("/api/me", none))).StatusCode);
+    }
+
+    [Fact]
+    public async Task Require_login_closes_existing_endpoints_without_token()
+    {
+        var cfg = Jwt(); cfg["Authentication:RequireLogin"] = "true";
+        var b = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Production" });
+        b.WebHost.UseTestServer();
+        b.Configuration.AddInMemoryCollection(cfg);
+        b.Services.AddCore("http://analysis");
+        b.Services.AddArchForgeAuth(b.Configuration, b.Environment);
+        b.Services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, o =>
+        {
+            var c = new OpenIdConnectConfiguration { Issuer = Issuer };
+            c.SigningKeys.Add(SigningKey);
+            o.ConfigurationManager = new Microsoft.IdentityModel.Protocols.StaticConfigurationManager<OpenIdConnectConfiguration>(c);
+        });
+        await using var app = b.Build();
+        app.UseArchForgeAuth();
+        app.MapEndpoints();
+        await app.StartAsync();
+        var http = app.GetTestClient();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync("/api/rules")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync("/api/profile/configs")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Get("/api/me", Token()))).StatusCode);   // с токеном — пропускает
+    }
+
+    [Fact]
+    public async Task Without_require_login_existing_endpoints_stay_open()
+    {
+        var (app, http) = await Host("Production", Jwt(), IPAddress.Loopback);
+        using var _ = app;
+        app.MapGet("/open", () => "ok");
+
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("/open")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Error_details_are_hidden_outside_development()
+    {
+        var (app, http) = await Host("Production", Jwt(), IPAddress.Loopback);
+        using var _ = app;
+
+        var res = await http.SendAsync(Get("/api/me", Token(key: OtherKey)));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, res.StatusCode);
+        Assert.DoesNotContain(res.Headers.WwwAuthenticate, h => (h.Parameter ?? "").Contains("signature"));
+    }
+
+    [Fact]
+    public async Task Internal_authority_must_be_https_too()
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Host("Production", new() { ["Authentication:Authority"] = Issuer, ["Authentication:Audience"] = Audience, ["Authentication:InternalAuthority"] = "http://keycloak:8080/realms/x" }));
+    }
+
+    [Fact]
+    public async Task Authority_with_trailing_slash_still_matches_issuer()
+    {
+        var cfg = new Dictionary<string, string?> { ["Authentication:Authority"] = Issuer + "/", ["Authentication:Audience"] = Audience };
+        var (app, http) = await Host("Production", cfg, IPAddress.Loopback);
+        using var _ = app;
+
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Get("/api/me", Token()))).StatusCode);
+    }
+
     // ── закрытый канал Map → Analysis ──
 
     private static async Task<(WebApplication, HttpClient)> InternalHost(string env, string? key, IPAddress? remote)
@@ -195,16 +303,16 @@ public class AuthTests
     [Fact]
     public async Task Internal_guard_requires_key_and_loopback()
     {
-        var (app, http) = await InternalHost("Production", "s3cret", IPAddress.Loopback);
+        var (app, http) = await InternalHost("Production", "s3cret-key-0123456789", IPAddress.Loopback);
         using var _ = app;
-        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(WithKey("s3cret"))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(WithKey("s3cret-key-0123456789"))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(WithKey(null))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(WithKey("wrong"))).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(WithKey("s3cret "))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(WithKey("s3cret-key-0123456789 "))).StatusCode);
 
-        var (remoteApp, remote) = await InternalHost("Production", "s3cret", IPAddress.Parse("198.51.100.7"));
+        var (remoteApp, remote) = await InternalHost("Production", "s3cret-key-0123456789", IPAddress.Parse("198.51.100.7"));
         using var __ = remoteApp;
-        Assert.Equal(HttpStatusCode.Unauthorized, (await remote.SendAsync(WithKey("s3cret"))).StatusCode);   // верный ключ не с loopback
+        Assert.Equal(HttpStatusCode.Unauthorized, (await remote.SendAsync(WithKey("s3cret-key-0123456789"))).StatusCode);   // верный ключ не с loopback
     }
 
     [Fact]
@@ -224,14 +332,48 @@ public class AuthTests
     {
         string? seen = null;
         var b = WebApplication.CreateBuilder();
-        b.Services.AddCore("http://analysis", "s3cret");
+        b.Services.AddCore("http://analysis", "s3cret-key-0123456789");
         b.Services.AddHttpClient<ArchForge.Analysis.Contracts.AnalysisClient>().ConfigurePrimaryHttpMessageHandler(() => new Capture(r => seen = r.Headers.TryGetValues(AuthExtensions.InternalKeyHeader, out var v) ? v.Single() : null));
         await using var app = b.Build();
 
         var client = app.Services.GetRequiredService<ArchForge.Analysis.Contracts.AnalysisClient>();
         try { await client.GetRulesAsync(); } catch { /* ответ заглушки не важен */ }
 
-        Assert.Equal("s3cret", seen);
+        Assert.Equal("s3cret-key-0123456789", seen);
+    }
+
+    [Fact]
+    public async Task Map_sends_no_key_header_when_key_is_not_configured()
+    {
+        string? seen = "unset";
+        var b = WebApplication.CreateBuilder();
+        b.Services.AddCore("http://analysis", null);
+        b.Services.AddHttpClient<ArchForge.Analysis.Contracts.AnalysisClient>().ConfigurePrimaryHttpMessageHandler(() => new Capture(r => seen = r.Headers.TryGetValues(AuthExtensions.InternalKeyHeader, out var v) ? v.Single() : null));
+        await using var app = b.Build();
+
+        try { await app.Services.GetRequiredService<ArchForge.Analysis.Contracts.AnalysisClient>().GetRulesAsync(); } catch { }
+
+        Assert.Null(seen);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("short", false)]
+    [InlineData("has space in the key 12345", false)]
+    [InlineData("line\nbreak-in-the-key-123456", false)]
+    [InlineData("ключ-не-ascii-1234567890", false)]
+    [InlineData("0123456789abcdef", true)]
+    public void Internal_key_format(string? key, bool ok) => Assert.Equal(ok, AuthExtensions.IsValidInternalKey(key));
+
+    [Fact]
+    public void Map_outside_development_requires_internal_key()
+    {
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
+        var prod = new Microsoft.Extensions.Hosting.Internal.HostingEnvironment { EnvironmentName = "Production" };
+        var dev = new Microsoft.Extensions.Hosting.Internal.HostingEnvironment { EnvironmentName = "Development" };
+
+        Assert.Throws<InvalidOperationException>(() => AuthExtensions.ValidateInternalKey(cfg, prod));
+        Assert.Null(AuthExtensions.ValidateInternalKey(cfg, dev));
     }
 
     private sealed class Capture(Action<HttpRequestMessage> on) : HttpMessageHandler

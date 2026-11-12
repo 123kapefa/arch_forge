@@ -41,6 +41,9 @@ public static class AuthExtensions
             var insecureAllowed = o.AllowInsecureMetadata && env.IsDevelopment();
             if (authority.Scheme != Uri.UriSchemeHttps && !insecureAllowed)
                 throw new InvalidOperationException("Authentication:Authority должен быть https (http допустим только с AllowInsecureMetadata в Development).");
+            if (!string.IsNullOrWhiteSpace(o.InternalAuthority)
+                && (!Uri.TryCreate(o.InternalAuthority, UriKind.Absolute, out var inner) || (inner.Scheme != Uri.UriSchemeHttps && !insecureAllowed)))
+                throw new InvalidOperationException("Authentication:InternalAuthority должен быть https-адресом (http допустим только с AllowInsecureMetadata в Development).");
             var meta = string.IsNullOrWhiteSpace(o.InternalAuthority) ? null : o.InternalAuthority!.TrimEnd('/') + "/.well-known/openid-configuration";
 
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(b =>
@@ -48,17 +51,18 @@ public static class AuthExtensions
                 b.Authority = o.Authority;
                 if (meta is not null) b.MetadataAddress = meta;
                 b.RequireHttpsMetadata = !insecureAllowed;
+                b.IncludeErrorDetails = env.IsDevelopment();   // причину отказа в заголовок ответа — только при разработке
                 b.MapInboundClaims = false;   // claims остаются как в токене (sub, role, permissions)
                 b.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidIssuer = o.Authority,
+                    ValidIssuer = o.Authority.TrimEnd('/'),   // Keycloak пишет iss без завершающего «/»
                     ValidateAudience = true,
                     ValidAudience = o.Audience,
                     ValidateLifetime = true,
                     ValidateIssuerSigningKey = true,
                     ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
-                    ClockSkew = TimeSpan.Zero,
+                    ClockSkew = TimeSpan.FromSeconds(30),   // часы пользовательской машины идут не точно
                     NameClaimType = AuthClaims.Subject,
                     RoleClaimType = AuthClaims.Role,
                 };
@@ -70,13 +74,17 @@ public static class AuthExtensions
         }
 
         services.AddSingleton(new AuthMode(o.DevMode));
-        services.AddAuthorization(a => a.AddPolicy(UserPolicy, p => p.RequireAuthenticatedUser()));
+        services.AddAuthorization(a =>
+        {
+            a.AddPolicy(UserPolicy, p => p.RequireAuthenticatedUser());
+            if (o.RequireLogin) a.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();   // всё API — только для вошедших
+        });
         return services;
     }
 
     public static IApplicationBuilder UseArchForgeAuth(this IApplicationBuilder app) => app.UseAuthentication().UseAuthorization();
 
-    /// <summary>Нужно хотя бы одно из перечисленных прав из токена (claim <c>permissions</c>). Без входа — 401, без права — 403.</summary>
+    /// <summary>Нужны ВСЕ перечисленные права из токена (claim <c>permissions</c>). Без входа — 401, без права — 403.</summary>
     public static TBuilder RequirePermissions<TBuilder>(this TBuilder builder, params string[] permissions) where TBuilder : IEndpointConventionBuilder =>
         builder.RequireAuthorization(new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser()
@@ -87,14 +95,30 @@ public static class AuthExtensions
 
     public const string InternalKeyHeader = "X-ArchForge-Internal-Key";
 
+    /// <summary>Ключ канала Map → Analysis: печатные ASCII-символы, 16–256 (иначе он не станет заголовком HTTP или слишком слаб).</summary>
+    public static bool IsValidInternalKey(string? key) =>
+        key is { Length: >= 16 and <= 256 } && key.All(c => c is >= '!' and <= '~');
+
+    /// <summary>Проверка настройки ключа на старте. Вне Development ключ обязателен у обоих сервисов; в Development можно без него
+    /// (тогда Analysis принимает только loopback). Заданный ключ должен быть допустимого вида.</summary>
+    public static string? ValidateInternalKey(IConfiguration config, IHostEnvironment env)
+    {
+        var key = config["Internal:Key"];
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            if (!env.IsDevelopment()) throw new InvalidOperationException("Internal:Key обязателен вне Development: Map и Analysis должны использовать один общий ключ.");
+            return null;
+        }
+        if (!IsValidInternalKey(key)) throw new InvalidOperationException("Internal:Key: от 16 до 256 печатных ASCII-символов без пробелов.");
+        return key;
+    }
+
     /// <summary>Закрывает внутренний сервис (Analysis): запросы только с loopback и, если задан <c>Internal:Key</c>, с этим ключом
     /// в заголовке. Без ключа это допустимо только в Development; в остальных окружениях сервис не стартует.</summary>
     public static IApplicationBuilder UseInternalGuard(this WebApplication app)
     {
-        var key = app.Configuration["Internal:Key"];
-        var keyed = !string.IsNullOrWhiteSpace(key);
-        if (!keyed && !app.Environment.IsDevelopment())
-            throw new InvalidOperationException("Internal:Key обязателен вне Development: внутренний сервис принимает вызовы только от Map по общему ключу.");
+        var key = ValidateInternalKey(app.Configuration, app.Environment);
+        var keyed = key is not null;
         var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("InternalGuard");
         if (!keyed) log.LogWarning("Internal:Key не задан — сервис принимает вызовы только с loopback (допустимо в Development).");
         var expected = keyed ? SHA256.HashData(Encoding.UTF8.GetBytes(key!)) : null;
