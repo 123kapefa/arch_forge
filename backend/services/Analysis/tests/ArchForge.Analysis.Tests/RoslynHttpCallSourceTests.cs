@@ -879,4 +879,181 @@ public class RoslynHttpCallSourceTests
         Assert.Empty(Scan(sb.ToString()));
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"разбор занял {sw.Elapsed}");   // раньше — 13 с на 54 КБ
     }
+
+    // ── срез 4: Refit ──
+
+    [Fact]
+    public void Refit_interface_methods_become_calls_with_base_from_configure_http_client()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s) =>
+                    s.AddRefitClient<ICatalogApi>().ConfigureHttpClient(c => c.BaseAddress = new Uri("http://catalog:8080/")); }
+                """),
+            ("ICatalogApi.cs", """
+                using Refit;
+                public interface ICatalogApi {
+                    [Get("/api/products/{id}")] Task<Product> Get(int id);
+                    [Post("/api/products")] Task Create([Body] Product p);
+                    [Delete("api/products/{id}?force=true")] Task Remove(int id);
+                    [Headers("Accept: application/json")] Task NotACall();
+                }
+                """));
+
+        Assert.Equal(3, hits.Count);
+        Assert.Contains(hits, h => h.Method == "GET" && h.Url == "http://catalog:8080/api/products/{id}" && h.ViaBase);
+        Assert.Contains(hits, h => h.Method == "POST" && h.Url == "http://catalog:8080/api/products");
+        Assert.Contains(hits, h => h.Method == "DELETE" && h.Url == "http://catalog:8080/api/products/{id}");   // query отброшен
+        Assert.All(hits, h => { Assert.EndsWith("ICatalogApi.cs", h.File); Assert.Contains("Refit ICatalogApi.", h.Evidence); });
+        Assert.DoesNotContain(hits, h => h.Evidence.Contains("force"));
+    }
+
+    [Fact]
+    public void Rest_service_for_with_literal_address_is_a_registration()
+    {
+        var hits = ScanFiles(
+            ("Use.cs", """class U { object M() => RestService.For<IOrdersApi>("http://orders:8080"); }"""),
+            ("IOrdersApi.cs", """using Refit; interface IOrdersApi { [Get("/api/orders")] Task<string> List(); }"""));
+        Assert.Equal("http://orders:8080/api/orders", Assert.Single(hits).Url);
+    }
+
+    [Fact]
+    public void Refit_address_from_configuration_gives_config_key()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s) =>
+                    s.AddRefitClient<IPaymentsApi>().ConfigureHttpClient((sp, c) =>
+                        c.BaseAddress = new Uri(sp.GetRequiredService<IOptions<PaymentsServiceOptions>>().Value.Url)); }
+                """),
+            ("O.cs", """class PaymentsServiceOptions { public const string SectionName = "PaymentsService"; public string Url { get; set; } }"""),
+            ("I.cs", """using Refit; interface IPaymentsApi { [Post("/api/payments/{id}/refund")] Task Refund(string id); }"""));
+        var h = Assert.Single(hits);
+        Assert.Equal("PaymentsService:Url", h.ConfigKey);
+        Assert.Equal("/api/payments/{id}/refund", h.Url);
+    }
+
+    [Fact]
+    public void Unregistered_interface_ambiguous_addresses_and_no_address_give_nothing()
+    {
+        Assert.Empty(ScanFiles(
+            ("I.cs", """using Refit; interface IUnregistered { [Get("/api/x")] Task X(); }"""),
+            ("A.cs", """class A { void M(IServiceCollection s) => s.AddRefitClient<ITwo>().ConfigureHttpClient(c => c.BaseAddress = new Uri("http://one/")); }"""),
+            ("B.cs", """class B { void M(IServiceCollection s) => s.AddRefitClient<ITwo>().ConfigureHttpClient(c => c.BaseAddress = new Uri("http://two/")); }"""),
+            ("T.cs", """using Refit; interface ITwo { [Get("/api/two")] Task T(); }"""),
+            ("C.cs", """class C { void M(IServiceCollection s) => s.AddRefitClient<INoBase>(); }"""),
+            ("N.cs", """using Refit; interface INoBase { [Get("/api/nobase")] Task N(); }""")));
+    }
+
+    [Fact]
+    public void Non_http_attributes_and_empty_or_hostile_paths_are_ignored()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddRefitClient<IApi>().ConfigureHttpClient(c => c.BaseAddress = new Uri("http://svc/")); }"""),
+            ("I.cs", """
+                using Refit;
+                interface IApi {
+                    [HttpGet("/api/not-refit")] Task A();       // ASP.NET-атрибут, не Refit
+                    [Get("")] Task B();                          // пусто
+                    [Get("//evil/x")] Task C();                  // протокол-относительный
+                    [Get("ftp://svc/x")] Task D();               // чужая схема
+                    [Get] Task E();                              // без пути
+                    [Obsolete("/api/x")] Task F();               // другой атрибут
+                }
+                """)));
+    }
+
+    // ── замечания ревью среза 4 ──
+
+    [Fact]
+    public void Refit_appends_path_to_base_path_unlike_http_client()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddRefitClient<IApi>().ConfigureHttpClient(c => c.BaseAddress = new Uri("http://svc/v1/")); }"""),
+            ("I.cs", """using Refit; interface IApi { [Get("/items")] Task A(); [Get("orders/{id}")] Task B(int id); }"""));
+        Assert.Contains(hits, h => h.Url == "http://svc/v1/items");           // у HttpClient было бы http://svc/items
+        Assert.Contains(hits, h => h.Url == "http://svc/v1/orders/{id}");
+        Assert.All(hits, h => Assert.True(h.AppendToBasePath));
+    }
+
+    [Fact]
+    public void Refit_interface_without_refit_word_in_file_is_found_via_verb_attributes()
+    {
+        // global using Refit: в файле интерфейса слова «Refit» нет
+        var hits = ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddRefitClient<IApi>().ConfigureHttpClient(c => c.BaseAddress = new Uri("http://svc/")); }"""),
+            ("I.cs", """public interface IApi { [Get("/api/x")] Task A(); }"""));
+        Assert.Equal("http://svc/api/x", Assert.Single(hits).Url);
+    }
+
+    [Fact]
+    public void Qualified_rest_service_client_variable_and_settings_lambda_forms_work()
+    {
+        var hits = ScanFiles(
+            ("Use.cs", """
+                class U {
+                    object A() => Refit.RestService.For<IApiA>("http://a/");
+                    object B() { var client = new System.Net.Http.HttpClient { BaseAddress = new Uri("http://b/") }; return RestService.For<IApiB>(client); }
+                    void C(IServiceCollection s) => s.AddRefitClient<IApiC>(sp => new RefitSettings()).ConfigureHttpClient(c => c.BaseAddress = new Uri("http://c/"));
+                }
+                """),
+            ("I.cs", """using Refit; interface IApiA { [Get("/a")] Task A(); } interface IApiB { [Get("/b")] Task B(); } interface IApiC { [Get("/c")] Task C(); }"""));
+        Assert.Contains(hits, h => h.Url == "http://a/a");
+        Assert.Contains(hits, h => h.Url == "http://b/b");
+        Assert.Contains(hits, h => h.Url == "http://c/c");
+    }
+
+    [Fact]
+    public void Same_address_registered_twice_is_not_ambiguous_but_non_literal_for_is_ignored()
+    {
+        var hits = ScanFiles(
+            ("A.cs", """class A { void M(IServiceCollection s) => s.AddRefitClient<IApi>().ConfigureHttpClient(c => c.BaseAddress = new Uri("http://svc/")); }"""),
+            ("B.cs", """class B { object M() => RestService.For<IApi>("http://svc/"); }"""),
+            ("I.cs", """using Refit; interface IApi { [Get("/x")] Task X(); }"""));
+        Assert.Equal("http://svc/x", Assert.Single(hits).Url);
+        Assert.Empty(ScanFiles(
+            ("V.cs", """class V { object M(string url) => RestService.For<IOther>(url); }"""),
+            ("I.cs", """using Refit; interface IOther { [Get("/x")] Task X(); }""")));
+    }
+
+    [Fact]
+    public void Relative_path_with_url_in_query_is_still_a_path()
+    {
+        var hit = Assert.Single(Scan("""class C { async Task M(System.Net.Http.HttpClient h) { h.BaseAddress = new Uri("http://svc/"); await h.GetAsync("/redirect?to=http://other/x"); } }"""));
+        Assert.Equal("http://svc/redirect", hit.Url);
+    }
+
+    // ── замечания security-ревью среза 4 ──
+
+    [Fact]
+    public void Same_named_refit_interfaces_in_different_namespaces_or_nested_are_not_guessed()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { object M() => RestService.For<IApi>("http://h/"); }"""),
+            ("A.cs", """using Refit; namespace A { interface IApi { [Get("/a")] Task X(); } }"""),
+            ("B.cs", """using Refit; namespace B { interface IApi { [Get("/b")] Task X(); } }""")));
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { object M() => RestService.For<IApi>("http://h/"); }"""),
+            ("N.cs", """using Refit; class Outer { interface IApi { [Get("/c")] Task X(); } }""")));
+    }
+
+    [Fact]
+    public void Control_characters_in_refit_path_are_rejected()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s, IConfiguration configuration) => s.AddRefitClient<IApi>().ConfigureHttpClient(c => c.BaseAddress = new Uri(configuration["Svc:Url"]!)); }"""),
+            ("I.cs", "using Refit; interface IApi { [Get(\"/a\\n//evil\")] Task X(); }")));
+    }
+
+    [Fact]
+    public void Many_rest_service_registrations_with_options_stay_fast()
+    {
+        var sb = new System.Text.StringBuilder("class R { void M(IServiceProvider sp) {\n var cfg = sp.GetRequiredService<IOptions<O>>().Value;\n");
+        for (var i = 0; i < 510; i++) sb.Append($"RestService.For<I{i}>(cfg.P{i});\n");
+        for (var i = 0; i < 20000; i++) sb.Append("x.Foo(1, 2, 3);\n");
+        sb.Append("} }");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Scan(sb.ToString());
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"разбор занял {sw.Elapsed}");   // раньше — секунды на каждую регистрацию
+    }
 }

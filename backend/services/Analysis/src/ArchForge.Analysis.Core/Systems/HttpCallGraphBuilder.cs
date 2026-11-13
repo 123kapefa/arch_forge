@@ -77,7 +77,11 @@ public static class HttpCallGraphBuilder
                     if (matches.Any(c => c.Url.Length == 0)) continue;          // env задаёт ключ, но значение неизвестно (${VAR}) — не берём из appsettings
                     var urls = matches.Select(c => c.Url).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     if (urls.Count != 1 || !Uri.TryCreate(urls[0], UriKind.Absolute, out var baseUri)) continue;   // нет или несколько значений — не гадаем
-                    if (!Uri.TryCreate(baseUri, hit.Url, out uri) || !uri.Authority.Equals(baseUri.Authority, StringComparison.OrdinalIgnoreCase)) continue;
+                    var joined = hit.AppendToBasePath
+                        ? $"{baseUri.GetLeftPart(UriPartial.Authority)}{baseUri.AbsolutePath.TrimEnd('/')}/{hit.Url.TrimStart('/')}"   // Refit: путь дописывается к пути базы
+                        : null;
+                    if (!(joined is null ? Uri.TryCreate(baseUri, hit.Url, out uri) : Uri.TryCreate(joined, UriKind.Absolute, out uri))
+                        || !uri.Authority.Equals(baseUri.Authority, StringComparison.OrdinalIgnoreCase)) continue;
                 }
                 else if (!Uri.TryCreate(hit.Url, UriKind.Absolute, out uri)) continue;
                 var t = resolver.Resolve(srcId, uri.Host);

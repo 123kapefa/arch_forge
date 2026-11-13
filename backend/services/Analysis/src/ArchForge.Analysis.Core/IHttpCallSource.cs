@@ -15,4 +15,6 @@ public interface IHttpCallSource
 // ViaBase — адрес собран из относительного пути и BaseAddress (достовернее абсолютного литерала не бывает, но привязка к клиенту — вывод).
 // ConfigKey — адрес клиента берётся из конфигурации (срез 3б): Url тогда ОТНОСИТЕЛЬНЫЙ путь, а базовый адрес по ключу
 // (`Payments:Url`, как в appsettings; в env — `Payments__Url`) находит потребитель по конфигурации сервиса.
-public sealed record HttpCallHit(string Method, string Url, string File, int Line, string Evidence, bool ViaBase = false, string? ConfigKey = null);
+// AppendToBasePath — относительный путь дописывается к пути базового адреса (Refit: `http://x/v1/` + `/items` = `/v1/items`),
+// а не заменяет его, как у HttpClient.
+public sealed record HttpCallHit(string Method, string Url, string File, int Line, string Evidence, bool ViaBase = false, string? ConfigKey = null, bool AppendToBasePath = false);

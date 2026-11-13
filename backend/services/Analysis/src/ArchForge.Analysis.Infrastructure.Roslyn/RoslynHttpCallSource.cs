@@ -51,7 +51,8 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             string text;
             try { text = File.ReadAllText(file); } catch { continue; }
             if (IsCandidate(text)) candidates.Add(file);
-            var wantsReg = text.Contains("AddHttpClient", StringComparison.Ordinal);
+            var wantsReg = text.Contains("AddHttpClient", StringComparison.Ordinal) || text.Contains("AddRefitClient", StringComparison.Ordinal)
+                || text.Contains("RestService", StringComparison.Ordinal);
             var wantsSections = text.Contains("const string", StringComparison.Ordinal)
                 && (text.Contains("Section", StringComparison.Ordinal) || text.Contains("ConfigKey", StringComparison.Ordinal));
             if (!wantsReg && !wantsSections) continue;
@@ -63,11 +64,12 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
 
         // Проход 2: сами вызовы.
         var hits = new List<HttpCallHit>();
+        var refitHits = new List<(string Name, string Ns, HttpCallHit Hit)>();
         foreach (var file in candidates)
         {
             ct.ThrowIfCancellationRequested();
             var text = ReadCandidate(file);
-            if (text is null || !text.Contains("Async", StringComparison.Ordinal)) continue;   // нет вызовов *Async — нечего искать
+            if (text is null || (!text.Contains("Async", StringComparison.Ordinal) && registry.Refit.Count == 0)) continue;   // нет вызовов *Async и Refit-регистраций — нечего искать
             var path = file.Replace('\\', '/');
             var treeRoot = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
             var bases = CollectBaseAddresses(treeRoot);      // null — слишком много адресов в файле: относительные пути не разрешаем
@@ -84,7 +86,12 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
                     if (verb2 is not null) Add(hits, verb2, url2, inv, ma.Expression, path, bases, registry, ctx, sections);
                 }
             }
+            if (registry.Refit.Count > 0) CollectRefitCalls(treeRoot, path, registry, sections, refitHits);
         }
+        // Refit: интерфейс ищется по простому имени, поэтому одноимённые интерфейсы из разных пространств имён неразличимы — их вызовы
+        // не приписываем (adr/0008), берём только интерфейсы, чьё имя объявлено в одном пространстве имён.
+        var nsByName = refitHits.GroupBy(h => h.Name).ToDictionary(g => g.Key, g => g.Select(h => h.Ns).Distinct(StringComparer.Ordinal).Count());
+        hits.AddRange(refitHits.Where(h => nsByName[h.Name] == 1).Select(h => h.Hit));
         return hits;
     }
 
@@ -96,8 +103,15 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         return IsCandidate(text) ? text : null;
     }
 
+    // `[Get(` / `[Post(` … — признак интерфейса Refit без упоминания «Refit» в файле (global using).
+    private static bool HasRefitVerbAttribute(string text) =>
+        text.Contains("[Get(", StringComparison.Ordinal) || text.Contains("[Post(", StringComparison.Ordinal) || text.Contains("[Put(", StringComparison.Ordinal)
+        || text.Contains("[Delete(", StringComparison.Ordinal) || text.Contains("[Patch(", StringComparison.Ordinal);
+
     private static bool IsCandidate(string text) =>
         text.Contains("HttpClient", StringComparison.Ordinal)
+        || text.Contains("Refit", StringComparison.Ordinal)
+        || HasRefitVerbAttribute(text)                       // интерфейс Refit может не упоминать Refit при global using
         || text.Contains("http://", StringComparison.OrdinalIgnoreCase)
         || text.Contains("https://", StringComparison.OrdinalIgnoreCase);
 
@@ -364,6 +378,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
     {
         public readonly Dictionary<string, HashSet<ClientBase>> Typed = new(StringComparer.Ordinal);
         public readonly Dictionary<string, HashSet<ClientBase>> Named = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, HashSet<ClientBase>> Refit = new(StringComparer.Ordinal);   // интерфейс Refit → адрес (срез 4)
         public int Count;
         public static ClientBase? Single(Dictionary<string, HashSet<ClientBase>> map, string key) =>
             map.TryGetValue(key, out var set) && set.Count == 1 ? set.First() : null;
@@ -380,11 +395,35 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
     private static void CollectRegistrations(SyntaxNode root, ClientRegistry reg, CancellationToken ct)
     {
         List<BaseAddr>? fileBases = null;
+        var optionLocals = new Dictionary<SyntaxNode, Dictionary<string, string>>();   // один кэш на файл (а не новый на каждую регистрацию — квадрат)
         foreach (var inv in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             ct.ThrowIfCancellationRequested();
             if (reg.Count > MaxClientRegistrations) return;
-            if (CalleeName(inv) != "AddHttpClient") continue;
+            var callee = CalleeName(inv);
+            if (callee is "For" && inv.Expression is MemberAccessExpressionSyntax { Expression: var rsq } && RightName(rsq) == "RestService" && CalleeGenericArgs(inv) is { Count: 1 } rt)
+            {
+                // RestService.For<T>(адрес | HttpClient { BaseAddress = … } | переменная такого клиента): адрес — первый аргумент
+                if (inv.ArgumentList.Arguments.Count == 0) continue;
+                var a0 = StripWrappers(inv.ArgumentList.Arguments[0].Expression);
+                ClientBase? cbR = StringLit(a0) is { } lit0 && Uri.TryCreate(lit0, UriKind.Absolute, out var ru) && (ru.Scheme == Uri.UriSchemeHttp || ru.Scheme == Uri.UriSchemeHttps)
+                    ? new ClientBase(ru, null, null, null)
+                    : ConfigRef(a0, inv, optionLocals);
+                if (cbR is null)
+                {
+                    fileBases ??= CollectBaseAddresses(root);
+                    // `new HttpClient { BaseAddress = … }` прямо в аргументе или в переменной, объявленной в том же члене
+                    var span = a0.Span;
+                    if (a0 is IdentifierNameSyntax rid && inv.Ancestors().FirstOrDefault(a => a is MemberDeclarationSyntax) is { } owner
+                        && owner.DescendantNodes().OfType<VariableDeclaratorSyntax>().FirstOrDefault(d => d.Identifier.Text == rid.Identifier.Text && d.Initializer is not null) is { } decl)
+                        span = decl.Span;
+                    var inside = fileBases?.Where(b => span.Contains(b.Node.Span)).Select(b => b.Base).Distinct().ToList();
+                    if (inside is { Count: 1 }) cbR = inside[0];
+                }
+                if (cbR is { } found) { reg.Count++; ClientRegistry.Add(reg.Refit, rt[0], found); }   // считаем только регистрации с адресом: вызовы For без адреса лимит не съедают
+                continue;
+            }
+            if (callee is not ("AddHttpClient" or "AddRefitClient")) continue;
             reg.Count++;
             fileBases ??= CollectBaseAddresses(root);          // один обход файла (а не по лямбде на каждую регистрацию — вложенные давали бы квадрат)
             if (fileBases is null) return;                       // слишком много адресов в файле — не гадаем
@@ -393,7 +432,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             var node = (SyntaxNode)inv;
             for (var depth = 0; depth < 12; depth++)       // цепочка: AddHttpClient<T>().ConfigureHttpClient(...).AddStandardResilienceHandler()
             {
-                if (node is InvocationExpressionSyntax cur && (depth == 0 ? CalleeName(cur) == "AddHttpClient" : CalleeName(cur) == "ConfigureHttpClient"))
+                if (node is InvocationExpressionSyntax cur && (depth == 0 ? CalleeName(cur) is "AddHttpClient" or "AddRefitClient" : CalleeName(cur) == "ConfigureHttpClient"))
                     foreach (var arg in cur.ArgumentList.Arguments)
                         if (arg.Expression is LambdaExpressionSyntax lam)
                             foreach (var b in fileBases) if (lam.Span.Contains(b.Node.Span)) uris.Add(b.Base);
@@ -403,6 +442,11 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             if (uris.Count != 1) continue;                 // нет адреса (литерал или ссылка на конфигурацию) или их несколько в одной регистрации
             var uri = uris.First();
 
+            if (callee == "AddRefitClient")
+            {
+                if (CalleeGenericArgs(inv) is { Count: 1 } refitTypes) ClientRegistry.Add(reg.Refit, refitTypes[0], uri);
+                continue;
+            }
             // Типизированный клиент: HttpClient внедряется в РЕАЛИЗАЦИЮ — последний аргумент (AddHttpClient<TI, TImpl> → TImpl).
             if (CalleeGenericArgs(inv) is { Count: > 0 } types) ClientRegistry.Add(reg.Typed, types[^1], uri);
             if (inv.ArgumentList.Arguments.Count > 0 && inv.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax lit
@@ -545,46 +589,110 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
     {
         url = url?.Trim();
         if (string.IsNullOrEmpty(url) || url.StartsWith('{')) return;                 // пусто или адрес начинается с подстановки — неизвестен
-        Uri? uri;
-        var viaBase = false;
-        if (Uri.TryCreate(url, UriKind.Absolute, out uri) && url.Contains("://", StringComparison.Ordinal))
+        if (StartsWithScheme(url) && Uri.TryCreate(url, UriKind.Absolute, out var abs))
         {
-            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return;   // ftp://, file:// …
+            if (abs.Scheme != Uri.UriSchemeHttp && abs.Scheme != Uri.UriSchemeHttps) return;   // ftp://, file:// …
+            var line = inv.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            // без query (секреты не тащим); подстановки {имя} сохраняем читаемыми, а не %7B…%7D (раскодируем только скобки)
+            var clean = $"{abs.Scheme}://{abs.Authority}{UnescapeBraces(abs.AbsolutePath)}";
+            hits.Add(new HttpCallHit(verb, clean, path, line, $"{verb} {clean}"));
+            return;
         }
-        else
-        {
-            // относительный путь: только похожий на URL-путь («/x» или «a/b»); голое слово — ключ кэша, имя файла, id — не вызов.
-            // Протокол-относительные «//host/x», обратные слэши и «схема:значение» («user:42») относительными не считаем.
-            if (url.StartsWith("//", StringComparison.Ordinal) || url.Contains('\\') || !(url.StartsWith('/') || url.Contains('/'))) return;
-            if (url.IndexOf(':') is var colon && colon >= 0 && (colon < url.IndexOf('/') || !url.Contains('/'))) return;
-            if (bases is null) return;                                                 // в файле слишком много базовых адресов
-            var (found, ambiguous) = ResolveBase(inv, bases);
-            if (found is null && !ambiguous) found = ResolveRegistered(inv, receiver, registry, ctx);   // конфликт в области реестром не «лечим»
-            if (found is not { } cb) return;                                           // нет надёжного базового адреса — не угадываем
+        // относительный путь: только похожий на URL-путь («/x» или «a/b»); голое слово — ключ кэша, имя файла, id — не вызов.
+        if (!LooksLikePath(url) || bases is null) return;                          // в файле слишком много базовых адресов — тоже не гадаем
+        var (found, ambiguous) = ResolveBase(inv, bases);
+        if (found is null && !ambiguous) found = ResolveRegistered(inv, receiver, registry, ctx);   // конфликт в области реестром не «лечим»
+        if (found is { } cb) EmitFromBase(hits, verb, url, inv, path, cb, sections, how: null);    // нет надёжного базового адреса — не угадываем
+    }
 
-            if (cb.Uri is not { } baseUri)
-            {
-                // адрес клиента — из конфигурации: значения не читаем, отдаём ключ и относительный путь; цель найдёт сборщик графа
-                var inferred = false;
-                var key = cb.Key;
-                if (key is null && cb.OptionsType is { } ot && cb.Prop is { } prop && SectionOf(ot, sections, out inferred) is { } sec) key = $"{sec}:{prop}";
-                if (key is null) return;
-                var cfgLine = inv.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-                var cut = url.IndexOfAny(['?', '#']);
-                if (cut >= 0) url = url[..cut];                       // query и fragment (токены) в Url/Evidence не попадают — как у абсолютных адресов
-                var note = inferred ? "; секция выведена из имени класса" : "";
-                hits.Add(new HttpCallHit(verb, url, path, cfgLine, $"{verb} {url} (адрес из конфигурации {key}{note})", ViaBase: true, ConfigKey: key));
-                return;
-            }
-            if (!Uri.TryCreate(baseUri, url, out uri)) return;
-            // после слияния цель обязана остаться на хосте базового адреса (защита от хитрых относительных строк)
-            if (!uri.Authority.Equals(baseUri.Authority, StringComparison.OrdinalIgnoreCase) || uri.Scheme != baseUri.Scheme) return;
-            viaBase = true;
+    // «схема://…» в НАЧАЛЕ строки (http://, ftp://). «://» внутри query («/redirect?to=http://x») адресом не делает; на Unix путь «/x»
+    // Uri.TryCreate сам считает абсолютным file-адресом, поэтому по одному TryCreate абсолютный адрес не отличить.
+    private static bool StartsWithScheme(string url)
+    {
+        var i = url.IndexOf("://", StringComparison.Ordinal);
+        if (i <= 0) return false;
+        for (var k = 0; k < i; k++) if (!(char.IsAsciiLetterOrDigit(url[k]) || url[k] is '+' or '-' or '.')) return false;
+        return char.IsAsciiLetter(url[0]);
+    }
+
+    // Протокол-относительные «//host/x», обратные слэши и «схема:значение» («user:42») относительными не считаем.
+    // Голое слово без «/» — не путь (ключ кэша, имя файла, id).
+    private static bool LooksLikePath(string url) => IsSafeRelative(url) && (url.StartsWith('/') || url.Contains('/'));
+
+    private static bool IsSafeRelative(string url)
+    {
+        if (url.Any(char.IsControl)) return false;   // переводы строк, NUL — в путь вызова не берём (и в Evidence)
+        var cut = url.IndexOfAny(['?', '#']);
+        if (cut >= 0) url = url[..cut];          // «://» или «:» в query («/redirect?to=http://x») путь небезопасным не делает
+        if (url.StartsWith("//", StringComparison.Ordinal) || url.Contains('\\') || url.Contains("://", StringComparison.Ordinal)) return false;
+        var colon = url.IndexOf(':');
+        return colon < 0 || (url.Contains('/') && url.IndexOf('/') < colon);
+    }
+
+    // Относительный путь + базовый адрес клиента → вызов: литерал даёт абсолютный адрес, ключ конфигурации — вызов с ключом
+    // (значение подставит сборщик графа). `how` — пометка источника в Evidence (по умолчанию «по BaseAddress»).
+    private static void EmitFromBase(List<HttpCallHit> hits, string verb, string url, SyntaxNode lineAt, string path, ClientBase cb,
+        IReadOnlyDictionary<string, string> sections, string? how, bool append = false)
+    {
+        var line = lineAt.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        if (cb.Uri is not { } baseUri)
+        {
+            // адрес клиента — из конфигурации: значения не читаем, отдаём ключ и относительный путь; цель найдёт сборщик графа
+            var inferred = false;
+            var key = cb.Key;
+            if (key is null && cb.OptionsType is { } ot && cb.Prop is { } prop && SectionOf(ot, sections, out inferred) is { } sec) key = $"{sec}:{prop}";
+            if (key is null) return;
+            var cut = url.IndexOfAny(['?', '#']);
+            if (cut >= 0) url = url[..cut];                       // query и fragment (токены) в Url/Evidence не попадают — как у абсолютных адресов
+            var note = (how is null ? "" : $"{how}; ") + $"адрес из конфигурации {key}" + (inferred ? "; секция выведена из имени класса" : "");
+            hits.Add(new HttpCallHit(verb, url, path, line, $"{verb} {url} ({note})", ViaBase: true, ConfigKey: key, AppendToBasePath: append));
+            return;
         }
-        var line = inv.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-        // без query (секреты не тащим); подстановки {имя} сохраняем читаемыми, а не %7B…%7D (раскодируем только скобки)
+        var target = append
+            ? $"{baseUri.GetLeftPart(UriPartial.Authority)}{baseUri.AbsolutePath.TrimEnd('/')}/{url.TrimStart('/')}"   // Refit: путь дописывается к пути базы
+            : null;
+        Uri? uri = null;
+        if (!(target is null ? Uri.TryCreate(baseUri, url, out uri) : Uri.TryCreate(target, UriKind.Absolute, out uri))) return;
+        // после слияния цель обязана остаться на хосте базового адреса (защита от хитрых относительных строк)
+        if (!uri.Authority.Equals(baseUri.Authority, StringComparison.OrdinalIgnoreCase) || uri.Scheme != baseUri.Scheme) return;
         var clean = $"{uri.Scheme}://{uri.Authority}{UnescapeBraces(uri.AbsolutePath)}";
-        hits.Add(new HttpCallHit(verb, clean, path, line, viaBase ? $"{verb} {clean} (по BaseAddress)" : $"{verb} {clean}", viaBase));
+        hits.Add(new HttpCallHit(verb, clean, path, line, $"{verb} {clean} ({how ?? "по BaseAddress"})", ViaBase: true, AppendToBasePath: append));
+    }
+
+    // ── Refit (срез 4) ──
+
+    private static readonly IReadOnlyDictionary<string, string> RefitVerbs = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["Get"] = "GET", ["Post"] = "POST", ["Put"] = "PUT", ["Delete"] = "DELETE", ["Patch"] = "PATCH", ["Head"] = "HEAD", ["Options"] = "OPTIONS",
+    };
+
+    // Методы Refit-интерфейса, зарегистрированного с адресом: каждый `[Get("/путь")]` — вызов (декларация, а не место использования).
+    // Интерфейс без регистрации/адреса и с разными адресами у одного имени не берём.
+    private static void CollectRefitCalls(SyntaxNode root, string path, ClientRegistry reg, IReadOnlyDictionary<string, string> sections, List<(string Name, string Ns, HttpCallHit Hit)> refitHits)
+    {
+        foreach (var itf in root.DescendantNodes().OfType<InterfaceDeclarationSyntax>())
+        {
+            if (itf.Parent is TypeDeclarationSyntax) continue;                      // вложенный интерфейс — отдельная область, по простому имени не отличить
+            var name = itf.Identifier.Text;
+            var ns = string.Join('.', itf.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Select(n => n.Name.ToString()).Reverse());
+            if (ClientRegistry.Single(reg.Refit, name) is not { } cb) continue;
+            foreach (var m in itf.Members.OfType<MethodDeclarationSyntax>())
+                foreach (var attr in m.AttributeLists.SelectMany(l => l.Attributes))
+                {
+                    var an = attr.Name switch { IdentifierNameSyntax i => i.Identifier.Text, QualifiedNameSyntax q => q.Right.Identifier.Text, _ => "" };
+                    if (an.EndsWith("Attribute", StringComparison.Ordinal)) an = an[..^"Attribute".Length];
+                    if (!RefitVerbs.TryGetValue(an, out var verb)) continue;
+                    var rel = StringLit(attr.ArgumentList?.Arguments.FirstOrDefault()?.Expression)?.Trim();
+                    if (string.IsNullOrEmpty(rel) || rel.StartsWith('{')) continue;
+                    var cut = rel.IndexOfAny(['?', '#']);
+                    if (cut == 0) continue;
+                    if (cut > 0) rel = rel[..cut];
+                    if (!IsSafeRelative(rel)) continue;                                                          // путь здесь заведомо путь: голое слово допустимо
+                    var one = new List<HttpCallHit>();
+                    EmitFromBase(one, verb, rel, attr, path, cb, sections, how: $"Refit {name}.{m.Identifier.Text}", append: true);
+                    foreach (var h in one) refitHits.Add((name, ns, h));
+                }
+        }
     }
 
     // Секция конфигурации класса options: константа SectionName/Section/… в классе; иначе имя типа без суффикса Options/Settings/Config.
