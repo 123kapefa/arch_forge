@@ -1056,4 +1056,163 @@ public class RoslynHttpCallSourceTests
         Scan(sb.ToString());
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"разбор занял {sw.Elapsed}");   // раньше — секунды на каждую регистрацию
     }
+
+    // ── секция options из регистрации (клиентские библиотеки) ──
+
+    [Fact]
+    public void Section_comes_from_configure_registration_with_nameof_not_from_class_name_guess()
+    {
+        var hits = ScanFiles(
+            ("TagServiceOptions.cs", """public class TagServiceOptions { public string Url { get; set; } = ""; public int TimeoutSeconds { get; set; } }"""),
+            ("Ext.cs", """
+                public static class TagServiceExtensions {
+                    public static IServiceCollection AddTagServiceHttpCommunication(this IServiceCollection services, IConfiguration configuration)
+                    {
+                        services.Configure<TagServiceOptions>(configuration.GetSection(nameof(TagServiceOptions)));
+                        services.AddHttpClient<ITagServiceClient, TagServiceClient>((sp, config) =>
+                        {
+                            TagServiceOptions options = sp.GetRequiredService<IOptions<TagServiceOptions>>().Value;
+                            config.BaseAddress = new Uri(options.Url);
+                        });
+                        return services;
+                    }
+                }
+                """),
+            ("TagServiceClient.cs", """public class TagServiceClient(System.Net.Http.HttpClient http) { Task M() => http.GetAsync("/api/tags"); }"""));
+        var h = Assert.Single(hits);
+        Assert.Equal("TagServiceOptions:Url", h.ConfigKey);       // секция = nameof(TagServiceOptions), а не «TagService» по имени класса
+        Assert.DoesNotContain("выведена", h.Evidence);
+    }
+
+    [Theory]
+    [InlineData("""services.Configure<XOptions>(configuration.GetSection("Services:X"));""", "Services:X:Url")]
+    [InlineData("""services.AddOptions<XOptions>().Bind(configuration.GetSection("Svc"));""", "Svc:Url")]
+    [InlineData("""services.AddOptions<XOptions>().BindConfiguration("Bound:Here");""", "Bound:Here:Url")]
+    [InlineData("""services.Configure<XOptions>(configuration.GetSection(XOptions.SectionName));""", "Const:Url")]
+    public void Section_registration_forms_are_understood(string registration, string key)
+    {
+        var hits = ScanFiles(
+            ("O.cs", """public class XOptions { public const string SectionName = "Const"; public string Url { get; set; } }"""),
+            ("Reg.cs", "class R { void M(IServiceCollection services, IConfiguration configuration) { " + registration
+                + " services.AddHttpClient<C>((sp, c) => c.BaseAddress = new Uri(sp.GetRequiredService<IOptions<XOptions>>().Value.Url)); } }"),
+            ("C.cs", """class C(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/a"); }"""));
+        Assert.Equal(key, Assert.Single(hits).ConfigKey);
+    }
+
+    [Fact]
+    public void Same_options_registered_under_two_sections_is_ambiguous()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s, IConfiguration c) {
+                    s.Configure<XOptions>(c.GetSection("One"));
+                    s.Configure<XOptions>(c.GetSection("Two"));
+                    s.AddHttpClient<C>((sp, cl) => cl.BaseAddress = new Uri(sp.GetRequiredService<IOptions<XOptions>>().Value.Url));
+                } }
+                """),
+            ("C.cs", """class C(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/a"); }""")));
+    }
+
+    // ── обёртки базового клиента: `GetAsync<T>(url)` без получателя в классе типизированного клиента ──
+
+    [Fact]
+    public void Unqualified_wrapper_calls_in_registered_typed_client_are_http_calls()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<IFileClient, FileClient>(c => c.BaseAddress = new Uri("http://file-service:8002/")); }"""),
+            ("FileClient.cs", """
+                internal sealed class FileClient : BaseHttpClient, IFileClient {
+                    public FileClient(System.Net.Http.HttpClient h) : base(h) { }
+                    public Task A(Guid id, CancellationToken ct) => GetAsync<Video>($"/videos/{id}", ct);
+                    public Task B(CancellationToken ct) => GetOptionalAsync<Video>("/videos/latest", ct);
+                    public Task C(Body b, CancellationToken ct) => PostAsync<Body, Video>("/videos", b, ct);
+                    public Task D(Guid id, CancellationToken ct) => this.DeleteAsync($"/videos/{id}", ct);
+                    public Task E(string q, CancellationToken ct) => GetAsync<Video>($"/files/by-entity?entityId={q}", ct);
+                }
+                """));
+
+        Assert.Equal(5, hits.Count);
+        Assert.Contains(hits, h => h.Method == "GET" && h.Url == "http://file-service:8002/videos/{id}");
+        Assert.Contains(hits, h => h.Method == "GET" && h.Url == "http://file-service:8002/videos/latest");
+        Assert.Contains(hits, h => h.Method == "POST" && h.Url == "http://file-service:8002/videos");
+        Assert.Contains(hits, h => h.Method == "DELETE" && h.Url == "http://file-service:8002/videos/{id}");
+        Assert.Contains(hits, h => h.Method == "GET" && h.Url == "http://file-service:8002/files/by-entity");     // query отброшен
+    }
+
+    [Fact]
+    public void Wrapper_calls_outside_registered_typed_clients_are_ignored()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<IFileClient, FileClient>(c => c.BaseAddress = new Uri("http://file-service/")); }"""),
+            // репозиторий с похожим методом: класс не зарегистрирован как клиент
+            ("Repo.cs", """class Repo : BaseRepo { Task A() => GetAsync<Item>("/items/1"); Task B() => DeleteAsync("/items/2"); }"""),
+            // вложенный класс внутри клиента — свой, не клиент
+            ("FileClient.cs", """class FileClient : BaseHttpClient { class Helper { Task A() => GetAsync<X>("/nested"); } }""")));
+    }
+
+    [Fact]
+    public void Wrapper_with_config_address_gives_config_key()
+    {
+        var hits = ScanFiles(
+            ("O.cs", """class FileServiceOptions { public string Url { get; set; } }"""),
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s, IConfiguration configuration) {
+                    s.Configure<FileServiceOptions>(configuration.GetSection(nameof(FileServiceOptions)));
+                    s.AddHttpClient<IFileClient, FileClient>((sp, c) => c.BaseAddress = new Uri(sp.GetRequiredService<IOptions<FileServiceOptions>>().Value.Url));
+                } }
+                """),
+            ("FileClient.cs", """class FileClient(System.Net.Http.HttpClient h) : BaseHttpClient(h) { Task A(Guid id) => GetAsync<V>($"/videos/{id}"); }"""));
+        var hit = Assert.Single(hits);
+        Assert.Equal("FileServiceOptions:Url", hit.ConfigKey);
+        Assert.Equal("/videos/{id}", hit.Url);
+    }
+
+    // ── замечания ревью: обёртки ──
+
+    [Fact]
+    public void Own_non_http_method_with_wrapper_name_is_not_a_call_but_own_http_wrapper_is()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<IClient, Client>(c => c.BaseAddress = new Uri("http://svc/")); }"""),
+            ("Client.cs", """
+                class Client(System.Net.Http.HttpClient http) : IClient {
+                    // кэш-ключ, не HTTP: параметр в HttpClient не передаётся
+                    private Task<string> GetAsync(string key) => Task.FromResult(key);
+                    public Task A() => GetAsync("user/profile");
+                    // собственная HTTP-обёртка: URL уходит в HttpClient
+                    private Task<T> PostAsync<T>(string url, object body) => http.PostAsJsonAsync(url, body);
+                    public Task B() => PostAsync<int>("/api/things", new { });
+                }
+                """));
+        Assert.Equal("http://svc/api/things", Assert.Single(hits).Url);
+    }
+
+    [Fact]
+    public void This_and_base_send_async_still_reach_the_normal_path()
+    {
+        var hits = ScanFiles(("Own.cs", """
+            class C : Base {
+                async Task M(System.Net.Http.HttpClient h) {
+                    h.BaseAddress = new Uri("http://svc/");
+                    await h.SendAsync(new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/ping"));
+                }
+            }
+            """));
+        Assert.Equal("http://svc/ping", Assert.Single(hits).Url);
+    }
+
+    [Fact]
+    public void Unresolvable_section_constant_does_not_erase_the_class_constant()
+    {
+        var hits = ScanFiles(
+            ("O.cs", """class XOptions { public const string SectionName = "Real"; public string Url { get; set; } }"""),
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s, IConfiguration c) {
+                    s.Configure<XOptions>(c.GetSection(Missing.Name));    // константа не читается — регистрацию не учитываем
+                    s.AddHttpClient<C>((sp, cl) => cl.BaseAddress = new Uri(sp.GetRequiredService<IOptions<XOptions>>().Value.Url));
+                } }
+                """),
+            ("C.cs", """class C(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/a"); }"""));
+        Assert.Equal("Real:Url", Assert.Single(hits).ConfigKey);
+    }
 }

@@ -32,7 +32,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -84,6 +84,21 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { calls = httpCalls?.Read(svc.Root, ct) ?? []; }
             catch (OperationCanceledException) { throw; }
             catch { calls = []; }
+            // вызовы из клиентских библиотек (*.Contracts), которые сервис подключает и регистрирует, — это ЕГО вызовы (E3.1);
+            // адрес по ключу конфигурации разрешится по конфигурации этого сервиса. Свой try: сбой не роняет разбор.
+            try
+            {
+                if (libraries is not null && httpCalls is not null)
+                {
+                    var fromLibs = new List<HttpCallHit>(calls);
+                    foreach (var lib in libraries.Resolve(svc.Root, root, ct))
+                        foreach (var hit in httpCalls.Read(lib.Dir, ct))
+                            fromLibs.Add(hit with { Evidence = $"{hit.Evidence} [библиотека {lib.Name}]" });
+                    calls = fromLibs;
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { /* библиотеки не разобрались — остаются собственные вызовы */ }
             results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id };
         });
         return results;
