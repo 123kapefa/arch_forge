@@ -68,7 +68,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         {
             ct.ThrowIfCancellationRequested();
             ComposeFile compose;
-            try { compose = LoadCompose(composePath, overlaysByPath[composePath], activeEnv); }
+            try { compose = LoadCompose(composePath, overlaysByPath[composePath], activeEnv, File.Exists(root) ? Path.GetDirectoryName(root) : root); }
             catch { continue; } // битый/нечитаемый compose — пропускаем (робастность)
 
             var local = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
@@ -210,7 +210,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     // влияет и на deploy, и на рёбра (env). Выбор оверлея:
     //  • default → docker-compose.override.yml (как сам docker compose применяет его поверх base);
     //  • именованная среда (dev/stage/prod) → docker-compose.<env>.yml (БЕЗ override.yml — как `docker compose -f base -f <env>`).
-    private static ComposeFile LoadCompose(string composePath, IReadOnlyDictionary<string, string> overlays, string activeEnv)
+    private static ComposeFile LoadCompose(string composePath, IReadOnlyDictionary<string, string> overlays, string activeEnv, string? allowedRoot)
     {
         var root = ComposeParser.Deserialize(File.ReadAllText(composePath));
         if (root is null) return new ComposeFile(null, []);
@@ -227,7 +227,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             catch { /* оверлей невалиден → оставляем base как есть (робастность, как для самого base) */ }
 
         // Каталог compose нужен для G4: .env и env_file резолвятся относительно него.
-        return ComposeParser.Parse(root, Path.GetDirectoryName(composePath));
+        return ComposeParser.Parse(root, Path.GetDirectoryName(composePath), allowedRoot);
     }
 
     private IEnumerable<(string System, string ComposePath)> ComposesToParse(string root)
@@ -262,9 +262,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
     private static IReadOnlyList<string> FallbackComposeFiles(string root)
     {
-        var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
         var found = new List<string>();
-        foreach (var f in Directory.EnumerateFiles(root, "*compose*", opts))
+        foreach (var f in SafeFiles.Enumerate(root, "*compose*", skipHidden: true))
         {
             if (PathFilter.IsNoise(root, f)) continue;
             var name = Path.GetFileName(f).ToLowerInvariant();
