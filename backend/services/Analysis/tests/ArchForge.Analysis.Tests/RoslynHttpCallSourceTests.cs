@@ -17,6 +17,18 @@ public class RoslynHttpCallSourceTests
         finally { Directory.Delete(tmp, recursive: true); }
     }
 
+    private static IReadOnlyList<Core.HttpCallHit> ScanFiles(params (string Name, string Code)[] files)
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "af_http_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            foreach (var (name, code) in files) File.WriteAllText(Path.Combine(tmp, name), code);
+            return new RoslynHttpCallSource().Read(tmp);
+        }
+        finally { Directory.Delete(tmp, recursive: true); }
+    }
+
     [Fact]
     public void Detects_client_verbs_with_absolute_url()
     {
@@ -433,5 +445,274 @@ public class RoslynHttpCallSourceTests
         var hits = Scan(sb.ToString());
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), $"разбор занял {sw.Elapsed}");   // раньше — десятки секунд
         Assert.Empty(hits);   // сверх лимита адресов относительные пути не разрешаются
+    }
+
+    // ── срез 3а: типизированные и именованные клиенты, адрес в другом файле ──
+
+    [Fact]
+    public void Typed_client_base_address_from_another_file_applies_to_calls_in_client_class()
+    {
+        var hits = ScanFiles(
+            ("Registration.cs", """
+                class R { void Add(IServiceCollection s) =>
+                    s.AddHttpClient<ICatalogClient, CatalogClient>(c => c.BaseAddress = new Uri("http://catalog:8080/")); }
+                """),
+            ("CatalogClient.cs", """
+                class CatalogClient : ICatalogClient {
+                    private readonly System.Net.Http.HttpClient _http;
+                    public CatalogClient(System.Net.Http.HttpClient http) { _http = http; }
+                    public Task<string> Get(int id) => _http.GetStringAsync($"/api/products/{id}");
+                    public Task Reserve() => _http.PostAsync("api/products/reserve", null);
+                }
+                """));
+
+        Assert.Equal(2, hits.Count);
+        Assert.Contains(hits, h => h.Method == "GET" && h.Url == "http://catalog:8080/api/products/{id}" && h.ViaBase);
+        Assert.Contains(hits, h => h.Method == "POST" && h.Url == "http://catalog:8080/api/products/reserve");
+        Assert.All(hits, h => Assert.EndsWith("CatalogClient.cs", h.File));
+    }
+
+    [Fact]
+    public void Single_type_argument_and_configure_http_client_chain_are_understood()
+    {
+        var hits = ScanFiles(
+            ("Program.cs", """
+                var b = WebApplication.CreateBuilder(args);
+                b.Services.AddHttpClient<OrdersClient>().ConfigureHttpClient(c => c.BaseAddress = new Uri("http://orders/"));
+                """),
+            ("OrdersClient.cs", """
+                class OrdersClient(System.Net.Http.HttpClient http) {
+                    public Task Create() => http.PostAsync("/api/orders", null);
+                }
+                """));
+
+        Assert.Equal("http://orders/api/orders", Assert.Single(hits).Url);
+    }
+
+    [Fact]
+    public void Named_client_resolves_through_create_client_variable_and_chain()
+    {
+        var hits = ScanFiles(
+            ("Program.cs", """
+                class P { void Add(IServiceCollection s) =>
+                    s.AddHttpClient("catalog", c => c.BaseAddress = new Uri("http://catalog:8080")); }
+                """),
+            ("Use.cs", """
+                class U {
+                    async Task A(IHttpClientFactory f) {
+                        var c = f.CreateClient("catalog");
+                        await c.GetAsync("/api/products");
+                    }
+                    async Task B(IHttpClientFactory f) => await f.CreateClient("catalog").DeleteAsync("/api/products/1");
+                }
+                """));
+
+        Assert.Equal(2, hits.Count);
+        Assert.Contains(hits, h => h.Method == "GET" && h.Url == "http://catalog:8080/api/products");
+        Assert.Contains(hits, h => h.Method == "DELETE" && h.Url == "http://catalog:8080/api/products/1");
+    }
+
+    [Fact]
+    public void Conflicting_registrations_for_same_client_are_not_guessed()
+    {
+        Assert.Empty(ScanFiles(
+            ("A.cs", """class A { void M(IServiceCollection s) => s.AddHttpClient<CatalogClient>(c => c.BaseAddress = new Uri("http://catalog/")); }"""),
+            ("B.cs", """class B { void M(IServiceCollection s) => s.AddHttpClient<CatalogClient>(c => c.BaseAddress = new Uri("http://other/")); }"""),
+            ("CatalogClient.cs", """class CatalogClient { Task M(System.Net.Http.HttpClient h) => h.GetAsync("/api/x"); }""")));
+    }
+
+    [Fact]
+    public void Typed_registration_without_literal_address_gives_nothing()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s, string u) => s.AddHttpClient<CatalogClient>(c => c.BaseAddress = new Uri(u)); }"""),
+            ("CatalogClient.cs", """class CatalogClient { Task M(System.Net.Http.HttpClient h) => h.GetAsync("/api/x"); }""")));
+    }
+
+    [Fact]
+    public void Class_that_is_not_a_registered_client_does_not_inherit_the_address()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<CatalogClient>(c => c.BaseAddress = new Uri("http://catalog/")); }"""),
+            ("Other.cs", """class OtherService { Task M(System.Net.Http.HttpClient h) => h.GetAsync("/api/x"); }""")));
+    }
+
+    [Fact]
+    public void Named_client_with_unknown_name_or_unrelated_variable_gives_nothing()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient("catalog", c => c.BaseAddress = new Uri("http://catalog/")); }"""),
+            ("Use.cs", """
+                class U { async Task M(IHttpClientFactory f, System.Net.Http.HttpClient other) {
+                    var x = f.CreateClient("billing");
+                    await x.GetAsync("/api/a");
+                    await other.GetAsync("/api/b");
+                } }
+                """)));
+    }
+
+    [Fact]
+    public void More_than_the_registration_limit_disables_the_registry_but_a_few_registrations_work()
+    {
+        static (string, string)[] Files(int n)
+        {
+            var files = new List<(string, string)>();
+            for (var i = 0; i < n; i++)
+                files.Add(($"R{i}.cs", $"class R{i} {{ void M(IServiceCollection s) => s.AddHttpClient<C{i}>(c => c.BaseAddress = new Uri(\"http://h{i}/\")); }}"));
+            files.Add(("C1.cs", "class C1(System.Net.Http.HttpClient h) { Task M() => h.GetAsync(\"/api/x\"); }"));
+            return files.ToArray();
+        }
+        Assert.Equal("http://h1/api/x", Assert.Single(ScanFiles(Files(10))).Url);      // в пределах лимита — работает
+        Assert.Empty(ScanFiles(Files(600)));                                            // сверх лимита 512 — реестр не используем
+    }
+
+    // ── замечания ревью среза 3а ──
+
+    [Fact]
+    public void Two_different_base_addresses_inside_registered_client_class_are_not_overridden_by_registry()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<CatalogClient>(c => c.BaseAddress = new Uri("http://registry/")); }"""),
+            ("CatalogClient.cs", """
+                class CatalogClient {
+                    Task M(System.Net.Http.HttpClient a, System.Net.Http.HttpClient b) {
+                        a.BaseAddress = new Uri("http://one/");
+                        b.BaseAddress = new Uri("http://two/");
+                        return a.GetAsync("/api/x");
+                    }
+                }
+                """)));   // неоднозначность в области реестром не «лечится»
+    }
+
+    [Fact]
+    public void Address_in_scope_has_priority_over_registry()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<CatalogClient>(c => c.BaseAddress = new Uri("http://registry/")); }"""),
+            ("CatalogClient.cs", """class CatalogClient { Task M(System.Net.Http.HttpClient h) { h.BaseAddress = new Uri("http://local/"); return h.GetAsync("/api/x"); } }"""));
+        Assert.Equal("http://local/api/x", Assert.Single(hits).Url);
+    }
+
+    [Fact]
+    public void Explicit_create_client_inside_typed_client_class_uses_its_own_name()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s) {
+                    s.AddHttpClient<CatalogClient>(c => c.BaseAddress = new Uri("http://catalog/"));
+                    s.AddHttpClient("billing", c => c.BaseAddress = new Uri("http://billing/"));
+                } }
+                """),
+            ("CatalogClient.cs", """
+                class CatalogClient(System.Net.Http.HttpClient http, IHttpClientFactory f) {
+                    Task A() => http.GetAsync("/api/own");
+                    Task B() => f.CreateClient("billing").GetAsync("/api/pay");
+                    Task C() => f.CreateClient("unknown").GetAsync("/api/nope");      // имя не зарегистрировано — не приписываем классу
+                }
+                """));
+        Assert.Equal(2, hits.Count);
+        Assert.Contains(hits, h => h.Url == "http://catalog/api/own");
+        Assert.Contains(hits, h => h.Url == "http://billing/api/pay");
+    }
+
+    [Fact]
+    public void Nested_class_inside_typed_client_does_not_inherit_the_address()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<CatalogClient>(c => c.BaseAddress = new Uri("http://catalog/")); }"""),
+            ("CatalogClient.cs", """class CatalogClient { class Helper { Task M(System.Net.Http.HttpClient h) => h.GetAsync("/api/x"); } }""")));
+    }
+
+    [Fact]
+    public void Only_implementation_of_typed_pair_gets_the_address_not_the_interface()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<ICatalogClient, CatalogClient>(c => c.BaseAddress = new Uri("http://catalog/")); }"""),
+            ("I.cs", """class ICatalogClient { Task M(System.Net.Http.HttpClient h) => h.GetAsync("/api/x"); }""")));
+    }
+
+    [Fact]
+    public void Named_client_registered_twice_with_different_addresses_and_variable_with_two_names_are_not_guessed()
+    {
+        Assert.Empty(ScanFiles(
+            ("A.cs", """class A { void M(IServiceCollection s) => s.AddHttpClient("c", x => x.BaseAddress = new Uri("http://a/")); }"""),
+            ("B.cs", """class B { void M(IServiceCollection s) => s.AddHttpClient("c", x => x.BaseAddress = new Uri("http://b/")); }"""),
+            ("U.cs", """class U { Task M(IHttpClientFactory f) { var c = f.CreateClient("c"); return c.GetAsync("/api/x"); } }""")));
+        Assert.Empty(ScanFiles(
+            ("A.cs", """
+                class A { void M(IServiceCollection s) {
+                    s.AddHttpClient("one", x => x.BaseAddress = new Uri("http://one/"));
+                    s.AddHttpClient("two", x => x.BaseAddress = new Uri("http://two/"));
+                } }
+                """),
+            ("U.cs", """
+                class U { Task M(IHttpClientFactory f) {
+                    var c = f.CreateClient("one");
+                    c = f.CreateClient("two");
+                    return c.GetAsync("/api/x");
+                } }
+                """)));
+    }
+
+    [Fact]
+    public void Record_with_primary_constructor_and_await_wrapped_create_client_work()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s) {
+                    s.AddHttpClient<PriceClient>(c => c.BaseAddress = new Uri("http://prices/"));
+                    s.AddHttpClient("stock", c => c.BaseAddress = new Uri("http://stock/"));
+                } }
+                """),
+            ("PriceClient.cs", """record PriceClient(System.Net.Http.HttpClient Http) { Task<string> Get() => Http.GetStringAsync("/api/prices"); }"""),
+            ("Use.cs", """class U { async Task M(IHttpClientFactory f) { var c = await Task.FromResult(f.CreateClient("stock")); await c.GetAsync("/api/stock"); } }"""));
+        Assert.Contains(hits, h => h.Url == "http://prices/api/prices");
+    }
+
+    [Fact]
+    public void Chained_second_add_http_client_does_not_lend_its_lambda_to_the_first_registration()
+    {
+        // AddHttpClient<A>() без адреса, затем отдельная регистрация B с адресом: A адреса не получает
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<A>().Services.AddHttpClient<B>(c => c.BaseAddress = new Uri("http://b/")); }"""),
+            ("A.cs", """class A { Task M(System.Net.Http.HttpClient h) => h.GetAsync("/api/x"); }""")));
+    }
+
+    // ── замечания security-ревью среза 3а ──
+
+    [Fact]
+    public void Typed_address_goes_only_to_injected_http_client_not_to_new_or_foreign_clients()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<Foo>(c => c.BaseAddress = new Uri("http://victim/")); }"""),
+            ("Foo.cs", """
+                namespace Other;
+                class Foo(System.Net.Http.HttpClient injected, IHttpClientFactory f) {
+                    System.Net.Http.HttpClient own = new System.Net.Http.HttpClient();
+                    async Task M(System.Net.Http.HttpClient param) {
+                        await own.GetAsync("/own");                      // создан через new — не внедрённый
+                        await param.GetAsync("/param");                   // параметр метода — не внедрённый
+                        var o = f.CreateClient("other");
+                        await o.GetAsync("/other");                       // из CreateClient — именованный, имя не зарегистрировано
+                        await injected.GetAsync("/ok");                   // первичный конструктор — внедрённый
+                    }
+                }
+                """));
+        Assert.Equal("http://victim/ok", Assert.Single(hits).Url);
+    }
+
+    [Fact]
+    public void Nested_registrations_in_one_file_are_linear()
+    {
+        // вложенные AddHttpClient-лямбды раньше обходились заново на каждой регистрации (квадрат)
+        var sb = new System.Text.StringBuilder("class R { void M(IServiceCollection s) {\n");
+        for (var i = 0; i < 300; i++) sb.Append($"s.AddHttpClient(\"n{i}\", c{i} => {{\n");
+        for (var i = 0; i < 20000; i++) sb.Append("x.Foo(1, 2, 3);\n");
+        for (var i = 0; i < 300; i++) sb.Append("});\n");
+        sb.Append("} }");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var hits = ScanFiles(("R.cs", sb.ToString()), ("U.cs", "class U { Task M(System.Net.Http.HttpClient h) => h.GetAsync(\"/x/y\"); }"));
+        Assert.Empty(hits);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"разбор занял {sw.Elapsed}");
     }
 }
