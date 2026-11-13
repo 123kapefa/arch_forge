@@ -20,7 +20,7 @@ public static class CustomRuleDetector
         {
             if (!Enum.TryParse<Strictness>(rule.Strictness, ignoreCase: true, out var strictness) || strictness == Strictness.Off) continue;
             var severity = strictness switch { Strictness.Error => ProblemSeverity.Critical, Strictness.Warning => ProblemSeverity.Warning, _ => ProblemSeverity.Info };
-            foreach (var (svc, location, result) in analyses)
+            foreach (var (svc, location, result) in analyses.ForProblems())
             {
                 if (result is null) continue; // «не разобрался» уже отмечают линзы дрейфа и слоёв
                 var items = Check(rule, result, svc.Root);

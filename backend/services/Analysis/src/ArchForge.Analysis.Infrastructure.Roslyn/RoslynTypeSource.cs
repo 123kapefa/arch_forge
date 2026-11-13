@@ -19,7 +19,7 @@ public sealed class RoslynTypeSource : ITypeSource
             catch { continue; }
 
             var root = CSharpSyntaxTree.ParseText(text).GetRoot();
-            var layer = RoslynScan.Layer(file);
+            var layer = RoslynScan.Layer(file, path);
 
             foreach (var decl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             {

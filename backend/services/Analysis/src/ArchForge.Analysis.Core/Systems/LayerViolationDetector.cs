@@ -8,7 +8,7 @@ public static class LayerViolationDetector
     public static IReadOnlyList<SystemProblem> Detect(IReadOnlyList<ServiceAnalysis> analyses)
     {
         var problems = new List<SystemProblem>();
-        foreach (var (svc, location, result) in analyses)
+        foreach (var (svc, location, result) in analyses.ForProblems())
         {
             if (result is null)
             {

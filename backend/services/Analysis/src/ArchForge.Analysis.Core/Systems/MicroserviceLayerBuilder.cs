@@ -34,13 +34,16 @@ public static class MicroserviceLayerBuilder
             // и теряются, а узел показывает лишь проект, совпавший по имени (auth-api ← Auth.API) — #81.
             // Признак партиции — тот же MicroserviceOf, что и группировка (иначе ключи схлопнутся и данные потеряются).
             // В мульти-сервисном репо главного нет — catch-all остаётся общим (не привязываем чужой код).
-            var hasServices = sa.Result.Types.Any(t => MicroserviceOf(t.File) is not null);
-            var primary = hasServices ? null : PrimaryNode(sa.Result.Types, byNorm, sa.Service.Name, naming);
+            // Монорепо: сервис уже привязан к узлу по имени (NodeId) — весь его код принадлежит этому узлу, безусловно: ни разбиение по
+            // «/Services/» (оно ищется в АБСОЛЮТНОМ пути и сработало бы на папку выше сервиса), ни угадывание по проектам не нужны.
+            var boundName = sa.NodeId is { } nid ? (composeServices ?? []).Where(c => c.Id == nid).Select(c => c.Name).FirstOrDefault() : null;
+            var hasServices = boundName is null && sa.Result.Types.Any(t => MicroserviceOf(t.File) is not null);
+            var primary = boundName ?? (hasServices ? null : PrimaryNode(sa.Result.Types, byNorm, sa.Service.Name, naming));
             // minimal-API эндпоинты сервиса — по тому же ключу микросервиса, что и типы (#71)
             var miniByMs = sa.MinimalEndpoints
-                .GroupBy(h => MsKey(h.File, location, byNorm, primary), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(h => boundName ?? MsKey(h.File, location, byNorm, primary), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => (IReadOnlyList<EndpointHit>)x.ToList(), StringComparer.OrdinalIgnoreCase);
-            var groups = sa.Result.Types.GroupBy(t => MsKey(t.File, location, byNorm, primary), StringComparer.OrdinalIgnoreCase);
+            var groups = sa.Result.Types.GroupBy(t => boundName ?? MsKey(t.File, location, byNorm, primary), StringComparer.OrdinalIgnoreCase);
             foreach (var g in groups)
             {
                 var names = g.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
@@ -51,8 +54,8 @@ public static class MicroserviceLayerBuilder
                 // корень папки для drill L1 (/api/map по нему): /Services/<Name> — если это /Services/; иначе
                 // ОБЩИЙ каталог-префикс файлов группы (gateway → его папка; одно-сервисный .sln с типами в разных
                 // проектах → их общий корень, не сужаем до одного проекта, #78); последний фолбэк — корень .sln.
-                var svcRoot = g.Select(t => ServiceRootOf(t.File)).FirstOrDefault(r => r is not null);
-                var root = svcRoot ?? CommonDirPrefix(types.Select(t => t.File)) ?? sa.Service.Root;
+                var svcRoot = boundName is null ? g.Select(t => ServiceRootOf(t.File)).FirstOrDefault(r => r is not null) : null;
+                var root = boundName is not null ? sa.Service.Root : svcRoot ?? CommonDirPrefix(types.Select(t => t.File)) ?? sa.Service.Root;
                 var mini = miniByMs.TryGetValue(g.Key, out var m) ? m : [];
                 var endpoints = EndpointCollector.From(types, mini); // контроллеры + minimal API (L1-список; #71)
                 byKey[$"{location}::{Normalize(g.Key)}"] = new Entry(ServiceSummaryBuilder.WorstHealth(layers), root, layers, endpoints);

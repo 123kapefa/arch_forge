@@ -132,6 +132,7 @@ public static class HttpCallGraphBuilder
     // сателлиты (migrate/seed/cron) и берём совпавший по имени с .sln; неоднозначно → null (не гадаем).
     private static string? SourceNodeId(ServiceAnalysis sa, IReadOnlyDictionary<string, List<SystemNode>> bySystem, Profiles.ServiceNaming naming)
     {
+        if (sa.NodeId is not null) return sa.NodeId;                       // монорепо: сервис уже привязан к своему узлу по имени
         if (!bySystem.TryGetValue(sa.Location, out var cands) || cands.Count == 0) return null;
         if (cands.Count == 1) return cands[0].Id;
 

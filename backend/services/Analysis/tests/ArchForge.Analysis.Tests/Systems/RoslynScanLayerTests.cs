@@ -22,4 +22,26 @@ public class RoslynScanLayerTests
     [InlineData("backend/src/Services/Catalog/Kalmykov.Catalog.Application/Shared/Helpers.cs", "Application")]
     public void Layer_classifies_shared_kernel(string path, string expected) =>
         Assert.Equal(expected, RoslynScan.Layer(path));
+
+    // Слой не зависит от имён папок ВЫШЕ корня сканирования: «archforge-testbed» содержит «test», но это не слой tests.
+    [Theory]
+    [InlineData("/Users/me/archforge-testbed/svc/src/Svc.Domain/A.cs", "/Users/me/archforge-testbed/svc", "Domain")]
+    [InlineData("/Users/me/archforge-testbed/svc/src/Svc.Core/A.cs", "/Users/me/archforge-testbed/svc", "Application")]
+    [InlineData("/Users/me/archforge-testbed/svc/src/Svc.Web/P.cs", "/Users/me/archforge-testbed/svc", "Api")]
+    [InlineData("/home/ci/latest/svc/src/Svc.Infrastructure.Postgres/R.cs", "/home/ci/latest/svc", "Infrastructure")]
+    // настоящие тесты внутри корня остаются tests
+    [InlineData("/Users/me/archforge-testbed/svc/tests/Svc.IntegrationTests/T.cs", "/Users/me/archforge-testbed/svc", "tests")]
+    [InlineData("/Users/me/x/svc/src/Svc.Domain/Tests/Helper.cs", "/Users/me/x/svc", "tests")]
+    // корнем открыта сама папка проекта: её имя сохраняется в пути
+    [InlineData("/Users/me/archforge-testbed/svc/src/Svc.Domain/Entities/A.cs", "/Users/me/archforge-testbed/svc/src/Svc.Domain", "Domain")]
+    public void Layer_ignores_folder_names_above_the_scan_root(string file, string root, string expected) =>
+        Assert.Equal(expected, RoslynScan.Layer(file, root));
+
+    [Fact]
+    public void File_outside_root_falls_back_to_plain_path_classification() =>
+        Assert.Equal("Domain", RoslynScan.Layer("/elsewhere/Svc.Domain/A.cs", "/Users/me/root"));
+
+    [Fact]
+    public void Root_with_trailing_separator_is_equivalent() =>
+        Assert.Equal("Domain", RoslynScan.Layer("/Users/me/archforge-testbed/svc/src/Svc.Domain/A.cs", "/Users/me/archforge-testbed/svc/"));
 }
