@@ -259,4 +259,13 @@ public class HttpCallGraphBuilderTests
             new ConfigUrl("sys/orders", "svc:url", "http://catalog/") ] };
         Assert.Empty(HttpCallGraphBuilder.Enrich(graph, [Orders(CfgCall("Svc:Url", "/api/a"))]).Edges);
     }
+
+    [Fact]
+    public void Refit_config_call_appends_to_base_path_from_configuration()
+    {
+        var hit = new HttpCallHit("GET", "/items", "/repo/orders/I.cs", 3, "GET /items (Refit IApi.A; адрес из конфигурации Svc:Url)", ViaBase: true, ConfigKey: "Svc:Url", AppendToBasePath: true);
+        var graph = TwoServices() with { ConfigUrls = [new ConfigUrl("sys/orders", "svc:url", "http://catalog:8080/v1/", FromEnvironment: true)] };
+        var call = Assert.Single(Assert.Single(HttpCallGraphBuilder.Enrich(graph, [Orders(hit)]).Edges).Calls!);
+        Assert.Equal("/v1/items", call.Route);     // Refit дописывает путь к пути базы (у HttpClient было бы /items)
+    }
 }
