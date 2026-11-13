@@ -22,7 +22,7 @@ public sealed class CsprojImportSource : IImportSource
         var propsCache = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         var result = new List<PackageRef>();
 
-        foreach (var csproj in Directory.EnumerateFiles(path, "*.csproj", SearchOption.AllDirectories))
+        foreach (var csproj in SafeFiles.Enumerate(path, "*.csproj"))
         {
             if (PathFilter.IsHiddenOrCopy(path, csproj)) continue; // .csproj из копии (.claude/worktrees) → дубли зависимостей
             string project = Path.GetFileNameWithoutExtension(csproj);
@@ -66,7 +66,7 @@ public sealed class CsprojImportSource : IImportSource
         while (dir is not null)
         {
             string props = Path.Combine(dir, "Directory.Packages.props");
-            if (File.Exists(props))
+            if (SafeFiles.ResolveInside(root, props) is not null)      // не ссылка и в пределах корня
             {
                 if (!cache.TryGetValue(props, out var map))
                 {

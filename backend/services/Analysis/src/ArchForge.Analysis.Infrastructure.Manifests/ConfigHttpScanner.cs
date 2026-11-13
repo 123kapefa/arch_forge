@@ -36,9 +36,7 @@ internal static class ConfigHttpScanner
         foreach (var (stem, ids) in stemGroups)
             if (ids.Count == 1) services.Add((stem, ids[0])); // однозначный стем → безопасно
         var known = new HashSet<string>(nodes.Select(n => n.Name.ToLowerInvariant()), StringComparer.Ordinal);
-
-        var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
-        foreach (var file in Directory.EnumerateFiles(root, "appsettings*.json", opts))
+        foreach (var file in SafeFiles.Enumerate(root, "appsettings*.json", skipHidden: true))
         {
             ct.ThrowIfCancellationRequested();
             if (PathFilter.IsNoise(root, file) || IsTestPath(file)) continue;
@@ -67,8 +65,7 @@ internal static class ConfigHttpScanner
         if (!Directory.Exists(root)) return result;
         var services = nodes.Where(n => n.Kind == SystemNodeKind.Service)
             .Select(n => (Norm: Normalize(n.Name), n.Id)).Where(x => x.Norm.Length >= 3).ToList();
-        var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
-        foreach (var file in Directory.EnumerateFiles(root, "appsettings*.json", opts))
+        foreach (var file in SafeFiles.Enumerate(root, "appsettings*.json", skipHidden: true))
         {
             ct.ThrowIfCancellationRequested();
             if (PathFilter.IsNoise(root, file) || IsTestPath(file)) continue;

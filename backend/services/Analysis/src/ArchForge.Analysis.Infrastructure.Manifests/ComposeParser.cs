@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core;
 using ArchForge.Analysis.Core.Systems;
 using YamlDotNet.Serialization;
 
@@ -22,15 +23,18 @@ internal static class ComposeParser
     public static IDictionary<object, object>? Deserialize(string yamlText) =>
         new DeserializerBuilder().Build().Deserialize<object?>(yamlText) as IDictionary<object, object>;
 
-    public static ComposeFile Parse(string yamlText, string? composeDir = null) =>
-        Deserialize(yamlText) is { } root ? Parse(root, composeDir) : new ComposeFile(null, []);
+    public static ComposeFile Parse(string yamlText, string? composeDir = null, string? allowedRoot = null) =>
+        Deserialize(yamlText) is { } root ? Parse(root, composeDir, allowedRoot) : new ComposeFile(null, []);
 
     // Разбор из уже готового корневого словаря — точка входа после merge base+override (E9.1 слой 2).
     // composeDir (если задан) включает G4: .env-переменные для ${VAR} и чтение env_file сервисов.
-    public static ComposeFile Parse(IDictionary<object, object> root, string? composeDir = null)
+    // allowedRoot — граница чтения .env/env_file (корень анализа; по умолчанию каталог compose): пути из недоверенного compose
+    // не должны уводить за неё ни через `..`, ни через абсолютный путь, ни через симлинк (#158).
+    public static ComposeFile Parse(IDictionary<object, object> root, string? composeDir = null, string? allowedRoot = null)
     {
         var name = Str(root, "name");
-        var vars = LoadDotEnv(composeDir);  // .env: значения для ${VAR}
+        var boundary = allowedRoot ?? composeDir;
+        var vars = LoadDotEnv(composeDir, boundary);  // .env: значения для ${VAR}
         var services = new List<ComposeService>();
 
         if (Get(root, "services") is IDictionary<object, object> svcMap)
@@ -38,7 +42,7 @@ internal static class ComposeParser
             {
                 if (kv.Key?.ToString() is not { } svcName || kv.Value is not IDictionary<object, object> svc) continue;
                 var image = Interpolation.Resolve(Str(svc, "image"), vars);
-                var envFile = ReadEnvFile(Get(svc, "env_file"), composeDir); // G4a: базовый слой из файлов
+                var envFile = ReadEnvFile(Get(svc, "env_file"), composeDir, boundary); // G4a: базовый слой из файлов
                 services.Add(new ComposeService(
                     svcName,
                     string.IsNullOrEmpty(image) ? null : image,
@@ -77,12 +81,11 @@ internal static class ComposeParser
     }
 
     // G4b: .env в каталоге compose → словарь переменных для ${VAR}. Отсутствует/битый — пусто (робастность).
-    private static IReadOnlyDictionary<string, string> LoadDotEnv(string? dir)
+    private static IReadOnlyDictionary<string, string> LoadDotEnv(string? dir, string? boundary)
     {
         var vars = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (string.IsNullOrEmpty(dir)) return vars;
-        var path = Path.Combine(dir, ".env");
-        if (!File.Exists(path)) return vars;
+        if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(boundary)) return vars;
+        if (SafeFiles.ResolveInside(boundary, Path.Combine(dir, ".env")) is not { } path) return vars;   // нет файла, ссылка или выход за границу
         try { foreach (var line in File.ReadLines(path)) AddEnvLine(vars, line); } catch { /* нечитаемо → пусто */ }
         return vars;
     }
@@ -90,15 +93,15 @@ internal static class ComposeParser
     // G4a: env_file (строка или список путей относительно каталога compose) → литеральные KEY=value.
     // Значения НЕ интерполируются (как в docker compose: ${...} внутри env_file остаётся литералом);
     // если такое встретится — IsDeferred ниже честно пометит его «отложенным», а не пустотой.
-    private static IReadOnlyDictionary<string, string> ReadEnvFile(object? envFile, string? dir)
+    private static IReadOnlyDictionary<string, string> ReadEnvFile(object? envFile, string? dir, string? boundary)
     {
         var dict = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (string.IsNullOrEmpty(dir) || envFile is null) return dict;
+        if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(boundary) || envFile is null) return dict;
         foreach (var rel in EnvFilePaths(envFile))
         {
             if (string.IsNullOrWhiteSpace(rel)) continue;
-            var path = Path.Combine(dir, rel);
-            if (!File.Exists(path)) continue;
+            // абсолютный путь и `..` за границу, UNC и симлинк в любом компоненте — не читаем (Path.Combine с абсолютным rel отбрасывает dir)
+            if (SafeFiles.ResolveInside(boundary, Path.Combine(dir, rel)) is not { } path) continue;
             try { foreach (var line in File.ReadLines(path)) AddEnvLine(dict, line); } catch { /* пропускаем */ }
         }
         return dict;

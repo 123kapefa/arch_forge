@@ -128,7 +128,7 @@ public sealed class ConventionPack(
         var dir = startPath;
         for (var depth = 0; depth < 12 && !string.IsNullOrEmpty(dir); depth++)
         {
-            file = FileNames.Select(n => Path.Combine(dir, n)).FirstOrDefault(File.Exists);
+            file = FileNames.Select(n => Path.Combine(dir, n)).FirstOrDefault(SafeFiles.IsRegularFile);   // файл-симлинк не читаем (#158)
             if (file is not null) break;
             dir = Path.GetDirectoryName(dir.TrimEnd('/', '\\'));
         }

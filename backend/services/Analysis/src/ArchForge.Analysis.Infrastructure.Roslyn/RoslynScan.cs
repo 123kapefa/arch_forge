@@ -16,7 +16,7 @@ internal static class RoslynScan
     // .cs таргета, кроме генерённого мусора (.g.cs/.Designer.cs), шумовых каталогов (bin/obj, копии/дампы,
     // скрытые .git/.claude/worktrees — единый PathFilter) и гигантских файлов (adr/0008).
     public static IEnumerable<string> EnumerateCs(string path) =>
-        Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
+        SafeFiles.Enumerate(path, "*.cs")
             .Where(f =>
             {
                 if (PathFilter.IsNoise(path, f)) return false; // копии из .claude/worktrees и т.п. дублируют разбор

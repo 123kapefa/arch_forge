@@ -116,7 +116,7 @@ public sealed class ScanCache(TimeProvider? time = null) : IScanCacheControl
         try
         {
             foreach (var f in RoslynScan.EnumerateCsCapped(path, out _)) Add(f);   // тот же кап, что и у разбора (20 000 .cs)
-            foreach (var f in Directory.EnumerateFiles(path, "*.csproj", SearchOption.AllDirectories).Where(f => !PathFilter.IsNoise(path, f))) Add(f);
+            foreach (var f in SafeFiles.Enumerate(path, "*.csproj").Where(f => !PathFilter.IsNoise(path, f))) Add(f);
             foreach (var name in new[] { "Directory.Build.props", "Directory.Packages.props", "global.json" })
             {
                 var f = Path.Combine(path, name);

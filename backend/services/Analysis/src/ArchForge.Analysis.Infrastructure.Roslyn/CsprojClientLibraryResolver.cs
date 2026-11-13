@@ -55,7 +55,8 @@ public sealed class CsprojClientLibraryResolver : IClientLibraryResolver
                 // ДО обращения к файловой системе: библиотека обязана лежать внутри корня анализа (иначе враждебный csproj с абсолютным
                 // или «../../..» путём увёл бы чтение и разбор за пределы проекта; на Windows File.Exists по UNC открыл бы SMB-соединение)
                 if (!target.StartsWith(sysRoot + Path.DirectorySeparatorChar, cmp)) continue;
-                if (!target.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || !File.Exists(target)) continue;
+                // и ни одного симлинка на пути от корня до проекта (строковая проверка выше ссылку в середине пути не ловит)
+                if (!target.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || SafeFiles.ResolveInside(sysRoot, target) is null) continue;
                 if (target.StartsWith(root + Path.DirectorySeparatorChar, cmp)) continue;      // свой проект — не библиотека другого сервиса
                 var libDir = Path.GetDirectoryName(target)!;
                 if (IsClientLibraryName(Path.GetFileName(libDir))) libDirs.Add(libDir);

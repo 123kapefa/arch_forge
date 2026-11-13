@@ -11,9 +11,7 @@ public sealed class FolderDiscoverySource : IServiceDiscoverySource
     public IReadOnlyList<DiscoveredService> Discover(string root)
     {
         if (File.Exists(root) || !Directory.Exists(root)) return []; // ждём корень системы (папку)
-
-        var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
-        var slns = Directory.EnumerateFiles(root, "*.sln*", opts)
+        var slns = SafeFiles.Enumerate(root, "*.sln*", skipHidden: true)
             .Where(f => (f.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
                          f.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))   // *.sln* ловит и .slnf
                         && !PathFilter.IsNoise(root, f))
@@ -35,7 +33,7 @@ public sealed class FolderDiscoverySource : IServiceDiscoverySource
     // Compose сервиса: shallow-поиск в его корне; предпочитаем базовое имя, иначе первый (кроме .build/.shared).
     private static string? FindServiceCompose(string svcRoot)
     {
-        var candidates = Directory.EnumerateFiles(svcRoot, "*compose*", SearchOption.TopDirectoryOnly)
+        var candidates = SafeFiles.Enumerate(svcRoot, "*compose*", recurse: false)
             .Where(f => Path.GetExtension(f) is ".yml" or ".yaml")
             .Where(f => !Path.GetFileName(f).Contains(".build.", StringComparison.OrdinalIgnoreCase)
                      && !Path.GetFileName(f).Contains(".shared.", StringComparison.OrdinalIgnoreCase))

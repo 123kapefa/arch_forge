@@ -1,3 +1,4 @@
+using ArchForge.Analysis.Core;
 namespace ArchForge.Analysis.Infrastructure.Manifests;
 
 // Discovery overlay-файлов рядом с base-compose (E9.1 слой 2): «{stem}.{env}.{yml|yaml}».
@@ -18,7 +19,7 @@ internal static class ComposeOverlays
 
         var stem = Path.GetFileName(basePath).Split('.')[0];
         // Порядок ФС не гарантирован → сортируем, чтобы при коллизии {env}.yml vs {env}.yaml выбор был детерминирован (первый).
-        foreach (var f in Directory.EnumerateFiles(dir, $"{stem}.*").OrderBy(x => x, StringComparer.Ordinal))
+        foreach (var f in SafeFiles.Enumerate(dir, $"{stem}.*", recurse: false).OrderBy(x => x, StringComparer.Ordinal))
         {
             if (string.Equals(f, basePath, StringComparison.Ordinal)) continue;
             var parts = Path.GetFileName(f).Split('.');
