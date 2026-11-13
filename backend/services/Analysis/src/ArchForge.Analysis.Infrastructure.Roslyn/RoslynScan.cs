@@ -54,6 +54,21 @@ internal static class RoslynScan
     public static IReadOnlyList<string> SyntacticBases(TypeDeclarationSyntax decl) =>
         decl.BaseList?.Types.Select(b => Simple(b.Type)).ToList() ?? [];
 
+    /// <summary>Слой файла по пути ОТНОСИТЕЛЬНО корня сканирования (с последним сегментом корня).
+    /// Имена папок выше корня («/Users/me/archforge-testbed/…», «/home/ci/latest/…») слоя определять не должны:
+    /// раньше «Test» в абсолютном пути превращал ВЕСЬ код в слой tests, и анализ проекта в папке «…testbed» был пуст.</summary>
+    public static string Layer(string file, string root)
+    {
+        var rootFull = Path.GetFullPath(root).TrimEnd('/', '\\');
+        var fileFull = Path.GetFullPath(file);
+        var anchor = Path.GetDirectoryName(rootFull);                          // родитель корня: сам корень остаётся в пути
+        // файловые системы macOS/Windows не различают регистр: корень, переданный в другом регистре, не должен тихо откатывать на старое поведение
+        var cmp = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        if (string.IsNullOrEmpty(anchor) || !fileFull.StartsWith(rootFull + Path.DirectorySeparatorChar, cmp))
+            return Layer(file);                                                // файл вне корня (не должно быть) — как раньше
+        return Layer(Path.GetRelativePath(anchor, fileFull));
+    }
+
     public static string Layer(string path)
     {
         var p = path.Replace('\\', '/');

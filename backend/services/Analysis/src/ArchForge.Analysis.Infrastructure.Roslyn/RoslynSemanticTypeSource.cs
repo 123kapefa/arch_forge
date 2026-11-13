@@ -85,7 +85,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
             ct.ThrowIfCancellationRequested(); // семантика по дереву дорогая — даём отмене шанс между файлами
             var model = compilation.GetSemanticModel(tree);
             var root = tree.GetRoot();
-            var layer = RoslynScan.Layer(tree.FilePath);
+            var layer = RoslynScan.Layer(tree.FilePath, path);
 
             foreach (var decl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             {

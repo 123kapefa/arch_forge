@@ -34,7 +34,7 @@ public sealed class RoslynConstructionSource : IConstructionSource
         foreach (var (root, file) in trees)
         {
             ct.ThrowIfCancellationRequested();
-            var layer = RoslynScan.Layer(file);
+            var layer = RoslynScan.Layer(file, path);
             var tree = root.SyntaxTree;
             foreach (var oc in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
             {

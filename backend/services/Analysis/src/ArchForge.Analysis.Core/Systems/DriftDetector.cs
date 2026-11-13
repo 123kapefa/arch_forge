@@ -8,7 +8,7 @@ public static class DriftDetector
     public static IReadOnlyList<SystemProblem> Detect(IReadOnlyList<ServiceAnalysis> analyses)
     {
         var problems = new List<SystemProblem>();
-        foreach (var (svc, location, result) in analyses)
+        foreach (var (svc, location, result) in analyses.ForProblems())
         {
             if (result is null) // сервис не разобрался — не молчим (adr/0008): честная Coverage в той же линзе
             {

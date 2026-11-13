@@ -104,7 +104,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         var hasCustom = profile.CustomRules is { Count: > 0 };   // свои правила читают код, как линзы дрейфа и слоёв
         if ((query.Drift || query.Layers || query.Calls || hasCustom) && analyzer is not null && Directory.Exists(query.Path))
         {
-            var analyses = analyzer.Analyze(query.Path, pack, ct);
+            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
             // сервис не разобрался (изоляция ошибок) → его типы/связи отсутствуют: честно помечаем деградацию
             foreach (var a in analyses.Failed())
                 degradations.Add($"сервис «{a.Service.Name}» не разобрался — часть карты пропущена");
