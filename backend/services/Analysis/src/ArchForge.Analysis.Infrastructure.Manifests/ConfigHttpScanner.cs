@@ -56,6 +56,57 @@ internal static class ConfigHttpScanner
         return intents;
     }
 
+    // E3.1 срез 3б: ВСЕ http(s)-URL из appsettings*.json вместе с ключом (A:B:C) и владельцем-сервисом. Нужны, чтобы по ключу
+    // конфигурации клиента (`new Uri(options.Url)` → `Payments:Url`) найти его адрес. Значения чистятся (без userinfo/query);
+    // число записей ограничено (враждебный/огромный конфиг не раздувает граф).
+    public static IReadOnlyList<ConfigUrl> ScanKeyed(string root, IReadOnlyCollection<SystemNode> nodes, CancellationToken ct)
+    {
+        const int Max = 4000, MaxPerOwner = 500, MaxArray = 1000;
+        var result = new List<ConfigUrl>();
+        var perOwner = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (!Directory.Exists(root)) return result;
+        var services = nodes.Where(n => n.Kind == SystemNodeKind.Service)
+            .Select(n => (Norm: Normalize(n.Name), n.Id)).Where(x => x.Norm.Length >= 3).ToList();
+        var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+        foreach (var file in Directory.EnumerateFiles(root, "appsettings*.json", opts))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (PathFilter.IsNoise(root, file) || IsTestPath(file)) continue;
+            var ownerId = OwnerOf(file, services);
+            if (ownerId is null) continue;
+            var doc = TryParse(file);
+            if (doc is null) continue;
+            using (doc)
+            {
+                var stack = new Stack<(string Key, JsonElement El)>();
+                stack.Push(("", doc.RootElement));
+                while (stack.Count > 0 && result.Count < Max)
+                {
+                    var (key, el) = stack.Pop();
+                    switch (el.ValueKind)
+                    {
+                        case JsonValueKind.Object:
+                            foreach (var p in el.EnumerateObject()) stack.Push((key.Length == 0 ? p.Name : key + ":" + p.Name, p.Value));
+                            break;
+                        case JsonValueKind.Array:
+                            var i = 0;
+                            foreach (var it in el.EnumerateArray()) { if (i >= MaxArray) break; stack.Push((key + ":" + i++, it)); }
+                            break;
+                        case JsonValueKind.String:
+                            if (HttpUrls.Host(el.GetString()) is not null && ConfigKeys.CleanUrl(el.GetString()) is { } url
+                                && perOwner.GetValueOrDefault(ownerId) < MaxPerOwner)       // один сервис не съедает квоту остальных
+                            {
+                                perOwner[ownerId] = perOwner.GetValueOrDefault(ownerId) + 1;
+                                result.Add(new ConfigUrl(ownerId, ConfigKeys.Normalize(key), url));
+                            }
+                            break;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
     // Владелец файла = сервис, чьё нормализованное имя — самая длинная подстрока нормализованного пути папки.
     // Точное совпадение суффиксов (catalog-api ↔ .../Catalog/Catalog.API): без обрезки «api».
     private static string? OwnerOf(string file, List<(string Norm, string Id)> services)

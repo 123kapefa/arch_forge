@@ -203,4 +203,60 @@ public class HttpCallGraphBuilderTests
         Assert.Equal("/api/items/{id}", call.Route);      // не «%7Bid%7D»
         Assert.True(call.Matched);
     }
+
+    // ── срез 3б: адрес клиента из конфигурации ──
+
+    private static HttpCallHit CfgCall(string key, string path) =>
+        new("GET", path, "/repo/orders/Client.cs", 5, $"GET {path} (адрес из конфигурации {key})", ViaBase: true, ConfigKey: key);
+
+    [Fact]
+    public void Config_key_is_resolved_to_url_from_environment_and_route_is_appended()
+    {
+        var graph = TwoServices() with { ConfigUrls = [new ConfigUrl("sys/orders", "catalogservice:url", "http://catalog:8080/v1/", FromEnvironment: true)] };
+        var g = HttpCallGraphBuilder.Enrich(graph, [Orders(CfgCall("CatalogService:Url", "items/all"))]);
+
+        var edge = Assert.Single(g.Edges, e => e.Kind == "http-call" && e.Target == "sys/catalog");
+        var call = Assert.Single(edge.Calls!);
+        Assert.Equal("/v1/items/all", call.Route);                  // базовый путь из конфигурации + относительный путь вызова
+        Assert.Equal(0.8, call.Confidence);                          // 0.9 − 0.1
+    }
+
+    [Fact]
+    public void Environment_value_overrides_appsettings_and_conflicts_are_not_guessed()
+    {
+        var env = new ConfigUrl("sys/orders", "svc:url", "http://catalog/", FromEnvironment: true);
+        var json = new ConfigUrl("sys/orders", "svc:url", "http://elsewhere/");
+        var g = HttpCallGraphBuilder.Enrich(TwoServices() with { ConfigUrls = [json, env] }, [Orders(CfgCall("Svc:Url", "/api/a"))]);
+        Assert.Single(Assert.Single(g.Edges).Calls!);               // env перекрыл appsettings — цель catalog
+
+        var two = HttpCallGraphBuilder.Enrich(TwoServices() with { ConfigUrls = [json, new ConfigUrl("sys/orders", "svc:url", "http://catalog/")] }, [Orders(CfgCall("Svc:Url", "/api/a"))]);
+        Assert.Empty(two.Edges);                                    // два разных значения без env — не гадаем
+    }
+
+    [Fact]
+    public void Unknown_key_value_of_other_service_or_external_host_yields_no_call()
+    {
+        var other = TwoServices() with { ConfigUrls = [new ConfigUrl("sys/catalog", "svc:url", "http://catalog/", FromEnvironment: true)] };
+        Assert.Empty(HttpCallGraphBuilder.Enrich(other, [Orders(CfgCall("Svc:Url", "/api/a"))]).Edges);                   // ключ принадлежит другому сервису
+        Assert.Empty(HttpCallGraphBuilder.Enrich(TwoServices(), [Orders(CfgCall("Svc:Url", "/api/a"))]).Edges);           // значения нет вовсе
+        var ext = TwoServices() with { ConfigUrls = [new ConfigUrl("sys/orders", "svc:url", "https://api.stripe.example/", FromEnvironment: true)] };
+        Assert.Empty(HttpCallGraphBuilder.Enrich(ext, [Orders(CfgCall("Svc:Url", "/api/a"))]).Edges);                     // внешний хост — не узел системы
+    }
+
+    [Fact]
+    public void Config_url_with_protocol_relative_path_cannot_change_host()
+    {
+        var graph = TwoServices() with { ConfigUrls = [new ConfigUrl("sys/orders", "svc:url", "http://catalog/", FromEnvironment: true)] };
+        Assert.Empty(HttpCallGraphBuilder.Enrich(graph, [Orders(CfgCall("Svc:Url", "//evil/x"))]).Edges);
+    }
+
+    [Fact]
+    public void Env_key_with_unknown_value_blocks_fallback_to_appsettings()
+    {
+        // в env ключ задан (${PAYMENTS_URL}), его значение неизвестно; реальный адрес — из env, а не из appsettings
+        var graph = TwoServices() with { ConfigUrls = [
+            new ConfigUrl("sys/orders", "svc:url", "", FromEnvironment: true),
+            new ConfigUrl("sys/orders", "svc:url", "http://catalog/") ] };
+        Assert.Empty(HttpCallGraphBuilder.Enrich(graph, [Orders(CfgCall("Svc:Url", "/api/a"))]).Edges);
+    }
 }

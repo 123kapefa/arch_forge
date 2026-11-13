@@ -43,6 +43,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         var nodes = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
         var edges = new List<SystemEdge>();
         var httpIntents = new List<(string SourceId, string TargetHost)>();
+        var configUrls = new List<ConfigUrl>();    // E3.1 срез 3б: URL конфигурации сервисов (по ключу) для клиентов с адресом из конфига
 
         // Оверлеи каждого compose + набор именованных сред (E9.1 слой 2). Материализуем список: проходим дважды
         // (сбор сред → сборка графа), а discovery источников не обязан быть многоразовым.
@@ -86,6 +87,13 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
                 foreach (var (key, value) in svc.Environment)
                 {
+                    if (configUrls.Count < 4000)
+                    {
+                        if (HttpUrls.Host(value) is not null && ConfigKeys.CleanUrl(value) is { } cleanUrl)
+                            configUrls.Add(new ConfigUrl(sourceId, ConfigKeys.Normalize(key), cleanUrl, FromEnvironment: true));
+                        else if (HttpUrls.IsUrlKey(key))   // ключ задан в env, но значение неизвестно (${VAR}, не http) — он ПЕРЕКРЫВАЕТ appsettings, гадать нельзя
+                            configUrls.Add(new ConfigUrl(sourceId, ConfigKeys.Normalize(key), "", FromEnvironment: true));
+                    }
                     // rw-db / uses-bus из строк подключения
                     // регистронезависимо: в .env/env_file ключи обычно UPPERCASE (CONNECTIONSTRINGS__DATABASE)
                     if (key.StartsWith("ConnectionStrings__", StringComparison.OrdinalIgnoreCase) &&
@@ -140,6 +148,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
 
         // http-call из appsettings*.json (reverse-proxy/gateway «Services»-мапа и др.) — Roslyn их не видит.
         httpIntents.AddRange(ConfigHttpScanner.Scan(root, nodes.Values.ToList(), ct));
+        configUrls.AddRange(ConfigHttpScanner.ScanKeyed(root, nodes.Values.ToList(), ct));
+        if (configUrls.Count > 6000) configUrls.RemoveRange(6000, configUrls.Count - 6000);   // общий предел: огромные конфиги не раздувают граф
 
         var httpProblems = ResolveHttpCalls(nodes, edges, httpIntents, ct);
 
@@ -148,7 +158,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             ? available.Select(n => new SystemEnvironment(n, n == activeEnv)).ToList()
             : null;
 
-        var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), [], environments);
+        var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), [], environments, configUrls.Count > 0 ? configUrls : null);
         var problems = SystemProblemDetector.Detect(graph).Concat(httpProblems).ToList();
         return graph with { Problems = problems };
     }

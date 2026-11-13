@@ -13,4 +13,6 @@ public interface IHttpCallSource
 // Найденный исходящий вызов: verb + нормализованный абсолютный URL (scheme://host[:port]/path, без query) +
 // где (файл/строка) + короткая улика. Query отброшен на этапе сбора — секреты не тащим (secrets-config).
 // ViaBase — адрес собран из относительного пути и BaseAddress (достовернее абсолютного литерала не бывает, но привязка к клиенту — вывод).
-public sealed record HttpCallHit(string Method, string Url, string File, int Line, string Evidence, bool ViaBase = false);
+// ConfigKey — адрес клиента берётся из конфигурации (срез 3б): Url тогда ОТНОСИТЕЛЬНЫЙ путь, а базовый адрес по ключу
+// (`Payments:Url`, как в appsettings; в env — `Payments__Url`) находит потребитель по конфигурации сервиса.
+public sealed record HttpCallHit(string Method, string Url, string File, int Line, string Evidence, bool ViaBase = false, string? ConfigKey = null);

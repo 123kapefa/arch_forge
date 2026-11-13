@@ -715,4 +715,168 @@ public class RoslynHttpCallSourceTests
         Assert.Empty(hits);
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"разбор занял {sw.Elapsed}");
     }
+
+    // ── срез 3б: адрес клиента из конфигурации ──
+
+    [Fact]
+    public void Options_pattern_resolves_section_from_const_and_emits_config_key()
+    {
+        var hits = ScanFiles(
+            ("PaymentsServiceOptions.cs", """
+                public sealed class PaymentsServiceOptions { public const string SectionName = "PaymentsService"; public string Url { get; set; } = ""; }
+                """),
+            ("Ext.cs", """
+                class Ext { void Add(IServiceCollection services) =>
+                    services.AddHttpClient<IPaymentsCommunicationService, PaymentsHttpClient>((sp, client) =>
+                    {
+                        var options = sp.GetRequiredService<IOptions<PaymentsServiceOptions>>().Value;
+                        client.BaseAddress = new Uri(options.Url);
+                    }); }
+                """),
+            ("PaymentsHttpClient.cs", """
+                class PaymentsHttpClient(System.Net.Http.HttpClient httpClient) {
+                    Task Refund() => httpClient.PostAsJsonAsync($"/api/payments/{id}/refund", null);
+                }
+                """));
+
+        var h = Assert.Single(hits);
+        Assert.Equal("PaymentsService:Url", h.ConfigKey);
+        Assert.Equal("/api/payments/{id}/refund", h.Url);          // относительный путь; хоста у вызова ещё нет
+        Assert.True(h.ViaBase);
+        Assert.EndsWith("PaymentsHttpClient.cs", h.File);
+    }
+
+    [Fact]
+    public void Options_type_without_const_uses_type_name_without_suffix()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s) => s.AddHttpClient<OrdersClient>((sp, c) => c.BaseAddress = new Uri(sp.GetRequiredService<IOptions<OrdersApiOptions>>().Value.BaseUrl)); }
+                """),
+            ("OrdersClient.cs", """class OrdersClient(System.Net.Http.HttpClient http) { Task M() => http.GetAsync("/api/orders"); }"""));
+        Assert.Equal("OrdersApi:BaseUrl", Assert.Single(hits).ConfigKey);
+    }
+
+    [Fact]
+    public void Direct_configuration_keys_are_understood()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s, IConfiguration configuration) {
+                    s.AddHttpClient("a", c => c.BaseAddress = new Uri(configuration["Services:Catalog:Url"]!));
+                    s.AddHttpClient("b", c => c.BaseAddress = new Uri(configuration.GetSection("Services")["Orders"] ?? "http://x"));
+                    s.AddHttpClient("c", c => c.BaseAddress = new Uri(configuration.GetValue<string>("Services:Stock")!));
+                    s.AddHttpClient("d", c => c.BaseAddress = new Uri(configuration.GetSection("Services:Billing").Value!));
+                } }
+                """),
+            ("Use.cs", """
+                class U { Task M(IHttpClientFactory f) { return Task.WhenAll(
+                    f.CreateClient("a").GetAsync("/a"), f.CreateClient("b").GetAsync("/b"),
+                    f.CreateClient("c").GetAsync("/c"), f.CreateClient("d").GetAsync("/d")); } }
+                """));
+        Assert.Equal(4, hits.Count);
+        Assert.Contains(hits, h => h.Url == "/a" && h.ConfigKey == "Services:Catalog:Url");
+        Assert.Contains(hits, h => h.Url == "/b" && h.ConfigKey == "Services:Orders");
+        Assert.Contains(hits, h => h.Url == "/c" && h.ConfigKey == "Services:Stock");
+        Assert.Contains(hits, h => h.Url == "/d" && h.ConfigKey == "Services:Billing");
+    }
+
+    [Fact]
+    public void Non_configuration_expressions_give_no_key_and_no_call()
+    {
+        Assert.Empty(ScanFiles(
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s, string any, Dictionary<string,string> d) {
+                    s.AddHttpClient<A>(c => c.BaseAddress = new Uri(any));
+                    s.AddHttpClient<B>(c => c.BaseAddress = new Uri(d["x"]));      // словарь — не конфигурация
+                } }
+                """),
+            ("A.cs", """class A(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/a"); }"""),
+            ("B.cs", """class B(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/b"); }""")));
+    }
+
+    [Fact]
+    public void Conflicting_options_sections_for_same_class_name_are_not_guessed()
+    {
+        Assert.Empty(ScanFiles(
+            ("O1.cs", """namespace A { class XOptions { public const string SectionName = "One"; public string Url {get;set;} } }"""),
+            ("O2.cs", """namespace B { class XOptions { public const string SectionName = "Two"; public string Url {get;set;} } }"""),
+            ("Reg.cs", """class R { void M(IServiceCollection s) => s.AddHttpClient<C>((sp, c) => c.BaseAddress = new Uri(sp.GetRequiredService<IOptions<XOptions>>().Value.Url)); }"""),
+            ("C.cs", """class C(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/x"); }""")));
+    }
+
+    [Fact]
+    public void Config_hits_never_carry_configuration_values_or_secrets()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s, IConfiguration configuration) => s.AddHttpClient<C>(c => c.BaseAddress = new Uri(configuration["Svc:Url"]!)); }"""),
+            ("C.cs", """class C(System.Net.Http.HttpClient h) { Task M(string tok) => h.GetAsync($"/api/x?token={tok}"); }"""));
+        var h = Assert.Single(hits);
+        Assert.DoesNotContain("token", h.Url + h.Evidence);
+        Assert.Equal("Svc:Url", h.ConfigKey);
+    }
+
+    // ── замечания ревью среза 3б ──
+
+    [Fact]
+    public void Nested_options_member_nameof_section_and_foreign_names_give_no_guessed_key()
+    {
+        Assert.Empty(ScanFiles(
+            ("O.cs", """public class NamedOptions { public const string SectionName = nameof(NamedOptions); public string Url { get; set; } }"""),
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s, Dictionary<string,string> appConfigMap) {
+                    s.AddHttpClient<A>((sp, c) => { var o = sp.GetRequiredService<IOptions<PaymentsOptions>>().Value.Inner; c.BaseAddress = new Uri(o.Url); });
+                    s.AddHttpClient<B>((sp, c) => c.BaseAddress = new Uri(sp.GetRequiredService<IOptions<NamedOptions>>().Value.Url));
+                    s.AddHttpClient<C>(c => c.BaseAddress = new Uri(appConfigMap["x"]));
+                } }
+                """),
+            ("A.cs", """class A(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/a"); }"""),
+            ("B.cs", """class B(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/b"); }"""),
+            ("C.cs", """class C(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/c"); }""")));
+    }
+
+    [Fact]
+    public void Section_inferred_from_class_name_is_marked_in_evidence_but_const_section_is_not()
+    {
+        var hits = ScanFiles(
+            ("O.cs", """public class FooOptions { public string Url { get; set; } } public class BarOptions { public const string SectionName = "Bar"; public string Url { get; set; } }"""),
+            ("Reg.cs", """
+                class R { void M(IServiceCollection s) {
+                    s.AddHttpClient<A>((sp, c) => c.BaseAddress = new Uri(sp.GetRequiredService<IOptions<FooOptions>>().Value.Url));
+                    s.AddHttpClient<B>((sp, c) => c.BaseAddress = new Uri(sp.GetRequiredService<IOptions<BarOptions>>().Value.Url));
+                } }
+                """),
+            ("A.cs", """class A(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/a"); }"""),
+            ("B.cs", """class B(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/b"); }"""));
+        Assert.Contains("секция выведена из имени класса", hits.Single(h => h.Url == "/a").Evidence);
+        Assert.DoesNotContain("выведена", hits.Single(h => h.Url == "/b").Evidence);
+        Assert.Equal("Bar:Url", hits.Single(h => h.Url == "/b").ConfigKey);
+    }
+
+    // ── замечания security-ревью среза 3б ──
+
+    [Fact]
+    public void Query_and_fragment_of_relative_literal_do_not_reach_config_hit()
+    {
+        var hits = ScanFiles(
+            ("Reg.cs", """class R { void M(IServiceCollection s, IConfiguration configuration) => s.AddHttpClient<C>(c => c.BaseAddress = new Uri(configuration["Payments:Url"]!)); }"""),
+            ("C.cs", """class C(System.Net.Http.HttpClient h) { Task M() => h.GetAsync("/api/pay?token=SUPERSECRET#frag"); }"""));
+        var h = Assert.Single(hits);
+        Assert.Equal("/api/pay", h.Url);
+        Assert.DoesNotContain("SUPERSECRET", h.Url + h.Evidence);
+        Assert.DoesNotContain("frag", h.Url + h.Evidence);
+    }
+
+    [Fact]
+    public void Deeply_nested_lambdas_with_many_options_assignments_stay_fast()
+    {
+        var sb = new System.Text.StringBuilder("class R { void M() {\n");
+        for (var i = 0; i < 600; i++) sb.Append("F(() => {\n");
+        for (var i = 0; i < 64; i++) sb.Append($"var h{i} = new System.Net.Http.HttpClient {{ BaseAddress = new Uri(opt.Url{i}) }};\n");
+        for (var i = 0; i < 600; i++) sb.Append("});\n");
+        sb.Append("} }");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Empty(Scan(sb.ToString()));
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"разбор занял {sw.Elapsed}");   // раньше — 13 с на 54 КБ
+    }
 }

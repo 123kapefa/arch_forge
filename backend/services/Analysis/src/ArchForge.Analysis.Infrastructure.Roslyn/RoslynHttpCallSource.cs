@@ -44,14 +44,20 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         // из каждого берём только регистрации клиентов DI, а список кандидатов разбираем заново во втором проходе.
         var candidates = new List<string>();
         var registry = new ClientRegistry();
+        var sections = new Dictionary<string, string>(StringComparer.Ordinal);   // класс options → секция конфигурации (срез 3б)
         foreach (var file in RoslynScan.EnumerateCsCapped(root, out _)) // тот же кап файлов, что и в семантике
         {
             ct.ThrowIfCancellationRequested();
-            var text = ReadCandidate(file);
-            if (text is null) continue;
-            candidates.Add(file);
-            if (text.Contains("AddHttpClient", StringComparison.Ordinal))
-                CollectRegistrations(CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct), registry, ct);
+            string text;
+            try { text = File.ReadAllText(file); } catch { continue; }
+            if (IsCandidate(text)) candidates.Add(file);
+            var wantsReg = text.Contains("AddHttpClient", StringComparison.Ordinal);
+            var wantsSections = text.Contains("const string", StringComparison.Ordinal)
+                && (text.Contains("Section", StringComparison.Ordinal) || text.Contains("ConfigKey", StringComparison.Ordinal));
+            if (!wantsReg && !wantsSections) continue;
+            var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            if (wantsReg) CollectRegistrations(tree, registry, ct);
+            if (wantsSections) CollectSections(tree, sections);
         }
         if (registry.Count > MaxClientRegistrations) registry = new ClientRegistry { Count = registry.Count };   // слишком много — не используем
 
@@ -71,11 +77,11 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
                 if (inv.Expression is not MemberAccessExpressionSyntax ma) continue;
                 var name = ma.Name.Identifier.Text;
                 if (ClientVerbs.TryGetValue(name, out var verb))
-                    Add(hits, verb, FirstUrlText(inv.ArgumentList.Arguments), inv, ma.Expression, path, bases, registry, ctx);
+                    Add(hits, verb, FirstUrlText(inv.ArgumentList.Arguments), inv, ma.Expression, path, bases, registry, ctx, sections);
                 else if (name == "SendAsync")
                 {
                     var (verb2, url2) = ReadSend(inv.ArgumentList.Arguments);
-                    if (verb2 is not null) Add(hits, verb2, url2, inv, ma.Expression, path, bases, registry, ctx);
+                    if (verb2 is not null) Add(hits, verb2, url2, inv, ma.Expression, path, bases, registry, ctx, sections);
                 }
             }
         }
@@ -87,10 +93,13 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
     {
         string text;
         try { text = File.ReadAllText(file); } catch { return null; }
-        return text.Contains("HttpClient", StringComparison.Ordinal)
-            || text.Contains("http://", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("https://", StringComparison.OrdinalIgnoreCase) ? text : null;
+        return IsCandidate(text) ? text : null;
     }
+
+    private static bool IsCandidate(string text) =>
+        text.Contains("HttpClient", StringComparison.Ordinal)
+        || text.Contains("http://", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("https://", StringComparison.OrdinalIgnoreCase);
 
     // Адрес — ПЕРВЫЙ аргумент (у Get/PostAsync): строковый литерал или интерполяция. Остальные аргументы (тело, токен)
     // адресом не считаем: `PostAsJsonAsync(url, "текст")` не должен превращать тело запроса в маршрут.
@@ -168,7 +177,11 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
 
     // ── базовые адреса (срез 2) ──
 
-    private readonly record struct BaseAddr(Uri Uri, SyntaxNode Node);
+    // Базовый адрес клиента: литерал (Uri) либо ссылка на конфигурацию — прямой ключ («Payments:Url») или свойство класса options
+    // (тип + имя свойства; секцию определяем позже, когда собраны все классы options). Значения конфигурации здесь НЕ читаем.
+    private readonly record struct ClientBase(Uri? Uri, string? Key, string? OptionsType, string? Prop);
+
+    private readonly record struct BaseAddr(ClientBase Base, SyntaxNode Node);
 
     // Враждебный/сгенерированный файл с тысячами BaseAddress сделал бы разрешение квадратичным (вызовы × адреса × глубина).
     // Сверх лимита относительные пути в файле не разрешаем: столько разных клиентов в одном файле — это уже не «один понятный адрес».
@@ -178,6 +191,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
     private static List<BaseAddr>? CollectBaseAddresses(SyntaxNode root)
     {
         var list = new List<BaseAddr>();
+        var optionLocals = new Dictionary<SyntaxNode, Dictionary<string, string>>();   // область → переменная → тип options (считаем один раз на область)
         foreach (var asg in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
         {
             // `x.BaseAddress = …` или `BaseAddress = …` в инициализаторе объекта; голое присваивание (поле/свойство своего класса) не берём
@@ -188,8 +202,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
                 _ => null,
             };
             if (left != "BaseAddress") continue;
-            var uri = UriLiteral(asg.Right);
-            if (uri is not null) list.Add(new BaseAddr(uri, asg));
+            if (BaseOf(asg.Right, optionLocals) is { } cb) list.Add(new BaseAddr(cb, asg));
             if (list.Count > MaxBaseAddressesPerFile) return null;   // слишком много — не гадаем вовсе
         }
         return list;
@@ -212,39 +225,152 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) ? uri : null;
     }
 
+    // Правая часть `BaseAddress = …`: литерал Uri или ссылка на конфигурацию внутри `new Uri(<ссылка>)`; иное — null (не знаем).
+    private static ClientBase? BaseOf(ExpressionSyntax rhs, Dictionary<SyntaxNode, Dictionary<string, string>> optionLocals)
+    {
+        if (UriLiteral(rhs) is { } u) return new ClientBase(u, null, null, null);
+        ArgumentListSyntax? args = rhs switch
+        {
+            ObjectCreationExpressionSyntax oc when oc.Type is IdentifierNameSyntax { Identifier.Text: "Uri" } || oc.Type is QualifiedNameSyntax { Right.Identifier.Text: "Uri" } => oc.ArgumentList,
+            ImplicitObjectCreationExpressionSyntax io => io.ArgumentList,
+            _ => null,
+        };
+        if (args is null || args.Arguments.Count == 0) return null;
+        return ConfigRef(StripWrappers(args.Arguments[0].Expression), rhs, optionLocals);
+    }
+
+    // `x!`, `(x)`, `x ?? "…"` → x
+    private static ExpressionSyntax StripWrappers(ExpressionSyntax e)
+    {
+        while (true)
+            switch (e)
+            {
+                case PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.SuppressNullableWarningExpression } p: e = p.Operand; break;
+                case ParenthesizedExpressionSyntax par: e = par.Expression; break;
+                case BinaryExpressionSyntax { RawKind: (int)SyntaxKind.CoalesceExpression } b: e = b.Left; break;
+                default: return e;
+            }
+    }
+
+    private static string? StringLit(ExpressionSyntax? e) =>
+        e is LiteralExpressionSyntax lit && lit.IsKind(SyntaxKind.StringLiteralExpression) ? lit.Token.ValueText : null;
+
+    // Получатель похож на IConfiguration/IConfigurationSection по точному имени (config, _configuration, cfg, section…).
+    private static bool LooksLikeConfig(ExpressionSyntax? e)
+    {
+        var name = e switch
+        {
+            IdentifierNameSyntax i => i.Identifier.Text,
+            MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
+            _ => null,
+        };
+        if (name is null) return false;
+        name = name.TrimStart('_');
+        // точные имена IConfiguration/IConfigurationSection; «appConfigMap», «sectionCache» — не конфигурация
+        return name.Equals("config", StringComparison.OrdinalIgnoreCase) || name.Equals("configuration", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("cfg", StringComparison.OrdinalIgnoreCase) || name.Equals("section", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("configSection", StringComparison.OrdinalIgnoreCase) || name.Equals("configurationSection", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Ссылка на конфигурацию: `config["A:B"]`, `config.GetSection("A")["B"]`, `config.GetValue<string>("A:B")`,
+    // `config.GetSection("A:B").Value`, `options.Prop` (options получен из IOptions<T>, в т.ч. `sp.GetRequiredService<IOptions<T>>().Value.Prop`).
+    private static ClientBase? ConfigRef(ExpressionSyntax e, SyntaxNode at, Dictionary<SyntaxNode, Dictionary<string, string>> optionLocals)
+    {
+        switch (e)
+        {
+            case ElementAccessExpressionSyntax { ArgumentList.Arguments.Count: 1 } ea when StringLit(ea.ArgumentList.Arguments[0].Expression) is { } k:
+                if (ea.Expression is InvocationExpressionSyntax gs && CalleeName(gs) == "GetSection" && gs.ArgumentList.Arguments.Count == 1
+                    && StringLit(gs.ArgumentList.Arguments[0].Expression) is { } sec)
+                    return new ClientBase(null, $"{sec}:{k}", null, null);
+                return LooksLikeConfig(ea.Expression) ? new ClientBase(null, k, null, null) : null;
+            case InvocationExpressionSyntax inv when CalleeName(inv) == "GetValue" && inv.ArgumentList.Arguments.Count > 0
+                && inv.Expression is MemberAccessExpressionSyntax gm && LooksLikeConfig(gm.Expression)
+                && StringLit(inv.ArgumentList.Arguments[0].Expression) is { } gv:
+                return new ClientBase(null, gv, null, null);
+            case MemberAccessExpressionSyntax { Name.Identifier.Text: "Value", Expression: InvocationExpressionSyntax gs2 }
+                when CalleeName(gs2) == "GetSection" && gs2.ArgumentList.Arguments.Count == 1 && StringLit(gs2.ArgumentList.Arguments[0].Expression) is { } sec2:
+                return new ClientBase(null, sec2, null, null);
+            case MemberAccessExpressionSyntax ma:
+            {
+                var t = OptionsTypeOf(ma.Expression, at, optionLocals);
+                return t is null ? null : new ClientBase(null, null, t, ma.Name.Identifier.Text);
+            }
+            default: return null;
+        }
+    }
+
+    // Тип T из `IOptions<T>` в выражении `x` (само выражение или инициализатор локальной переменной x рядом с присваиванием).
+    // Строго `<…IOptions<T>…>.Value` (или `.CurrentValue`): `….Value.Inner` — другой уровень вложенности, секция была бы неверной.
+    private static string? OptionsValueType(ExpressionSyntax e) =>
+        StripWrappers(e) is MemberAccessExpressionSyntax { Name.Identifier.Text: "Value" or "CurrentValue" } m ? OptionsTypeIn(m.Expression) : null;
+
+    private static string? OptionsTypeOf(ExpressionSyntax holder, SyntaxNode at, Dictionary<SyntaxNode, Dictionary<string, string>> optionLocals)
+    {
+        if (OptionsValueType(holder) is { } direct) return direct;
+        if (holder is not IdentifierNameSyntax id) return null;
+        // ближайшие объемлющие области (лямбда/член), не больше 6: вложенность в сотни лямбд не должна раздувать поиск;
+        // переменные области собираются один раз (кэш), а не заново на каждое присваивание
+        var scope = at.Ancestors().FirstOrDefault(a => a is LambdaExpressionSyntax or MemberDeclarationSyntax);
+        for (var depth = 0; scope is not null && depth < 6; depth++)
+        {
+            if (!optionLocals.TryGetValue(scope, out var map))
+            {
+                optionLocals[scope] = map = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var d in scope.DescendantNodes().OfType<VariableDeclaratorSyntax>())
+                    if (d.Initializer is { } init && OptionsValueType(init.Value) is { } t) map.TryAdd(d.Identifier.Text, t);
+            }
+            if (map.TryGetValue(id.Identifier.Text, out var found)) return found;
+            scope = scope.Ancestors().FirstOrDefault(a => a is LambdaExpressionSyntax or MemberDeclarationSyntax);
+        }
+        return null;
+    }
+
+    private static string? OptionsTypeIn(SyntaxNode n)
+    {
+        foreach (var g in n.DescendantNodesAndSelf().OfType<GenericNameSyntax>())
+            if (g.Identifier.Text is "IOptions" or "IOptionsSnapshot" or "IOptionsMonitor" && g.TypeArgumentList.Arguments.Count == 1)
+                return g.TypeArgumentList.Arguments[0] switch
+                {
+                    IdentifierNameSyntax i => i.Identifier.Text,
+                    QualifiedNameSyntax q => q.Right.Identifier.Text,
+                    _ => null,
+                };
+        return null;
+    }
+
     // Базовый адрес для вызова: ближайшая область (член → тип), где он ровно один. Два разных — null (не гадаем).
     // На уровень файла выходим только для кода верхнего уровня (Program.cs без класса): иначе базовый адрес соседнего
     // класса в том же файле чужой клиент не описывает.
-    private static (Uri? Uri, bool Ambiguous) ResolveBase(SyntaxNode call, IReadOnlyList<BaseAddr> bases)
+    private static (ClientBase? Base, bool Ambiguous) ResolveBase(SyntaxNode call, IReadOnlyList<BaseAddr> bases)
     {
         if (bases.Count == 0) return (null, false);
         foreach (var scope in call.Ancestors().Where(a => a is MemberDeclarationSyntax or TypeDeclarationSyntax))
         {
-            var inScope = bases.Where(b => scope.Span.Contains(b.Node.Span)).Select(b => b.Uri).Distinct().ToList();
+            var inScope = bases.Where(b => scope.Span.Contains(b.Node.Span)).Select(b => b.Base).Distinct().ToList();
             if (inScope.Count == 1) return (inScope[0], false);
             if (inScope.Count > 1) return (null, true);        // два разных адреса — неоднозначно, реестр тоже не подставляем
             if (scope is TypeDeclarationSyntax) return (null, false);   // дальше внешнего типа не идём: соседний/вложенный класс — чужой клиент
         }
         // код верхнего уровня: только присваивания вне любого типа (базовый адрес вспомогательного класса сюда не относится)
-        var top = bases.Where(b => !b.Node.Ancestors().Any(a => a is TypeDeclarationSyntax)).Select(b => b.Uri).Distinct().ToList();
+        var top = bases.Where(b => !b.Node.Ancestors().Any(a => a is TypeDeclarationSyntax)).Select(b => b.Base).Distinct().ToList();
         return top.Count == 1 ? (top[0], false) : (null, top.Count > 1);
     }
 
     // ── клиенты из DI (срез 3а) ──
 
     // Типизированные (AddHttpClient<T>, AddHttpClient<TI,TImpl>) и именованные (AddHttpClient("имя")) клиенты → их ЛИТЕРАЛЬНЫЙ BaseAddress.
-    // Адрес из конфигурации (new Uri(options.Url)) здесь не понимаем — это срез 3б. Одно имя с разными адресами — неоднозначно.
+    // Адрес — литерал или ссылка на конфигурацию (срез 3б). Одно имя с разными адресами — неоднозначно.
     private sealed class ClientRegistry
     {
-        public readonly Dictionary<string, HashSet<Uri>> Typed = new(StringComparer.Ordinal);
-        public readonly Dictionary<string, HashSet<Uri>> Named = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, HashSet<ClientBase>> Typed = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, HashSet<ClientBase>> Named = new(StringComparer.Ordinal);
         public int Count;
-        public static Uri? Single(Dictionary<string, HashSet<Uri>> map, string key) =>
+        public static ClientBase? Single(Dictionary<string, HashSet<ClientBase>> map, string key) =>
             map.TryGetValue(key, out var set) && set.Count == 1 ? set.First() : null;
-        public static void Add(Dictionary<string, HashSet<Uri>> map, string key, Uri uri)
+        public static void Add(Dictionary<string, HashSet<ClientBase>> map, string key, ClientBase b)
         {
             if (!map.TryGetValue(key, out var set)) map[key] = set = [];
-            set.Add(uri);
+            set.Add(b);
         }
     }
 
@@ -263,18 +389,18 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             fileBases ??= CollectBaseAddresses(root);          // один обход файла (а не по лямбде на каждую регистрацию — вложенные давали бы квадрат)
             if (fileBases is null) return;                       // слишком много адресов в файле — не гадаем
 
-            var uris = new HashSet<Uri>();
+            var uris = new HashSet<ClientBase>();
             var node = (SyntaxNode)inv;
             for (var depth = 0; depth < 12; depth++)       // цепочка: AddHttpClient<T>().ConfigureHttpClient(...).AddStandardResilienceHandler()
             {
                 if (node is InvocationExpressionSyntax cur && (depth == 0 ? CalleeName(cur) == "AddHttpClient" : CalleeName(cur) == "ConfigureHttpClient"))
                     foreach (var arg in cur.ArgumentList.Arguments)
                         if (arg.Expression is LambdaExpressionSyntax lam)
-                            foreach (var b in fileBases) if (lam.Span.Contains(b.Node.Span)) uris.Add(b.Uri);
+                            foreach (var b in fileBases) if (lam.Span.Contains(b.Node.Span)) uris.Add(b.Base);
                 if (node.Parent is MemberAccessExpressionSyntax pm && pm.Expression == node && pm.Parent is InvocationExpressionSyntax up) node = up;
                 else break;
             }
-            if (uris.Count != 1) continue;                 // нет литерального адреса или их несколько в одной регистрации
+            if (uris.Count != 1) continue;                 // нет адреса (литерал или ссылка на конфигурацию) или их несколько в одной регистрации
             var uri = uris.First();
 
             // Типизированный клиент: HttpClient внедряется в РЕАЛИЗАЦИЮ — последний аргумент (AddHttpClient<TI, TImpl> → TImpl).
@@ -324,7 +450,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         public readonly Dictionary<SyntaxNode, HashSet<string>> InjectedHttp = [];           // тип → имена членов/параметров типа HttpClient без `new`
     }
 
-    private static Uri? ResolveRegistered(InvocationExpressionSyntax inv, ExpressionSyntax receiver, ClientRegistry reg, FileCtx ctx)
+    private static ClientBase? ResolveRegistered(InvocationExpressionSyntax inv, ExpressionSyntax receiver, ClientRegistry reg, FileCtx ctx)
     {
         // 1. Явный именованный клиент важнее класса, в котором вызов лежит: `CreateClient("x")` внутри класса T — это клиент «x», не T.
         string? clientName = null;
@@ -415,7 +541,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
     private static ExpressionSyntax Unwrap(ExpressionSyntax e) => e is AwaitExpressionSyntax a ? a.Expression : e;
 
     private static void Add(List<HttpCallHit> hits, string verb, string? url, InvocationExpressionSyntax inv, ExpressionSyntax receiver, string path,
-        IReadOnlyList<BaseAddr>? bases, ClientRegistry registry, FileCtx ctx)
+        IReadOnlyList<BaseAddr>? bases, ClientRegistry registry, FileCtx ctx, IReadOnlyDictionary<string, string> sections)
     {
         url = url?.Trim();
         if (string.IsNullOrEmpty(url) || url.StartsWith('{')) return;                 // пусто или адрес начинается с подстановки — неизвестен
@@ -432,9 +558,25 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             if (url.StartsWith("//", StringComparison.Ordinal) || url.Contains('\\') || !(url.StartsWith('/') || url.Contains('/'))) return;
             if (url.IndexOf(':') is var colon && colon >= 0 && (colon < url.IndexOf('/') || !url.Contains('/'))) return;
             if (bases is null) return;                                                 // в файле слишком много базовых адресов
-            var (baseUri, ambiguous) = ResolveBase(inv, bases);
-            if (baseUri is null && !ambiguous) baseUri = ResolveRegistered(inv, receiver, registry, ctx);   // конфликт в области реестром не «лечим»
-            if (baseUri is null || !Uri.TryCreate(baseUri, url, out uri)) return;      // нет надёжного базового адреса — не угадываем
+            var (found, ambiguous) = ResolveBase(inv, bases);
+            if (found is null && !ambiguous) found = ResolveRegistered(inv, receiver, registry, ctx);   // конфликт в области реестром не «лечим»
+            if (found is not { } cb) return;                                           // нет надёжного базового адреса — не угадываем
+
+            if (cb.Uri is not { } baseUri)
+            {
+                // адрес клиента — из конфигурации: значения не читаем, отдаём ключ и относительный путь; цель найдёт сборщик графа
+                var inferred = false;
+                var key = cb.Key;
+                if (key is null && cb.OptionsType is { } ot && cb.Prop is { } prop && SectionOf(ot, sections, out inferred) is { } sec) key = $"{sec}:{prop}";
+                if (key is null) return;
+                var cfgLine = inv.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                var cut = url.IndexOfAny(['?', '#']);
+                if (cut >= 0) url = url[..cut];                       // query и fragment (токены) в Url/Evidence не попадают — как у абсолютных адресов
+                var note = inferred ? "; секция выведена из имени класса" : "";
+                hits.Add(new HttpCallHit(verb, url, path, cfgLine, $"{verb} {url} (адрес из конфигурации {key}{note})", ViaBase: true, ConfigKey: key));
+                return;
+            }
+            if (!Uri.TryCreate(baseUri, url, out uri)) return;
             // после слияния цель обязана остаться на хосте базового адреса (защита от хитрых относительных строк)
             if (!uri.Authority.Equals(baseUri.Authority, StringComparison.OrdinalIgnoreCase) || uri.Scheme != baseUri.Scheme) return;
             viaBase = true;
@@ -443,6 +585,42 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         // без query (секреты не тащим); подстановки {имя} сохраняем читаемыми, а не %7B…%7D (раскодируем только скобки)
         var clean = $"{uri.Scheme}://{uri.Authority}{UnescapeBraces(uri.AbsolutePath)}";
         hits.Add(new HttpCallHit(verb, clean, path, line, viaBase ? $"{verb} {clean} (по BaseAddress)" : $"{verb} {clean}", viaBase));
+    }
+
+    // Секция конфигурации класса options: константа SectionName/Section/… в классе; иначе имя типа без суффикса Options/Settings/Config.
+    // Две разные константы у одноимённых классов («») — неоднозначно, не гадаем.
+    private static string? SectionOf(string optionsType, IReadOnlyDictionary<string, string> sections, out bool inferredFromName)
+    {
+        inferredFromName = false;
+        if (sections.TryGetValue(optionsType, out var s)) return s.Length == 0 ? null : s;
+        inferredFromName = true;       // секцию реально задаёт Configure<T>(GetSection("…")), а имя класса — только догадка: помечаем в Evidence
+        foreach (var suffix in new[] { "Options", "Settings", "Config", "Configuration" })
+            if (optionsType.Length > suffix.Length && optionsType.EndsWith(suffix, StringComparison.Ordinal)) return optionsType[..^suffix.Length];
+        return optionsType;
+    }
+
+    private static readonly HashSet<string> SectionConstNames = new(StringComparer.Ordinal)
+        { "SectionName", "Section", "ConfigSection", "ConfigurationSection", "SettingsSection", "ConfigKey" };
+
+    // Классы с const string SectionName = "…": тип → секция (для options-паттерна). Лимит записей — защита от мусора.
+    private static void CollectSections(SyntaxNode root, Dictionary<string, string> sections)
+    {
+        foreach (var td in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
+        {
+            if (sections.Count > 4000) return;
+            foreach (var f in td.Members.OfType<FieldDeclarationSyntax>())
+            {
+                if (!f.Modifiers.Any(SyntaxKind.ConstKeyword)) continue;
+                foreach (var v in f.Declaration.Variables)
+                {
+                    if (!SectionConstNames.Contains(v.Identifier.Text)) continue;
+                    var name = td.Identifier.Text;
+                    // константа секции есть, но не строковый литерал (nameof(X), выражение) — прочитать нельзя: НЕ подменяем догадкой по имени
+                    var lit = StringLit(v.Initializer?.Value);
+                    sections[name] = lit is null || (sections.TryGetValue(name, out var old) && old != lit) ? "" : lit;
+                }
+            }
+        }
     }
 
     internal static string UnescapeBraces(string path) => path.Replace("%7B", "{", StringComparison.OrdinalIgnoreCase).Replace("%7D", "}", StringComparison.OrdinalIgnoreCase);
