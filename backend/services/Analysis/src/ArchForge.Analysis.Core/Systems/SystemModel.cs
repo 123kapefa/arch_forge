@@ -73,9 +73,30 @@ public sealed record ProblemItem(string Name, string Layer, string Note, string 
 /// «default» = base (+ docker-compose.override.yml); именованные = base + docker-compose.&lt;env&gt;.yml.</summary>
 public sealed record SystemEnvironment(string Name, bool Active);
 
+/// <summary>URL из конфигурации сервиса (environment compose, appsettings*.json): ключ в нормализованном виде
+/// (<see cref="ConfigKeys.Normalize"/>) → адрес без userinfo и query (scheme://host[:port]/path). Нужен, чтобы вызовы клиентов,
+/// чей BaseAddress берётся из конфигурации (E3.1 срез 3б), нашли цель. Наружу (в DTO) не отдаётся.</summary>
+public sealed record ConfigUrl(string Source, string Key, string Url, bool FromEnvironment = false);
+
+public static class ConfigKeys
+{
+    /// <summary>`Payments__Url` (env) и `Payments:Url` (appsettings, код) → `payments:url`: .NET так сливает ключи конфигурации, регистр не важен.</summary>
+    public static string Normalize(string key) => key.Trim().Replace("__", ":", StringComparison.Ordinal).ToLowerInvariant();
+
+    /// <summary>Безопасная форма адреса для хранения: только http(s), без userinfo/query/fragment; иначе null.</summary>
+    public static string? CleanUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Contains("${", StringComparison.Ordinal)) return null;
+        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var u) || (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)) return null;
+        return $"{u.Scheme}://{u.Authority}{u.AbsolutePath}";
+    }
+}
+
 public sealed record SystemGraph(
     IReadOnlyList<SystemNode> Nodes,
     IReadOnlyList<SystemEdge> Edges,
     IReadOnlyList<SystemProblem> Problems,
     // E9.1 слой 2: доступные среды (из override/named compose-файлов). null → выбора сред нет (одна base).
-    IReadOnlyList<SystemEnvironment>? Environments = null);
+    IReadOnlyList<SystemEnvironment>? Environments = null,
+    // E3.1 срез 3б: URL из конфигурации сервисов (для вызовов с адресом клиента из конфигурации). Внутренний канал, не в DTO.
+    IReadOnlyList<ConfigUrl>? ConfigUrls = null);

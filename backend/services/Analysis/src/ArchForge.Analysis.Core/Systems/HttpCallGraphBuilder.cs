@@ -53,6 +53,7 @@ public static class HttpCallGraphBuilder
         var byEdge = new Dictionary<(string Src, string Tgt), List<HttpCall>>();
         var problems = new List<SystemProblem>();
         var ambiguousSeen = new HashSet<string>(StringComparer.Ordinal); // дедуп «srcId|host» — одна проблема на пару
+        var configByKey = (graph.ConfigUrls ?? []).ToLookup(c => (c.Source, c.Key));   // один раз, не на каждый вызов
         foreach (var sa in analyses)
         {
             if (sa.HttpCalls.Count == 0) continue;
@@ -66,7 +67,19 @@ public static class HttpCallGraphBuilder
             }
             foreach (var hit in sa.HttpCalls)
             {
-                if (!Uri.TryCreate(hit.Url, UriKind.Absolute, out var uri)) continue;
+                Uri? uri;
+                if (hit.ConfigKey is not null)
+                {
+                    // адрес клиента — из конфигурации сервиса: ключ → URL (env compose / appsettings), затем относительный путь поверх него
+                    var key = ConfigKeys.Normalize(hit.ConfigKey);
+                    var matches = configByKey[(srcId, key)].ToList();
+                    if (matches.Any(c => c.FromEnvironment)) matches = matches.Where(c => c.FromEnvironment).ToList();   // как в .NET: environment перекрывает appsettings
+                    if (matches.Any(c => c.Url.Length == 0)) continue;          // env задаёт ключ, но значение неизвестно (${VAR}) — не берём из appsettings
+                    var urls = matches.Select(c => c.Url).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    if (urls.Count != 1 || !Uri.TryCreate(urls[0], UriKind.Absolute, out var baseUri)) continue;   // нет или несколько значений — не гадаем
+                    if (!Uri.TryCreate(baseUri, hit.Url, out uri) || !uri.Authority.Equals(baseUri.Authority, StringComparison.OrdinalIgnoreCase)) continue;
+                }
+                else if (!Uri.TryCreate(hit.Url, UriKind.Absolute, out uri)) continue;
                 var t = resolver.Resolve(srcId, uri.Host);
                 if (t.Kind == HttpTargetKind.Ambiguous)                    // ≥2 одноимённых цели — не выдумываем, но сигналим
                 {
