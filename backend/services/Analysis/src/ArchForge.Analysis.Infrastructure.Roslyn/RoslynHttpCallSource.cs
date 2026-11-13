@@ -45,6 +45,8 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         var candidates = new List<string>();
         var registry = new ClientRegistry();
         var sections = new Dictionary<string, string>(StringComparer.Ordinal);   // класс options → секция конфигурации (срез 3б)
+        var regSections = new Dictionary<string, string>(StringComparer.Ordinal);   // то же, но из РЕГИСТРАЦИИ Configure<T>/Bind (сильнее константы и догадки)
+        var pendingConst = new List<(string Type, string Owner)>();                  // Configure<T>(GetSection(Owner.SectionName)) — константу разрешим после обхода
         foreach (var file in RoslynScan.EnumerateCsCapped(root, out _)) // тот же кап файлов, что и в семантике
         {
             ct.ThrowIfCancellationRequested();
@@ -55,11 +57,19 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
                 || text.Contains("RestService", StringComparison.Ordinal);
             var wantsSections = text.Contains("const string", StringComparison.Ordinal)
                 && (text.Contains("Section", StringComparison.Ordinal) || text.Contains("ConfigKey", StringComparison.Ordinal));
-            if (!wantsReg && !wantsSections) continue;
+            var wantsOptionRegs = text.Contains("Configure<", StringComparison.Ordinal) || text.Contains("AddOptions<", StringComparison.Ordinal)
+                || text.Contains("BindConfiguration", StringComparison.Ordinal);
+            if (!wantsReg && !wantsSections && !wantsOptionRegs) continue;
             var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
             if (wantsReg) CollectRegistrations(tree, registry, ct);
             if (wantsSections) CollectSections(tree, sections);
+            if (wantsOptionRegs) CollectOptionRegistrations(tree, regSections, pendingConst);
         }
+        // `Configure<T>(GetSection(Owner.SectionName))`: константа Owner — из собранных секций; регистрация перекрывает догадку и константу класса
+        foreach (var (type, owner) in pendingConst)
+            if (sections.TryGetValue(owner, out var constSection) && constSection.Length > 0) AddRegistered(regSections, type, constSection);
+            // константу прочитать нельзя — регистрацию не учитываем (прежняя константа класса/догадка по имени остаются как были)
+        foreach (var (type, section) in regSections) sections[type] = section;
         if (registry.Count > MaxClientRegistrations) registry = new ClientRegistry { Count = registry.Count };   // слишком много — не используем
 
         // Проход 2: сами вызовы.
@@ -76,6 +86,18 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             var ctx = new FileCtx();   // кэши: переменные из CreateClient по членам, внедрённые HttpClient-члены по типам
             foreach (var inv in treeRoot.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
+                // Обёртки базового клиента (`GetAsync<T>(url)` / `this.PostAsync(url, body)` / `base.DeleteAsync(url)`) без получателя-HttpClient:
+                // вызов метода самого класса. Считаем вызовом ТОЛЬКО внутри класса зарегистрированного типизированного клиента — там адрес известен.
+                if (WrapperCall(inv) is { } wrap && WrapperVerbs.TryGetValue(wrap, out var wverb))
+                {
+                    if (registry.Typed.Count == 0) continue;
+                    if (inv.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault() is not { } wtd || !registry.Typed.ContainsKey(wtd.Identifier.Text)) continue;
+                    // собственный метод класса с этим именем должен быть HTTP-обёрткой (передаёт URL в HttpClient); иначе это не вызов (приватный GetAsync(string key))
+                    if (!IsHttpWrapper(wtd, wrap, ctx)) continue;
+                    Add(hits, wverb, FirstUrlText(inv.ArgumentList.Arguments), inv, inv.Expression, path, bases, registry, ctx, sections, wrapper: true);
+                    continue;
+                }
+                if (inv.Expression is IdentifierNameSyntax or GenericNameSyntax) continue;   // прочие вызовы без получателя — не HTTP
                 if (inv.Expression is not MemberAccessExpressionSyntax ma) continue;
                 var name = ma.Name.Identifier.Text;
                 if (ClientVerbs.TryGetValue(name, out var verb))
@@ -114,6 +136,41 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         || HasRefitVerbAttribute(text)                       // интерфейс Refit может не упоминать Refit при global using
         || text.Contains("http://", StringComparison.OrdinalIgnoreCase)
         || text.Contains("https://", StringComparison.OrdinalIgnoreCase);
+
+    // Методы-обёртки базового HTTP-клиента: имя → метод HTTP. URL — первый аргумент, как у самого HttpClient.
+    private static readonly IReadOnlyDictionary<string, string> WrapperVerbs = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["GetAsync"] = "GET", ["GetOptionalAsync"] = "GET", ["GetFromJsonAsync"] = "GET", ["GetStringAsync"] = "GET",
+        ["PostAsync"] = "POST", ["PostAsJsonAsync"] = "POST", ["PutAsync"] = "PUT", ["PutAsJsonAsync"] = "PUT",
+        ["PatchAsync"] = "PATCH", ["DeleteAsync"] = "DELETE",
+    };
+
+    // Метод `name`, объявленный в самом классе, должен быть HTTP-обёрткой: его тело передаёт первый параметр (URL) в вызов HttpClient
+    // (в том числе внутри лямбды `() => HttpClient.GetAsync(url, ct)`). Не объявлен в классе — унаследован от базового клиента (тело не видно): принимаем.
+    private static bool IsHttpWrapper(TypeDeclarationSyntax td, string name, FileCtx ctx)
+    {
+        if (ctx.Wrappers.TryGetValue((td, name), out var known)) return known;
+        var own = td.Members.OfType<MethodDeclarationSyntax>().Where(m => m.Identifier.Text == name).ToList();
+        var ok = own.Count == 0 || own.Any(m =>
+        {
+            var p = m.ParameterList.Parameters.FirstOrDefault()?.Identifier.Text;
+            if (p is null) return false;
+            return m.DescendantNodes().OfType<InvocationExpressionSyntax>()
+                .Where(i => i.Expression is MemberAccessExpressionSyntax ma && (ClientVerbs.ContainsKey(ma.Name.Identifier.Text) || ma.Name.Identifier.Text == "SendAsync"))
+                .Any(i => i.ArgumentList.DescendantNodes().OfType<IdentifierNameSyntax>().Any(id => id.Identifier.Text == p));
+        });
+        ctx.Wrappers[(td, name)] = ok;
+        return ok;
+    }
+
+    // Вызов без получателя (`GetAsync<T>(…)`, `GetAsync(…)`) или с `this.`/`base.`: имя метода-обёртки; иначе null.
+    private static string? WrapperCall(InvocationExpressionSyntax inv) => inv.Expression switch
+    {
+        IdentifierNameSyntax i => i.Identifier.Text,
+        GenericNameSyntax g => g.Identifier.Text,
+        MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax or BaseExpressionSyntax } m => m.Name.Identifier.Text,
+        _ => null,
+    };
 
     // Адрес — ПЕРВЫЙ аргумент (у Get/PostAsync): строковый литерал или интерполяция. Остальные аргументы (тело, токен)
     // адресом не считаем: `PostAsJsonAsync(url, "текст")` не должен превращать тело запроса в маршрут.
@@ -455,7 +512,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         }
     }
 
-    private static string? CalleeName(InvocationExpressionSyntax inv) => inv.Expression switch
+    internal static string? CalleeName(InvocationExpressionSyntax inv) => inv.Expression switch
     {
         MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
         IdentifierNameSyntax i => i.Identifier.Text,
@@ -492,6 +549,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
     {
         public readonly Dictionary<SyntaxNode, Dictionary<string, string>> Locals = [];     // член → переменная → имя клиента (по CreateClient)
         public readonly Dictionary<SyntaxNode, HashSet<string>> InjectedHttp = [];           // тип → имена членов/параметров типа HttpClient без `new`
+        public readonly Dictionary<(SyntaxNode, string), bool> Wrappers = [];                // (тип, имя метода) → это HTTP-обёртка
     }
 
     private static ClientBase? ResolveRegistered(InvocationExpressionSyntax inv, ExpressionSyntax receiver, ClientRegistry reg, FileCtx ctx)
@@ -585,7 +643,7 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
     private static ExpressionSyntax Unwrap(ExpressionSyntax e) => e is AwaitExpressionSyntax a ? a.Expression : e;
 
     private static void Add(List<HttpCallHit> hits, string verb, string? url, InvocationExpressionSyntax inv, ExpressionSyntax receiver, string path,
-        IReadOnlyList<BaseAddr>? bases, ClientRegistry registry, FileCtx ctx, IReadOnlyDictionary<string, string> sections)
+        IReadOnlyList<BaseAddr>? bases, ClientRegistry registry, FileCtx ctx, IReadOnlyDictionary<string, string> sections, bool wrapper = false)
     {
         url = url?.Trim();
         if (string.IsNullOrEmpty(url) || url.StartsWith('{')) return;                 // пусто или адрес начинается с подстановки — неизвестен
@@ -601,7 +659,10 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         // относительный путь: только похожий на URL-путь («/x» или «a/b»); голое слово — ключ кэша, имя файла, id — не вызов.
         if (!LooksLikePath(url) || bases is null) return;                          // в файле слишком много базовых адресов — тоже не гадаем
         var (found, ambiguous) = ResolveBase(inv, bases);
-        if (found is null && !ambiguous) found = ResolveRegistered(inv, receiver, registry, ctx);   // конфликт в области реестром не «лечим»
+        if (found is null && !ambiguous)
+            found = wrapper
+                ? (inv.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault() is { } td ? ClientRegistry.Single(registry.Typed, td.Identifier.Text) : null)   // обёртка: адрес клиента — по классу
+                : ResolveRegistered(inv, receiver, registry, ctx);   // конфликт в области реестром не «лечим»
         if (found is { } cb) EmitFromBase(hits, verb, url, inv, path, cb, sections, how: null);    // нет надёжного базового адреса — не угадываем
     }
 
@@ -709,6 +770,45 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
 
     private static readonly HashSet<string> SectionConstNames = new(StringComparer.Ordinal)
         { "SectionName", "Section", "ConfigSection", "ConfigurationSection", "SettingsSection", "ConfigKey" };
+
+    private static void AddRegistered(Dictionary<string, string> reg, string type, string section)
+    {
+        if (reg.Count > 4000) return;
+        reg[type] = reg.TryGetValue(type, out var old) && old != section ? "" : section;   // два разных раздела под один класс — неоднозначно
+    }
+
+    // Регистрации options: `Configure<T>(config.GetSection(X))`, `AddOptions<T>().Bind(config.GetSection(X))`, `AddOptions<T>().BindConfiguration(X)`;
+    // X — строка, `nameof(Type)` или `Owner.Const` (константу разрешает вызывающий). Это реальная секция, в отличие от догадки по имени класса.
+    private static void CollectOptionRegistrations(SyntaxNode root, Dictionary<string, string> reg, List<(string Type, string Owner)> pendingConst)
+    {
+        foreach (var inv in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            string? type = null;
+            ExpressionSyntax? sectionArg = null;
+            var name = CalleeName(inv);
+            if (name == "Configure" && CalleeGenericArgs(inv) is { Count: 1 } g && inv.ArgumentList.Arguments.Count == 1
+                && inv.ArgumentList.Arguments[0].Expression is InvocationExpressionSyntax gs && CalleeName(gs) == "GetSection" && gs.ArgumentList.Arguments.Count == 1)
+            { type = g[0]; sectionArg = gs.ArgumentList.Arguments[0].Expression; }
+            else if (name is "Bind" or "BindConfiguration" && inv.Expression is MemberAccessExpressionSyntax { Expression: InvocationExpressionSyntax opt }
+                && CalleeName(opt) == "AddOptions" && CalleeGenericArgs(opt) is { Count: 1 } og && inv.ArgumentList.Arguments.Count >= 1)
+            {
+                type = og[0];
+                var a0 = inv.ArgumentList.Arguments[0].Expression;
+                sectionArg = name == "Bind" ? (a0 is InvocationExpressionSyntax bgs && CalleeName(bgs) == "GetSection" && bgs.ArgumentList.Arguments.Count == 1 ? bgs.ArgumentList.Arguments[0].Expression : null) : a0;
+            }
+            if (type is null || sectionArg is null) continue;
+
+            if (StringLit(sectionArg) is { } lit) AddRegistered(reg, type, lit);
+            else if (sectionArg is InvocationExpressionSyntax { Expression: IdentifierNameSyntax { Identifier.Text: "nameof" } } nof
+                && nof.ArgumentList.Arguments.Count == 1)
+            {
+                var target = nof.ArgumentList.Arguments[0].Expression;
+                var n = target switch { IdentifierNameSyntax i => i.Identifier.Text, MemberAccessExpressionSyntax m => m.Name.Identifier.Text, _ => null };
+                if (n is not null) AddRegistered(reg, type, n);
+            }
+            else if (sectionArg is MemberAccessExpressionSyntax { Expression: var q } && RightName(q) is { } owner) pendingConst.Add((type, owner));
+        }
+    }
 
     // Классы с const string SectionName = "…": тип → секция (для options-паттерна). Лимит записей — защита от мусора.
     private static void CollectSections(SyntaxNode root, Dictionary<string, string> sections)
