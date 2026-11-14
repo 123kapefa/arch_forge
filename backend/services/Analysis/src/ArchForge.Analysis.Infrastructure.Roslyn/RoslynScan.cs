@@ -1,5 +1,9 @@
 using ArchForge.Analysis.Core;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ArchForge.Analysis.Infrastructure.Roslyn;
 
@@ -36,6 +40,100 @@ internal static class RoslynScan
         files.Sort(StringComparer.Ordinal); // порядок EnumerateFiles не гарантирован → сортируем, чтобы усечение было детерминированным
         return files.Take(MaxFilesPerScan).ToList();
     }
+
+    // Потолок вложенности скобок/дженериков. Переполнение стека не ловится try/catch: Task<Task<…>> на ~1000 уровнях (стек 1,5 МБ пула)
+    // роняет ВЕСЬ процесс Analysis. Замеры: угловые падают между 1000 и 2000, круглые между 4000 и 8000, вложенная интерполяция
+    // между 1000 и 2000. 200 даёт запас ≥5×, а настоящий код глубже ~30 не бывает. Выше — файл пропускается как деградация (#167).
+    internal const int MaxNestingDepth = 200;
+
+    // Парсер и биндер Roslyn рекурсивны, а StackOverflow в .NET не ловится try/catch и роняет ВЕСЬ процесс. Текстовый предфильтр
+    // (NestingDepth) ловит скобки/дженерики, но не цепочки `?.b?.b`, `not not`, вложенный XML в ///, `A.B.C…` и обходится
+    // комментариями, поэтому вся работа с Roslyn идёт на потоке с большим стеком. 256 МБ — виртуальная резервация, память
+    // коммитится по мере роста; файл ограничен MaxFileBytes (2 МБ), так что худший замеренный случай укладывается с запасом.
+    internal const int DeepStackBytes = 256 * 1024 * 1024;
+
+    [ThreadStatic] private static bool _onBigStack;
+
+    /// <summary>Выполняет <paramref name="work"/> на выделенном потоке с большим стеком (вложенный вызов — на том же потоке).
+    /// Исключения (в том числе отмена) пробрасываются как есть.</summary>
+    internal static T OnBigStack<T>(Func<T> work)
+    {
+        if (_onBigStack) return work();
+        T? result = default;
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            _onBigStack = true;
+            try { result = work(); }
+            catch (Exception ex) { error = ex; }
+        }, DeepStackBytes) { IsBackground = true, Name = "roslyn-deep-stack" };
+        thread.Start();
+        thread.Join();
+        if (error is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+        return result!;
+    }
+
+    // Куда писать пропуск файла: источники создаются без DI, поэтому лог общий; Registration подставляет настоящий.
+    internal static ILogger Log { get; set; } = NullLogger.Instance;
+
+    /// <summary>Максимальная глубина вложенности <c>( [ { &lt;</c> по тексту, без разбора. Дёшево (один проход по символам)
+    /// и детерминированно. Считает и то, что внутри строк и концевых комментариев: это завышает, но не занижает (несбалансированные скобки в них копятся на весь файл — известное ограничение, на порог 200 нужно ≥200 таких вхождений) (вложенная
+    /// интерполяция <c>$"{$"{…</c> тоже должна ловиться). Угловая скобка счётчика <c>&lt;</c> сбрасывается на <c>; { }</c>
+    /// (дженерик через них не тянется), чтобы операторы сравнения в длинном файле не копили глубину.</summary>
+    internal static int NestingDepth(string text)
+    {
+        int depth = 0, angle = 0, max = 0;
+        var lineStart = true;                     // до первого непробельного символа строки
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c == '\n') { lineStart = true; continue; }
+            if (lineStart)
+            {
+                if (char.IsWhiteSpace(c)) continue;
+                lineStart = false;
+                // Строка, начинающаяся с «//», — комментарий, а в строковом литерале (многострочном) это не код: пропуск
+                // безопасен в обоих случаях и не даёт «:(» в комментариях копить глубину. Концевые комментарии и «/* */»
+                // не пропускаем: «//» бывает внутри строки, а пропуск кода занизил бы счётчик.
+                if (c == '/' && i + 1 < text.Length && text[i + 1] == '/')
+                {
+                    var nl = text.IndexOf('\n', i);
+                    if (nl < 0) break;
+                    i = nl - 1;
+                    continue;
+                }
+            }
+            switch (c)
+            {
+                case '(' or '[': depth++; break;
+                case '{': depth++; angle = 0; break;
+                case ')' or ']': if (depth > 0) depth--; break;
+                case '}': if (depth > 0) depth--; angle = 0; break;
+                case ';': angle = 0; break;
+                case '<': angle++; break;
+                case '>': if (angle > 0) angle--; break;
+            }
+            if (depth + angle > max) max = depth + angle;
+        }
+        return max;
+    }
+
+    /// <summary>Единственное место, где источники зовут <c>ParseText</c>: слишком глубокий файл не разбираем (null) и
+    /// пишем деградацию в лог. Вызывающий пропускает файл (<c>continue</c>), остальные файлы разбираются как обычно.</summary>
+    internal static SyntaxTree? TryParse(string text, string file, CancellationToken ct = default)
+    {
+        var depth = NestingDepth(text);
+        if (depth > MaxNestingDepth)
+        {
+            Log.LogWarning("Файл пропущен: вложенность скобок {Depth} > {Max} (защита от переполнения стека): {File}", depth, MaxNestingDepth, file.ReplaceLineEndings(" "));   // имя файла бывает с переводом строки — не даём подделать строку лога
+            return null;
+        }
+        return CSharpSyntaxTree.ParseText(text, path: file, cancellationToken: ct);
+    }
+
+    /// <summary>Корень дерева или null, если файл слишком глубок (см. <see cref="TryParse"/>).</summary>
+    internal static SyntaxNode? TryParseRoot(string text, string file, CancellationToken ct = default) =>
+        TryParse(text, file, ct)?.GetRoot(ct);
 
     public static bool IsTypeName(string name) =>
         name.Length > 0 && (char.IsUpper(name[0]) || name[0] == '_');

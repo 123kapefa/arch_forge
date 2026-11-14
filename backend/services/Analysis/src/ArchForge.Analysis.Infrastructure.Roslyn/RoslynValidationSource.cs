@@ -28,7 +28,10 @@ public sealed class RoslynValidationSource : IValidationSource
         return new string(t.Where(c => !(char.IsControl(c) || c is >= '​' and <= '‏' or >= '‪' and <= '‮' or >= '⁦' and <= '⁩')).ToArray());
     }
 
-    public ValidationFacts Read(string root, CancellationToken ct = default)
+    public ValidationFacts Read(string root, CancellationToken ct = default) =>
+        RoslynScan.OnBigStack(() => ReadCore(root, ct));   // парсер Roslyn рекурсивен; StackOverflow не ловится (#167)
+
+    private ValidationFacts ReadCore(string root, CancellationToken ct)
     {
         if (!Directory.Exists(root)) return ValidationFacts.Empty;
         var rules = new List<ValidatorRuleSite>();
@@ -44,7 +47,8 @@ public sealed class RoslynValidationSource : IValidationSource
             var hasRule = text.Contains("RuleFor", StringComparison.Ordinal);
             var hasFactory = FactoryNames.Any(n => text.Contains(n + "(", StringComparison.Ordinal));
             if (!hasRule && !hasFactory) continue;                                  // быстрый отсев
-            var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            var tree = RoslynScan.TryParseRoot(text, file, ct);
+            if (tree is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             var path = file.Replace('\\', '/');
             var seen = 0;
             var candidates = 0;

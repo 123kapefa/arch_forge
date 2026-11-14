@@ -11,7 +11,10 @@ namespace ArchForge.Analysis.Infrastructure.Roslyn;
 // Только new: конструирование однозначно. Фабрики/статкод — отдельная ось позже, если понадобится.
 public sealed class RoslynConstructionSource : IConstructionSource
 {
-    public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default)
+    public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>
+        RoslynScan.OnBigStack(() => ReadCore(path, ct));   // парсер/биндер Roslyn рекурсивны; StackOverflow не ловится (#167)
+
+    private IReadOnlyList<ConstructionSite> ReadCore(string path, CancellationToken ct = default)
     {
         // проход 1: разобрать деревья один раз + собрать имена своих типов
         var trees = new List<(SyntaxNode Root, string File)>();
@@ -23,7 +26,8 @@ public sealed class RoslynConstructionSource : IConstructionSource
             try { text = File.ReadAllText(file); }
             catch { continue; } // недоступный файл — пропускаем (изоляция ошибок)
 
-            var root = CSharpSyntaxTree.ParseText(text).GetRoot();
+            var root = RoslynScan.TryParseRoot(text, file);
+            if (root is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             trees.Add((root, file));
             foreach (var decl in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
                 own.Add(decl.Identifier.Text);

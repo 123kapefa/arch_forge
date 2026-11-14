@@ -8,7 +8,10 @@ namespace ArchForge.Analysis.Infrastructure.Roslyn;
 // Семантику даёт RoslynSemanticTypeSource поверх; сюда падаем, когда семантика недоступна.
 public sealed class RoslynTypeSource : ITypeSource
 {
-    public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default)
+    public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) =>
+        RoslynScan.OnBigStack(() => ReadCore(path, ct));   // парсер/биндер Roslyn рекурсивны; StackOverflow не ловится (#167)
+
+    private IReadOnlyList<RawType> ReadCore(string path, CancellationToken ct = default)
     {
         var result = new List<RawType>();
         foreach (var file in RoslynScan.EnumerateCsCapped(path, out _)) // тот же кап, что и в семантике (backstop)
@@ -18,7 +21,8 @@ public sealed class RoslynTypeSource : ITypeSource
             try { text = File.ReadAllText(file); }
             catch { continue; }
 
-            var root = CSharpSyntaxTree.ParseText(text).GetRoot();
+            var root = RoslynScan.TryParseRoot(text, file);
+            if (root is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             var layer = RoslynScan.Layer(file, path);
 
             foreach (var decl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())

@@ -15,7 +15,10 @@ public sealed class RoslynMinimalApiSource : IEndpointSource
         ["MapGet"] = "GET", ["MapPost"] = "POST", ["MapPut"] = "PUT", ["MapDelete"] = "DELETE", ["MapPatch"] = "PATCH",
     };
 
-    public IReadOnlyList<EndpointHit> Read(string root, CancellationToken ct = default)
+    public IReadOnlyList<EndpointHit> Read(string root, CancellationToken ct = default) =>
+        RoslynScan.OnBigStack(() => ReadCore(root, ct));   // парсер/биндер Roslyn рекурсивны; StackOverflow не ловится (#167)
+
+    private IReadOnlyList<EndpointHit> ReadCore(string root, CancellationToken ct = default)
     {
         if (!Directory.Exists(root)) return [];
         var hits = new List<EndpointHit>();
@@ -26,7 +29,8 @@ public sealed class RoslynMinimalApiSource : IEndpointSource
             try { text = File.ReadAllText(file); } catch { continue; } // недоступный файл — пропускаем
             if (!text.Contains(".Map", StringComparison.Ordinal)) continue; // быстрый отсев файлов без Map*-вызовов
             var path = file.Replace('\\', '/');
-            var treeRoot = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            var treeRoot = RoslynScan.TryParseRoot(text, file, ct);
+            if (treeRoot is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             foreach (var inv in treeRoot.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 if (inv.Expression is not MemberAccessExpressionSyntax ma) continue;

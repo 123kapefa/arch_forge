@@ -36,7 +36,10 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
         ["Patch"] = "PATCH", ["Head"] = "HEAD", ["Options"] = "OPTIONS",
     };
 
-    public IReadOnlyList<HttpCallHit> Read(string root, CancellationToken ct = default)
+    public IReadOnlyList<HttpCallHit> Read(string root, CancellationToken ct = default) =>
+        RoslynScan.OnBigStack(() => ReadCore(root, ct));   // парсер/биндер Roslyn рекурсивны; StackOverflow не ловится (#167)
+
+    private IReadOnlyList<HttpCallHit> ReadCore(string root, CancellationToken ct = default)
     {
         if (!Directory.Exists(root)) return [];
 
@@ -60,7 +63,8 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             var wantsOptionRegs = text.Contains("Configure<", StringComparison.Ordinal) || text.Contains("AddOptions<", StringComparison.Ordinal)
                 || text.Contains("BindConfiguration", StringComparison.Ordinal);
             if (!wantsReg && !wantsSections && !wantsOptionRegs) continue;
-            var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            var tree = RoslynScan.TryParseRoot(text, file, ct);
+            if (tree is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             if (wantsReg) CollectRegistrations(tree, registry, ct);
             if (wantsSections) CollectSections(tree, sections);
             if (wantsOptionRegs) CollectOptionRegistrations(tree, regSections, pendingConst);
@@ -81,7 +85,8 @@ public sealed class RoslynHttpCallSource : IHttpCallSource
             var text = ReadCandidate(file);
             if (text is null || (!text.Contains("Async", StringComparison.Ordinal) && registry.Refit.Count == 0)) continue;   // нет вызовов *Async и Refit-регистраций — нечего искать
             var path = file.Replace('\\', '/');
-            var treeRoot = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            var treeRoot = RoslynScan.TryParseRoot(text, file, ct);
+            if (treeRoot is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             var bases = CollectBaseAddresses(treeRoot);      // null — слишком много адресов в файле: относительные пути не разрешаем
             var ctx = new FileCtx();   // кэши: переменные из CreateClient по членам, внедрённые HttpClient-члены по типам
             foreach (var inv in treeRoot.DescendantNodes().OfType<InvocationExpressionSyntax>())
