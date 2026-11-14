@@ -151,6 +151,12 @@ internal sealed class CachingHttpCallSource(IHttpCallSource inner, ScanCache cac
         cache.GetOrAdd("httpcalls", root, () => inner.Read(root, ct), ct);
 }
 
+internal sealed class CachingGuardSource(IGuardSource inner, ScanCache cache) : IGuardSource
+{
+    public IReadOnlyList<NullGuardSite> Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("guards", root, () => inner.Read(root, ct), ct);
+}
+
 internal sealed class CachingConstructionSource(IConstructionSource inner, ScanCache cache) : IConstructionSource
 {
     public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>
