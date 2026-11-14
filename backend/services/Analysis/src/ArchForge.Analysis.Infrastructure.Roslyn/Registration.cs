@@ -23,6 +23,7 @@ public static class Registration
         services.AddSingleton<IEndpointSource>(sp => new CachingEndpointSource(new RoslynMinimalApiSource(), Cache(sp)));
         services.AddSingleton<IHttpCallSource>(sp => new CachingHttpCallSource(new RoslynHttpCallSource(), Cache(sp)));
         services.AddSingleton<IGuardSource>(sp => new CachingGuardSource(new RoslynGuardSource(), Cache(sp)));   // проверки на null (redundant-null-check)
+        services.AddSingleton<IValidationSource>(sp => new CachingValidationSource(new RoslynValidationSource(), Cache(sp)));   // валидация (double-validation)
         services.AddSingleton<IErrorStrategySource>(sp => new CachingErrorStrategySource(new RoslynErrorStrategySource(), Cache(sp)));   // стратегия ошибок (mixed-error-strategy)
         services.AddSingleton<IClientLibraryResolver, CsprojClientLibraryResolver>();   // клиентские библиотеки сервиса (*.Contracts), E3.1
         return services;
