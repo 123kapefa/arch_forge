@@ -157,6 +157,12 @@ internal sealed class CachingGuardSource(IGuardSource inner, ScanCache cache) : 
         cache.GetOrAdd("guards", root, () => inner.Read(root, ct), ct);
 }
 
+internal sealed class CachingValidationSource(IValidationSource inner, ScanCache cache) : IValidationSource
+{
+    public ValidationFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("validation", root, () => inner.Read(root, ct), ct);
+}
+
 internal sealed class CachingConstructionSource(IConstructionSource inner, ScanCache cache) : IConstructionSource
 {
     public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>
