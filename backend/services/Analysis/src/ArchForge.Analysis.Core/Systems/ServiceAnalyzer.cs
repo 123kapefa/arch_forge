@@ -14,6 +14,9 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
     // Монорепо с общим compose: узел графа, к которому сервис привязан по имени (ServiceNodeMatcher). Есть → проблемы, вызовы и слои
     // идут в ЭТОТ узел, а не по namespace системы (в ней десятки узлов). null — у сервиса свой compose, привязка по namespace, как раньше.
     public string? NodeId { get; init; }
+
+    // проверки параметров на null (правило redundant-null-check); читаются вместе с остальным разбором сервиса
+    public IReadOnlyList<NullGuardSite> Guards { get; init; } = [];
 }
 
 /// <summary>Хелперы над результатами разбора — единая точка понятия «сервис не разобрался».</summary>
@@ -32,7 +35,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -42,7 +45,7 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
 
     // nodes/naming — узлы графа и правила имён: нужны только для монорепо с общим compose (см. ServiceNodeMatcher).
     public IReadOnlyList<ServiceAnalysis> Analyze(string root, ConventionPack pack, CancellationToken ct = default,
-        IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null)
+        IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null, bool readGuards = true)
     {
         if (!Directory.Exists(root)) return []; // код-разбор идёт по коду сервисов — нужен корень-папка
 
@@ -99,7 +102,11 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             }
             catch (OperationCanceledException) { throw; }
             catch { /* библиотеки не разобрались — остаются собственные вызовы */ }
-            results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id };
+            IReadOnlyList<NullGuardSite> guardSites = [];  // проверки на null — свой try: их сбой не роняет разбор
+            try { guardSites = readGuards ? guards?.Read(svc.Root, ct) ?? [] : []; }
+            catch (OperationCanceledException) { throw; }
+            catch { guardSites = []; }
+            results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites };
         });
         return results;
     }

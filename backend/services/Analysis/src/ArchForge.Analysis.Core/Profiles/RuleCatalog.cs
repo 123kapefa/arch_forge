@@ -44,6 +44,9 @@ public static class RuleCatalog
         new("layer-violation", ProblemCategory.Architecture, "Нарушено направление зависимостей слоёв", "Слои Clean Architecture", None, new RuleExample(["// Domain.csproj", "<ProjectReference Include=\"..\\Infrastructure\" />"], ["// Domain.csproj", "<!-- ссылок на Infrastructure и Web нет -->"])),
         new("drift", ProblemCategory.Convention, "Расхождение со сводом (маркеры ролей)", "Вертикальный срез", OffOnSimple, new RuleExample(["public record CreateCourse(string Name);            // нет ICommand"], ["public record CreateCourse(string Name) : ICommand;"])),
         new("dto-mapping", ProblemCategory.Convention, "DTO собирается инлайн вне маппера", "Reads и Writes", OffOnSimple, new RuleExample(["// в трёх хендлерах:", "return new UserDto(u.Id, u.Name, u.Email);"], ["// в одном месте:", "return UserMapper.ToDto(u);"])),
+        // Методичка «Стратегия ошибок и нулей», правило 3: внутри сервиса ненулевой параметр проверяет компилятор. Мягкое правило свода
+        // (стиль, не архитектура): на простом уровне не проверяется, как и остальные свод-линзы.
+        new("redundant-null-check", ProblemCategory.Convention, "Лишняя проверка на null ненулевого параметра", "Стратегия ошибок и нулей", OffOnSimple, new RuleExample(["// внутри сервиса, параметр ненулевой:", "public void Rename(WidgetName name)", "{", "    ArgumentNullException.ThrowIfNull(name);", "    // …", "}"], ["public void Rename(WidgetName name)", "{", "    // …", "}", "// границу API проверяет валидатор: RuleFor(x => x.Name).NotNull()"])),
     ];
 
     private static readonly Dictionary<string, RuleDef> ById = All.ToDictionary(r => r.Id, StringComparer.Ordinal);
