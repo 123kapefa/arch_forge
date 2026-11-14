@@ -162,3 +162,9 @@ internal sealed class CachingConstructionSource(IConstructionSource inner, ScanC
     public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>
         cache.GetOrAdd("construction", path, () => inner.Read(path, ct), ct);
 }
+
+internal sealed class CachingErrorStrategySource(IErrorStrategySource inner, ScanCache cache) : IErrorStrategySource
+{
+    public ErrorStrategyFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("errors", root, () => inner.Read(root, ct), ct);
+}
