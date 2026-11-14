@@ -17,6 +17,21 @@ namespace ArchForge.Analysis.Infrastructure.Roslyn;
 // слои tests, Contracts и Shared (публичное API библиотек: вызывающий может быть без nullable, ThrowIfNull там рекомендован самим .NET).
 public sealed class RoslynGuardSource : IGuardSource
 {
+    // Защита от враждебного проекта: потолки на работу и на размер результата (имена из чужого кода не доверенные).
+    private const int MaxCandidatesPerFile = 200;
+    private const int MaxSites = 10_000;
+    private const int MaxNameLength = 200;
+    private const long MaxConfigBytes = 2_000_000;
+
+    // Имя из чужого кода: обрезать и убрать управляющие/bidi-символы, чтобы не раздувать ответ и не подменять отображение.
+    private static string Clean(string s)
+    {
+        var t = s.Length > MaxNameLength ? s[..MaxNameLength] + "…" : s;
+        return t.Any(c => char.IsControl(c) || c is >= '\u200B' and <= '\u200F' or >= '\u202A' and <= '\u202E' or >= '\u2066' and <= '\u2069')
+            ? new string(t.Where(c => !(char.IsControl(c) || c is >= '\u200B' and <= '\u200F' or >= '\u202A' and <= '\u202E' or >= '\u2066' and <= '\u2069')).ToArray())
+            : t;
+    }
+
     public IReadOnlyList<NullGuardSite> Read(string root, CancellationToken ct = default)
     {
         if (!Directory.Exists(root)) return [];
@@ -25,6 +40,7 @@ public sealed class RoslynGuardSource : IGuardSource
         foreach (var file in RoslynScan.EnumerateCsCapped(root, out _))
         {
             ct.ThrowIfCancellationRequested();
+            if (sites.Count >= MaxSites) break;
             var layer = RoslynScan.Layer(file, root);
             if (layer is "tests" or "Contracts" or "Shared") continue;   // тесты и публичное API библиотек не судим
             string text;
@@ -33,8 +49,11 @@ public sealed class RoslynGuardSource : IGuardSource
             var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
             var path = file.Replace('\\', '/');
             NullableContext? nullable = null;                       // директивы и настройка проекта считаются лениво: только если нашёлся кандидат
+            var candidates = 0;
+            var perFile = 0;
             foreach (var node in tree.DescendantNodes())
             {
+                if ((++candidates & 0x3FF) == 0) ct.ThrowIfCancellationRequested();
                 var (param, form) = node switch
                 {
                     InvocationExpressionSyntax inv => ThrowIfNullParam(inv),
@@ -43,10 +62,11 @@ public sealed class RoslynGuardSource : IGuardSource
                     _ => (null, null),
                 };
                 if (param is null || form is null) continue;
+                if (candidates > 0 && ++perFile > MaxCandidatesPerFile) break;      // потолок работы на файл: подъём к владельцу дорог
                 if (OwnerOf(node, param) is not { } owner) continue;
                 nullable ??= new NullableContext(tree, file, root, nullableByDir);
                 if (!nullable.EnabledAt(node.SpanStart)) continue;
-                sites.Add(new NullGuardSite(owner.Type, owner.Member, param, form, path, node.GetLocation().GetLineSpan().StartLinePosition.Line + 1, layer));
+                sites.Add(new NullGuardSite(Clean(owner.Type), Clean(owner.Member), Clean(param), form, path, node.GetLocation().GetLineSpan().StartLinePosition.Line + 1, layer));
             }
         }
         return sites;
@@ -243,6 +263,7 @@ public sealed class RoslynGuardSource : IGuardSource
         foreach (var f in candidates)
         {
             if (!SafeFiles.IsRegularFile(f)) continue;
+            try { if (new FileInfo(f).Length > MaxConfigBytes) continue; } catch { continue; }
             System.Xml.Linq.XDocument doc;
             try
             {

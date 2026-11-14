@@ -198,4 +198,16 @@ public class RoslynGuardSourceTests : IDisposable
         Assert.Empty(Scan(code, "src/Shared/Svc.Shared.Kernel/Ext.cs"));
         Assert.Single(Scan(code, "src/Svc.Core/Ext.cs"));                           // внутри сервиса — судим
     }
+
+    [Fact]
+    public void Hostile_input_is_bounded_names_are_cut_and_work_per_file_is_capped()
+    {
+        var longName = new string('A', 5000);
+        var body = string.Concat(Enumerable.Range(0, 500).Select(i => "ArgumentNullException.ThrowIfNull(p);\n"));
+        var sites = Scan("#nullable enable\nclass " + longName + " { void M(IFoo p) {\n" + body + "} }");
+        Assert.InRange(sites.Count, 1, 200);                                       // потолок кандидатов на файл
+        Assert.All(sites, s => Assert.True(s.Type.Length <= 201));                 // имя обрезано
+        var odd = Scan("#nullable enable\nclass Evil\u202Egnp { void M(IFoo p\u200B) { ArgumentNullException.ThrowIfNull(p\u200B); } }");
+        Assert.All(odd, s => Assert.DoesNotContain(s.Type + s.Param, c => c is '\u202E' or '\u200B'));
+    }
 }
