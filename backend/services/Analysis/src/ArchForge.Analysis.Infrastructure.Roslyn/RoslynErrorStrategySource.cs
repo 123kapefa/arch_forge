@@ -26,7 +26,10 @@ public sealed class RoslynErrorStrategySource : IErrorStrategySource
         return new string(t.Where(c => !(char.IsControl(c) || c is >= '​' and <= '‏' or >= '‪' and <= '‮' or >= '⁦' and <= '⁩')).ToArray());
     }
 
-    public ErrorStrategyFacts Read(string root, CancellationToken ct = default)
+    public ErrorStrategyFacts Read(string root, CancellationToken ct = default) =>
+        RoslynScan.OnBigStack(() => ReadCore(root, ct));   // парсер/биндер Roslyn рекурсивны; StackOverflow не ловится (#167)
+
+    private ErrorStrategyFacts ReadCore(string root, CancellationToken ct = default)
     {
         if (!Directory.Exists(root)) return ErrorStrategyFacts.Empty;
         var results = new List<ErrorSite>();
@@ -43,7 +46,8 @@ public sealed class RoslynErrorStrategySource : IErrorStrategySource
             var hasResult = text.Contains("Result", StringComparison.Ordinal);
             var hasThrow = text.Contains("Exception", StringComparison.Ordinal);
             if (!hasResult && !hasThrow) continue;                                  // быстрый отсев
-            var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            var tree = RoslynScan.TryParseRoot(text, file, ct);
+            if (tree is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             var path = file.Replace('\\', '/');
             var seen = 0;
             var candidates = 0;

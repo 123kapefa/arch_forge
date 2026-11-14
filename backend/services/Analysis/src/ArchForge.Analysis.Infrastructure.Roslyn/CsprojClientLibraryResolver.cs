@@ -32,7 +32,10 @@ public sealed class CsprojClientLibraryResolver : IClientLibraryResolver
         AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System,     // симлинки на папки не обходим (#158)
     };
 
-    public IReadOnlyList<ClientLibrary> Resolve(string consumerRoot, string systemRoot, CancellationToken ct = default)
+    public IReadOnlyList<ClientLibrary> Resolve(string consumerRoot, string systemRoot, CancellationToken ct = default) =>
+        RoslynScan.OnBigStack(() => ResolveCore(consumerRoot, systemRoot, ct));   // парсер/биндер Roslyn рекурсивны; StackOverflow не ловится (#167)
+
+    private IReadOnlyList<ClientLibrary> ResolveCore(string consumerRoot, string systemRoot, CancellationToken ct = default)
     {
         if (!Directory.Exists(consumerRoot) || string.IsNullOrWhiteSpace(systemRoot)) return [];
         var root = Path.GetFullPath(consumerRoot).TrimEnd('/', '\\');
@@ -87,7 +90,8 @@ public sealed class CsprojClientLibraryResolver : IClientLibraryResolver
             try { text = File.ReadAllText(file); } catch { continue; }
             var candidates = registrations.Keys.Where(n => text.Contains(n, StringComparison.Ordinal)).ToList();
             if (candidates.Count == 0) continue;
-            var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            var tree = RoslynScan.TryParseRoot(text, file, ct);
+            if (tree is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             foreach (var m in tree.DescendantNodes().OfType<MethodDeclarationSyntax>())
                 if (registrations.ContainsKey(m.Identifier.Text)) declaredHere.Add(m.Identifier.Text);
             foreach (var inv in tree.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -145,7 +149,8 @@ public sealed class CsprojClientLibraryResolver : IClientLibraryResolver
             try { text = File.ReadAllText(file); } catch { continue; }
             if (!text.Contains("AddHttpClient", StringComparison.Ordinal) && !text.Contains("AddRefitClient", StringComparison.Ordinal)
                 && !text.Contains("RestService", StringComparison.Ordinal)) continue;
-            var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            var tree = RoslynScan.TryParseRoot(text, file, ct);
+            if (tree is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             foreach (var m in tree.DescendantNodes().OfType<MethodDeclarationSyntax>())
             {
                 if (m.Body is null && m.ExpressionBody is null) continue;

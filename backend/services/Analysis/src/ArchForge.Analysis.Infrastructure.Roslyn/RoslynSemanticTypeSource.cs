@@ -30,6 +30,14 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
     /// <summary><paramref name="degraded"/> = true: семантики не получилось, вернулся синтаксический пол (кеш держит такой результат коротко).</summary>
     internal IReadOnlyList<RawType> Read(string path, out bool degraded, CancellationToken ct = default)
     {
+        var d = false;
+        var result = RoslynScan.OnBigStack(() => ReadCore(path, out d, ct));   // компиляция/биндер рекурсивны; StackOverflow не ловится (#167)
+        degraded = d;
+        return result;
+    }
+
+    private IReadOnlyList<RawType> ReadCore(string path, out bool degraded, CancellationToken ct)
+    {
         degraded = false;
         try
         {
@@ -60,7 +68,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         foreach (var file in files)
         {
             ct.ThrowIfCancellationRequested(); // abort клиента → перестаём парсить
-            try { trees.Add(CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file)); }
+            try { if (RoslynScan.TryParse(File.ReadAllText(file), file) is { } tree) trees.Add(tree); }
             catch { /* нечитаемый файл — пропускаем */ }
         }
         if (trees.Count == 0) return null;

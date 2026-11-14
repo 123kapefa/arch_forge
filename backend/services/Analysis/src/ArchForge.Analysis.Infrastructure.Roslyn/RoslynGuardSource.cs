@@ -32,7 +32,10 @@ public sealed class RoslynGuardSource : IGuardSource
             : t;
     }
 
-    public IReadOnlyList<NullGuardSite> Read(string root, CancellationToken ct = default)
+    public IReadOnlyList<NullGuardSite> Read(string root, CancellationToken ct = default) =>
+        RoslynScan.OnBigStack(() => ReadCore(root, ct));   // парсер/биндер Roslyn рекурсивны; StackOverflow не ловится (#167)
+
+    private IReadOnlyList<NullGuardSite> ReadCore(string root, CancellationToken ct = default)
     {
         if (!Directory.Exists(root)) return [];
         var sites = new List<NullGuardSite>();
@@ -46,7 +49,8 @@ public sealed class RoslynGuardSource : IGuardSource
             string text;
             try { text = File.ReadAllText(file); } catch { continue; }
             if (!text.Contains("ArgumentNullException", StringComparison.Ordinal)) continue;   // быстрый отсев: без этого имени проверок нет
-            var tree = CSharpSyntaxTree.ParseText(text, cancellationToken: ct).GetRoot(ct);
+            var tree = RoslynScan.TryParseRoot(text, file, ct);
+            if (tree is null) continue;   // слишком глубокая вложенность — пропуск (#167)
             var path = file.Replace('\\', '/');
             NullableContext? nullable = null;                       // директивы и настройка проекта считаются лениво: только если нашёлся кандидат
             var candidates = 0;
