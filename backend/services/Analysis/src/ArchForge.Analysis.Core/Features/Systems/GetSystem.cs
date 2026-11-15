@@ -106,9 +106,10 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         {
             // проверки на null читаем, только если правило может сработать: линза свода включена и правило не выключено профилем
             var wantGuards = query.Drift && profile.Effective(RedundantNullCheckDetector.Kind) != Strictness.Off;
+            var wantTime = query.Drift && profile.Effective(AggregateTimeDetector.Kind) != Strictness.Off;
             var wantValidation = query.Drift && profile.Effective(DoubleValidationDetector.Kind) != Strictness.Off;
             var wantErrors = query.Drift && profile.Effective(MixedErrorStrategyDetector.Kind) != Strictness.Off;
-            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming, wantGuards, wantErrors, wantValidation);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
+            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming, wantGuards, wantErrors, wantValidation, wantTime);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
             // сервис не разобрался (изоляция ошибок) → его типы/связи отсутствуют: честно помечаем деградацию
             foreach (var a in analyses.Failed())
                 degradations.Add($"сервис «{a.Service.Name}» не разобрался — часть карты пропущена");
@@ -117,6 +118,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             if (query.Drift) extra.AddRange(RedundantNullCheckDetector.Detect(analyses));   // свод: лишний ThrowIfNull на ненулевом параметре
             if (query.Drift) extra.AddRange(MixedErrorStrategyDetector.Detect(analyses));   // свод: Result и исключения для ожидаемых ошибок в одном сервисе
             if (query.Drift) extra.AddRange(DoubleValidationDetector.Detect(analyses));   // свод: формат поля проверяют и валидатор, и Value Object
+            if (query.Drift) extra.AddRange(AggregateTimeDetector.Detect(analyses));   // свод: часы в домене / аудит в interceptor
             if (query.Layers) extra.AddRange(LayerViolationDetector.Detect(analyses));
             if (hasCustom) extra.AddRange(CustomRuleDetector.Detect(analyses, profile.CustomRules));
             // свод-линза «маппинг не централизован» — по оси конструирования (data-DTO собран инлайн в N мест)
