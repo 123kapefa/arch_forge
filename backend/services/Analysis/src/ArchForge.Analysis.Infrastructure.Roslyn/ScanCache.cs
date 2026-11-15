@@ -151,6 +151,30 @@ internal sealed class CachingHttpCallSource(IHttpCallSource inner, ScanCache cac
         cache.GetOrAdd("httpcalls", root, () => inner.Read(root, ct), ct);
 }
 
+internal sealed class CachingGuardSource(IGuardSource inner, ScanCache cache) : IGuardSource
+{
+    public IReadOnlyList<NullGuardSite> Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("guards", root, () => inner.Read(root, ct), ct);
+}
+
+internal sealed class CachingValidationSource(IValidationSource inner, ScanCache cache) : IValidationSource
+{
+    public ValidationFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("validation", root, () => inner.Read(root, ct), ct);
+}
+
+internal sealed class CachingAggregateTimeSource(IAggregateTimeSource inner, ScanCache cache) : IAggregateTimeSource
+{
+    public AggregateTimeFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("aggtime", root, () => inner.Read(root, ct), ct);
+}
+
+internal sealed class CachingFolderSource(IFolderSource inner, ScanCache cache) : IFolderSource
+{
+    public FolderFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("folders", root, () => inner.Read(root, ct), ct);
+}
+
 internal sealed class CachingConstructionSource(IConstructionSource inner, ScanCache cache) : IConstructionSource
 {
     public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>
@@ -161,4 +185,10 @@ internal sealed class CachingDiSource(IDiSource inner, ScanCache cache) : IDiSou
 {
     public DiModel Read(string root, CancellationToken ct = default) =>
         cache.GetOrAdd("di", root, () => inner.Read(root, ct), ct);
+}
+
+internal sealed class CachingErrorStrategySource(IErrorStrategySource inner, ScanCache cache) : IErrorStrategySource
+{
+    public ErrorStrategyFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("errors", root, () => inner.Read(root, ct), ct);
 }

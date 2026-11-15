@@ -21,6 +21,11 @@ public static class Registration
         services.AddSingleton<IEndpointSource>(sp => new CachingEndpointSource(new RoslynMinimalApiSource(), sp.GetRequiredService<ScanCache>()));
         services.AddSingleton<IHttpCallSource>(sp => new CachingHttpCallSource(new RoslynHttpCallSource(), sp.GetRequiredService<ScanCache>()));
         services.AddSingleton<IDiSource>(sp => new CachingDiSource(new RoslynDiSource(), sp.GetRequiredService<ScanCache>()));   // DI-контейнер сервиса, E4.2
+        services.AddSingleton<IGuardSource>(sp => new CachingGuardSource(new RoslynGuardSource(), sp.GetRequiredService<ScanCache>()));   // проверки на null (redundant-null-check)
+        services.AddSingleton<IFolderSource>(sp => new CachingFolderSource(new RoslynFolderSource(), sp.GetRequiredService<ScanCache>()));   // раскладка (folder-structure)
+        services.AddSingleton<IAggregateTimeSource>(sp => new CachingAggregateTimeSource(new RoslynAggregateTimeSource(), sp.GetRequiredService<ScanCache>()));   // время и аудит (aggregate-time)
+        services.AddSingleton<IValidationSource>(sp => new CachingValidationSource(new RoslynValidationSource(), sp.GetRequiredService<ScanCache>()));   // валидация (double-validation)
+        services.AddSingleton<IErrorStrategySource>(sp => new CachingErrorStrategySource(new RoslynErrorStrategySource(), sp.GetRequiredService<ScanCache>()));   // стратегия ошибок (mixed-error-strategy)
         services.AddSingleton<IClientLibraryResolver, CsprojClientLibraryResolver>();   // клиентские библиотеки сервиса (*.Contracts), E3.1
         return services;
     }
