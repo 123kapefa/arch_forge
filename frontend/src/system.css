@@ -967,3 +967,39 @@
 .panel__sub { margin: 2px 0 4px 18px; }
 .dep-chip--bound { color: var(--muted); background: rgba(124, 134, 152, 0.14); }
 .dep-chip--net { color: var(--muted); }
+
+/* ---- E8: обзор + поиск ⌘K ---- */
+.ov-backdrop, .ck-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(6,10,16,0.55); display: flex; justify-content: center; }
+.ov-backdrop { align-items: center; padding: 16px; }
+.ck-backdrop { align-items: flex-start; padding-top: 14vh; }
+.ov { width: min(880px, 100%); max-height: 100%; overflow: auto; background: var(--panel); border: 1px solid var(--card-line); border-radius: 12px; padding: 16px 18px; color: var(--text); }
+.ov__head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.ov__head h2 { margin: 0; font-size: 16px; flex: 1; }
+.ov__search, .ov__close { background: var(--card); border: 1px solid var(--card-line); color: var(--text); border-radius: 7px; padding: 4px 10px; cursor: pointer; font: inherit; }
+.ov__search kbd, .ck__hint kbd { font: 11px ui-monospace, monospace; opacity: .7; }
+.ov__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.ov__card { background: var(--card); border: 1px solid var(--card-line); border-radius: 9px; padding: 10px 12px; }
+.ov__card h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; opacity: .75; }
+.ov__card ul { list-style: none; margin: 0; padding: 0; }
+.ov__ok { margin: 0; opacity: .7; font-size: 13px; }
+.ov__row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 5px 4px; border-radius: 6px; cursor: pointer; }
+.ov__row:hover { background: rgba(127,127,127,0.15); }
+.ov__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov__meta { font-size: 12px; opacity: .75; white-space: nowrap; }
+.ov__dot { width: 9px; height: 9px; border-radius: 50%; background: #3fb950; flex: none; }
+.ov__dot--warning { background: #d29922; } .ov__dot--critical { background: #f85149; }
+.ov__sev--critical { color: #f85149; } .ov__sev--warning { color: #d29922; }
+.ov__bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: rgba(127,127,127,0.2); }
+.ov__bar-m { background: #3fb950; } .ov__bar-h { background: #d29922; } .ov__bar-u { background: #f85149; }
+.ov__legend { margin: 8px 0 0; font-size: 12px; } .ov__legend span { opacity: .6; }
+.ov__degr li { font-size: 13px; padding: 3px 0; color: #d29922; }
+.ck { width: min(620px, 94vw); background: var(--panel); border: 1px solid var(--card-line); border-radius: 12px; overflow: hidden; color: var(--text); align-self: flex-start; }
+.ck__input { width: 100%; box-sizing: border-box; background: var(--card); border: 0; border-bottom: 1px solid var(--card-line); color: var(--text); font: 15px system-ui, sans-serif; padding: 12px 14px; outline: none; }
+.ck__list { list-style: none; margin: 0; padding: 4px; max-height: 50vh; overflow: auto; }
+.ck__row { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.ck__row.is-cur { background: rgba(88,166,255,0.2); }
+.ck__kind { font-size: 11px; opacity: .6; width: 72px; flex: none; }
+.ck__label { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ck__sub { font-size: 12px; opacity: .6; margin-left: auto; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck__empty { padding: 12px; opacity: .6; font-size: 13px; }
+.ck__hint { padding: 6px 12px; font-size: 11px; opacity: .55; border-top: 1px solid var(--card-line); }
