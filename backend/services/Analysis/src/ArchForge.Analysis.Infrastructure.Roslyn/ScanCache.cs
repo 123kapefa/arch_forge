@@ -167,8 +167,32 @@ internal sealed class CachingBusSource(IBusSource inner, ScanCache cache) : IBus
         }, ct);
 }
 
+internal sealed class CachingValidationSource(IValidationSource inner, ScanCache cache) : IValidationSource
+{
+    public ValidationFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("validation", root, () => inner.Read(root, ct), ct);
+}
+
+internal sealed class CachingAggregateTimeSource(IAggregateTimeSource inner, ScanCache cache) : IAggregateTimeSource
+{
+    public AggregateTimeFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("aggtime", root, () => inner.Read(root, ct), ct);
+}
+
+internal sealed class CachingFolderSource(IFolderSource inner, ScanCache cache) : IFolderSource
+{
+    public FolderFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("folders", root, () => inner.Read(root, ct), ct);
+}
+
 internal sealed class CachingConstructionSource(IConstructionSource inner, ScanCache cache) : IConstructionSource
 {
     public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>
         cache.GetOrAdd("construction", path, () => inner.Read(path, ct), ct);
+}
+
+internal sealed class CachingErrorStrategySource(IErrorStrategySource inner, ScanCache cache) : IErrorStrategySource
+{
+    public ErrorStrategyFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("errors", root, () => inner.Read(root, ct), ct);
 }
