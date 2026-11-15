@@ -47,6 +47,10 @@ public static class RuleCatalog
         // Методичка «Стратегия ошибок и нулей», правило 3: внутри сервиса ненулевой параметр проверяет компилятор. Мягкое правило свода
         // (стиль, не архитектура): на простом уровне не проверяется, как и остальные свод-линзы.
         new("redundant-null-check", ProblemCategory.Convention, "Лишняя проверка на null ненулевого параметра", "Стратегия ошибок и нулей", OffOnSimple, new RuleExample(["// внутри сервиса, параметр ненулевой:", "public void Rename(WidgetName name)", "{", "    ArgumentNullException.ThrowIfNull(name);", "    // …", "}"], ["public void Rename(WidgetName name)", "{", "    // …", "}", "// границу API проверяет валидатор: RuleFor(x => x.Name).NotNull()"])),
+        // Смесь стратегий ошибок: Result и типизированные исключения для ожидаемых ошибок в одном сервисе (стиль → на Simple выключено).
+        new("mixed-error-strategy", ProblemCategory.Convention, "Смесь стратегий ошибок: Result и исключения", "Стратегия ошибок и нулей", OffOnSimple, new RuleExample(["// в одном сервисе:", "Task<Result<Order>> Get(Guid id);              // ошибка возвращается", "throw new NotFoundException(\"order\");        // та же ошибка бросается"], ["// одна стратегия на сервис:", "return Result.Failure<Order>(OrderErrors.NotFound);", "// или везде исключения + middleware"])),
+        // Двойная валидация: формат поля проверяют и валидатор, и Value Object (стиль → на Simple выключено).
+        new("double-validation", ProblemCategory.Convention, "Двойная валидация: валидатор и Value Object", "Валидация — один раз", OffOnSimple, new RuleExample(["RuleFor(x => x.Title).MaximumLength(150);   // валидатор", "TagTitle.Of(title);                        // и VO проверяет длину"], ["RuleFor(x => x.Title).MustBe(TagTitle.Of);   // валидатор делегирует VO", "// правило формата одно — в TagTitle.Of"])),
     ];
 
     private static readonly Dictionary<string, RuleDef> ById = All.ToDictionary(r => r.Id, StringComparer.Ordinal);
