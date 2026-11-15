@@ -1,5 +1,6 @@
 import { SessionBadge } from './SessionBadge';
 import { EdgeInspector, type SelectedEdge } from './EdgeInspector';
+import { InspectorEmpty, InspectorFrame } from './InspectorFrame';
 import type { EdgeData } from './systemFlow';
 import {
   forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
@@ -13,7 +14,7 @@ import { routeAll, type Rect, type XY } from './orthoRouter';
 import '@xyflow/react/dist/style.css';
 import './system.css';
 
-import { fetchSystem, type SystemGraph, type ProblemItem, type Problem, type SystemNode } from './system';
+import { fetchSystem, type SystemGraph, type SystemEdge, type ProblemItem, type Problem, type SystemNode } from './system';
 import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto } from './api';
 import { isAbortError } from './http';
 import { ImportsScreen, ConventionsView, ProfileView, CompareView, FolderPicker } from './lazyScreens';
@@ -252,11 +253,11 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 /** Инспектор для выбранного узла — диспетчер по уровню: системный узел (L0) / слой (L1) / тип+члены (L2). */
-function Inspector({ node, graph, lens, onFocus }: {
-  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void;
+function Inspector({ node, graph, lens, onFocus, onOpenEdge }: {
+  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void; onOpenEdge: (e: SystemEdge) => void;
 }) {
   const d = node.data as Record<string, unknown>;
-  if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} />;
+  if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} onOpenEdge={onOpenEdge} />;
   if ('role' in d && 'via' in d) {
     return <TypeInspector data={node.data as unknown as TypeCardData} members={(d.members as MemberDto[] | undefined) ?? []} />;
   }
@@ -294,12 +295,7 @@ function TypeInspector({ data, members }: { data: TypeCardData; members: MemberD
   }, [members]);
 
   return (
-    <div className="inspector">
-      <div className="inspector__head">
-        <span className="inspector__dot" style={{ background: layerColor(data.layer) }} />
-        <span className="inspector__name">{data.name}</span>
-      </div>
-      <div className="inspector__kind">{data.kind} · {data.layer}</div>
+    <InspectorFrame what="ТИП" title={data.name} dot={layerColor(data.layer)} subtitle={`${data.kind} · ${data.layer}`}>
       <div className="inspector__block">
         <div className="inspector__sub">СТЕРЕОТИП</div>
         <div>{data.role || '—'} <span className="iedge__kind">{data.via}</span></div>
@@ -332,19 +328,15 @@ function TypeInspector({ data, members }: { data: TypeCardData; members: MemberD
           ))}
         </div>
       )}
-    </div>
+    </InspectorFrame>
   );
 }
 
 /** L1: инспектор слоя — число типов, нарушения (красное) и заметки (дрейф/покрытие). */
 function LayerInspector({ data }: { data: LayerCardData }) {
   return (
-    <div className="inspector">
-      <div className="inspector__head">
-        <span className="inspector__dot" style={{ background: layerColor(data.name) }} />
-        <span className="inspector__name">{data.name}</span>
-      </div>
-      <div className="inspector__kind">слой · {data.count} тип(ов){data.health ? ` · ${data.health}` : ''}</div>
+    <InspectorFrame what="СЛОЙ" title={data.name} dot={layerColor(data.name)}
+      subtitle={`слой · ${data.count} тип(ов)${data.health ? ` · ${data.health}` : ''}`}>
       {data.warnings && data.warnings.length > 0 && (
         <div className="inspector__block">
           <div className="inspector__sub">нарушения свода</div>
@@ -362,7 +354,7 @@ function LayerInspector({ data }: { data: LayerCardData }) {
         </div>
       )}
       <div className="inspector__block panel__empty">двойной клик по слою → его типы (L2)</div>
-    </div>
+    </InspectorFrame>
   );
 }
 
@@ -370,12 +362,7 @@ function LayerInspector({ data }: { data: LayerCardData }) {
 function ServiceEndpoints({ node }: { node: SystemNode }) {
   const eps = node.endpoints ?? [];
   return (
-    <div className="inspector">
-      <div className="inspector__head">
-        <span className="inspector__dot" style={{ background: repoColor(node.name) }} />
-        <span className="inspector__name">{node.name}</span>
-      </div>
-      <div className="inspector__kind">сервис · {eps.length} endpoint(ов)</div>
+    <InspectorFrame what="СЕРВИС" title={node.name} dot={repoColor(node.name)} subtitle={`сервис · ${eps.length} endpoint(ов)`}>
       {eps.length === 0 ? (
         <div className="inspector__block panel__empty">эндпоинты не найдены (контроллеры / minimal API)</div>
       ) : (
@@ -394,12 +381,12 @@ function ServiceEndpoints({ node }: { node: SystemNode }) {
         </div>
       )}
       <div className="inspector__block panel__empty">двойной клик по слою → его типы (L2)</div>
-    </div>
+    </InspectorFrame>
   );
 }
 
-function SystemInspector({ node, graph, lens, onFocus }: {
-  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void;
+function SystemInspector({ node, graph, lens, onFocus, onOpenEdge }: {
+  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void; onOpenEdge: (e: SystemEdge) => void;
 }) {
   const n = (node.data as SystemNodeData).node;
   const problems = problemsByLens((node.data as SystemNodeData).problems, lens);
@@ -417,14 +404,8 @@ function SystemInspector({ node, graph, lens, onFocus }: {
   }, [graph, n.id]);
 
   return (
-    <div className="inspector">
-      <div className="inspector__head">
-        <span className="inspector__dot" style={{ background: healthColor(n.health) }} />
-        <span className="inspector__name">{n.name}</span>
-      </div>
-      <div className="inspector__kind">
-        {KIND_LABEL[n.kind] ?? n.kind}{n.health ? ` · ${n.health}` : ''}
-      </div>
+    <InspectorFrame what="УЗЕЛ" title={n.name} dot={healthColor(n.health)}
+      subtitle={`${KIND_LABEL[n.kind] ?? n.kind}${n.health ? ` · ${n.health}` : ''}`}>
 
       {n.layers && n.layers.length > 0 && (
         <div className="inspector__block">
@@ -491,18 +472,20 @@ function SystemInspector({ node, graph, lens, onFocus }: {
               <li key={`o-${e.target}-${e.kind}`} className={e.violation ? 'iedge--bad' : ''}>
                 <button onClick={() => onFocus(e.target)}>→ {nameById.get(e.target) ?? e.target}</button>
                 <span className="iedge__kind">{e.kind}</span>
+                <button className="iedge__open" title="Инспектор связи: что идёт по ней" onClick={() => onOpenEdge(e)}>связь ›</button>
               </li>
             ))}
             {inc.map((e) => (
               <li key={`i-${e.source}-${e.kind}`} className={e.violation ? 'iedge--bad' : ''}>
                 <button onClick={() => onFocus(e.source)}>← {nameById.get(e.source) ?? e.source}</button>
                 <span className="iedge__kind">{e.kind}</span>
+                <button className="iedge__open" title="Инспектор связи: что идёт по ней" onClick={() => onOpenEdge(e)}>связь ›</button>
               </li>
             ))}
           </ul>
         </div>
       )}
-    </div>
+    </InspectorFrame>
   );
 }
 
@@ -590,12 +573,11 @@ function FactInspector({ fact, scanRoot, canGoto, onGoto }: {
   const rel = relPath(item.file, scanRoot);
   const cat = categoryOf(problem);
   return (
-    <div className="finspect">
-      <div className="finspect__name">{item.name}</div>
-      <div className="finspect__tags">
+    <InspectorFrame what="НАХОДКА" title={item.name} mono className="finspect"
+      subtitle={<span className="finspect__tags">
         <span className={`pd-row__cat cat-${cat}`}>{cat === 'convention' ? 'свод' : 'арх'}</span>
         {item.layer && <span className="finspect__layer">{item.layer}</span>}
-      </div>
+      </span>}>
       {item.note && <div className="finspect__note">{item.note}</div>}
 
       {problem.fix && (
@@ -623,7 +605,7 @@ function FactInspector({ fact, scanRoot, canGoto, onGoto }: {
       ) : (
         <div className="finspect__hint">плашка недоступна: тип вне сервисного слоя (shared / unknown)</div>
       )}
-    </div>
+    </InspectorFrame>
   );
 }
 
@@ -1124,6 +1106,12 @@ export function SystemView() {
 
   // Клик по проблеме/связи → навести на узел. Если location — узел: выбрать + центрировать.
   // Если это namespace-префикс (дрейф/слой per-service): навести на все узлы репозитория. Иначе — не двигать.
+  // Узел → связь: открыть инспектор связи из списка СВЯЗИ в инспекторе узла (R18).
+  const openEdge = useCallback((e: SystemEdge) => {
+    setSelected(null); setSelectedFact(null);
+    setSelectedEdge({ id: e.id, source: e.source, target: e.target, kind: e.kind, confidence: e.confidence ?? 0, via: e.via, violation: !!e.violation, calls: e.calls });
+  }, []);
+
   const focusNode = useCallback((location: string) => {
     const node = laid.nodes.find((x) => x.id === location);
     if (node) { setSelected(node); flowRef.current?.focus([location]); return; }
@@ -1576,16 +1564,16 @@ export function SystemView() {
               </div>
               <div className="panel__body">
                 {selected && graph
-                  ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} />
+                  ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} onOpenEdge={openEdge} />
                   : selectedEdge && graph
-                    ? <EdgeInspector edge={selectedEdge} scanRoot={loadedPath} callsRequested={callsAsked}
+                    ? <EdgeInspector edge={selectedEdge} onFocus={focusNode} scanRoot={loadedPath} callsRequested={callsAsked}
                         names={Object.fromEntries(graph.nodes.map((n) => [n.id, n.name]))} />
                   : selectedFact
                     ? <FactInspector fact={selectedFact} scanRoot={loadedPath}
                         canGoto={!!ownerService(selectedFact.item.file)} onGoto={gotoBlock} />
                     : drill && !drill2
                       ? <ServiceEndpoints node={(drill.data as SystemNodeData).node} />
-                      : <div className="panel__empty">кликните узел</div>}
+                      : <InspectorEmpty />}
               </div>
             </>
           )}
