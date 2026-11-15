@@ -43,6 +43,9 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         var nodes = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
         var edges = new List<SystemEdge>();
         var httpIntents = new List<(string SourceId, string TargetHost)>();
+        var origins = new Dictionary<string, (string Service, string[] Files)>(StringComparer.Ordinal); // узел → compose-файлы, где искать строку порта (E9.2)
+        var envKeys = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);   // E9.3: узел → ИМЕНА env-ключей (значения не храним)
+        var envIncomplete = new HashSet<string>(StringComparer.Ordinal);   // E9.3: узлы с непрочитанным env_file — ключи неизвестны
         var configUrls = new List<ConfigUrl>();    // E3.1 срез 3б: URL конфигурации сервисов (по ключу) для клиентов с адресом из конфига
 
         // Оверлеи каждого compose + набор именованных сред (E9.1 слой 2). Материализуем список: проходим дважды
@@ -78,6 +81,13 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                 var node = new SystemNode($"{system}/{svc.Name}", svc.Name, Classify(svc.Image), svc.Image, deploy);
                 local[svc.Name] = node;
                 nodes[node.Id] = node;
+                envKeys[node.Id] = [.. svc.Environment.Keys, .. svc.PassthroughKeys ?? []];
+                if (svc.EnvFileUnread) envIncomplete.Add(node.Id);
+                if (svc.Ports.Count > 0)
+                {
+                    var key = activeEnv == DefaultEnv ? ComposeOverlays.Default : activeEnv;
+                    origins[node.Id] = (svc.Name, overlaysByPath[composePath].TryGetValue(key, out var ovp) ? [ovp, composePath] : [composePath]);
+                }
             }
 
             foreach (var svc in compose.Services)
@@ -158,8 +168,18 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
             ? available.Select(n => new SystemEnvironment(n, n == activeEnv)).ToList()
             : null;
 
-        var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), [], environments, configUrls.Count > 0 ? configUrls : null);
-        var problems = SystemProblemDetector.Detect(graph).Concat(httpProblems).ToList();
+        var graph = new SystemGraph(nodes.Values.ToList(), Dedup(edges), [], environments, configUrls.Count > 0 ? configUrls : null, envKeys, envIncomplete);
+        var baseDir = File.Exists(root) ? Path.GetDirectoryName(root)! : root;
+        var locator = new ComposeSourceLocator(ct);   // каждый compose-файл читается один раз за Read
+        (string, int)? Locate(string nodeId, PortMapping port)
+        {
+            if (!origins.TryGetValue(nodeId, out var o)) return null;
+            // оверлей среды раньше base в списке файлов; сначала точное совпадение по всем, потом слабое (см. ComposeSourceLocator)
+            return locator.Find(o.Files, o.Service, port) is { } hit
+                ? (Path.GetRelativePath(baseDir, hit.File).Replace('\\', '/'), hit.Line)
+                : null;
+        }
+        var problems = SystemProblemDetector.Detect(graph, Locate).Concat(httpProblems).ToList();
         return graph with { Problems = problems };
     }
 

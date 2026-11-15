@@ -99,4 +99,9 @@ public sealed record SystemGraph(
     // E9.1 слой 2: доступные среды (из override/named compose-файлов). null → выбора сред нет (одна base).
     IReadOnlyList<SystemEnvironment>? Environments = null,
     // E3.1 срез 3б: URL из конфигурации сервисов (для вызовов с адресом клиента из конфигурации). Внутренний канал, не в DTO.
-    IReadOnlyList<ConfigUrl>? ConfigUrls = null);
+    IReadOnlyList<ConfigUrl>? ConfigUrls = null,
+    // E9.3: имена env-ключей каждого узла compose в выбранной среде (environment + env_file), нормализация — на стороне потребителя.
+    // ТОЛЬКО ИМЕНА, значений нет (secrets-config). Внутренний канал, не в DTO.
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? EnvKeys = null,
+    // E9.3: узлы, у которых есть непрочитанный env_file (нет файла/вне корня/ссылка): их ключи неизвестны → «не задан» не утверждаем.
+    IReadOnlySet<string>? EnvIncomplete = null);

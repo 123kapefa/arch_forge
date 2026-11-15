@@ -29,10 +29,17 @@ internal static class ComposeMerge
 
     /// <summary>Слить override поверх base. Возвращает новый словарь; исходные не мутирует.</summary>
     public static IDictionary<object, object> Merge(IDictionary<object, object> @base, IDictionary<object, object> ovr) =>
-        (IDictionary<object, object>)MergeValue(@base, ovr, key: "");
+        (IDictionary<object, object>)MergeValue(@base, ovr, key: "", new Budget(), depth: 0);
 
-    private static object MergeValue(object? b, object? o, string key)
+    // Защита от враждебного YAML: якоря/алиасы дают циклы (`x: &r {k: *r}`) и «взрыв» вложенных алиасов — обход без потолка
+    // переполнил бы стек или съел память. Глубина и число посещённых узлов ограничены; сверх — берём override как есть (без слияния).
+    private const int MaxDepth = 64;
+    private const int MaxNodes = 200_000;
+    private sealed class Budget { public int Nodes; }
+
+    private static object MergeValue(object? b, object? o, string key, Budget budget, int depth)
     {
+        if (depth > MaxDepth || ++budget.Nodes > MaxNodes) return o ?? b!;
         // environment/labels: нормализуем обе стороны к map и мерджим по ключу (override-wins).
         // Иначе list-форма попадала бы в ветку «replace» и теряла ключи base (напр. строки подключения → рёбра).
         if (KeyValueKeys.Contains(key) && (AsKeyValueMap(b) is { } || AsKeyValueMap(o) is { }))
@@ -49,7 +56,7 @@ internal static class ComposeMerge
             {
                 if (kv.Key is null) continue;
                 res[kv.Key] = res.TryGetValue(kv.Key, out var bv)
-                    ? MergeValue(bv, kv.Value, kv.Key.ToString() ?? "")
+                    ? MergeValue(bv, kv.Value, kv.Key.ToString() ?? "", budget, depth + 1)
                     : kv.Value!;
             }
             return res;
@@ -60,7 +67,7 @@ internal static class ComposeMerge
         {
             var list = new List<object>(bl);
             foreach (var x in ol)
-                if (!list.Any(e => YamlEquals(e, x))) list.Add(x); // дедуп идентичных записей
+                if (!list.Any(e => YamlEquals(e, x, 0, new Budget()))) list.Add(x); // дедуп идентичных записей
             return list;
         }
 
@@ -80,7 +87,8 @@ internal static class ComposeMerge
             {
                 if (item?.ToString() is not { Length: > 0 } s) continue;
                 var eq = s.IndexOf('=');
-                if (eq > 0) res[s[..eq]] = s[(eq + 1)..];   // «KEY=value»; «KEY» без '=' — пропуск (как ReadEnv)
+                if (eq > 0) res[s[..eq]] = s[(eq + 1)..];   // «KEY=value»
+                else if (eq < 0) res[s] = null!;           // «KEY» без '=' — проброс из хоста: ключ сохраняем без значения (ReadEnv не кладёт его в Environment)
             }
             return res;
         }
@@ -88,13 +96,14 @@ internal static class ComposeMerge
     }
 
     // Сравнение YAML-значений для дедупа: скаляры — по строковому виду, простые списки/словари — рекурсивно.
-    private static bool YamlEquals(object? a, object? b)
+    private static bool YamlEquals(object? a, object? b, int depth, Budget budget)
     {
+        if (depth > MaxDepth || ++budget.Nodes > 10_000) return false;   // цикл/слишком глубоко — считаем разными (дубль в списке безвреден)
         if (a is IDictionary<object, object> am && b is IDictionary<object, object> bm)
             return am.Count == bm.Count && am.All(kv =>
-                bm.TryGetValue(kv.Key, out var bv) && YamlEquals(kv.Value, bv));
+                bm.TryGetValue(kv.Key, out var bv) && YamlEquals(kv.Value, bv, depth + 1, budget));
         if (a is IList<object> al && b is IList<object> bl)
-            return al.Count == bl.Count && al.Zip(bl, YamlEquals).All(x => x);
+            return al.Count == bl.Count && al.Zip(bl, (x, y) => YamlEquals(x, y, depth + 1, budget)).All(x => x);
         return string.Equals(a?.ToString(), b?.ToString(), StringComparison.Ordinal);
     }
 }
