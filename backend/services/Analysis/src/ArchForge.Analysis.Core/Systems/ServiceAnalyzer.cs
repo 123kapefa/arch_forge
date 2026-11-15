@@ -61,6 +61,28 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
     private const int CoreFraction = 2; // половина ядер (каждая компиляция грузит runtime-ссылки → память)
     internal static int MaxParallelism => Math.Max(1, Environment.ProcessorCount / CoreFraction);
 
+    // Решение со своим compose, в котором ≥2 сервисов, заменяем папками проектов, привязанными к узлам (ProjectFolderSplitter).
+    // Не разделилось (мало совпадений) — решение остаётся целиком, как раньше.
+    private static List<DiscoveredService> SplitByProjectFolders(string root, List<DiscoveredService> services,
+        IReadOnlyList<DiscoveredService> discovered, IReadOnlyList<SystemNode> nodes, Profiles.ServiceNaming naming,
+        Dictionary<string, SystemNode> bound, CancellationToken ct)
+    {
+        var roots = discovered.Select(d => d.Root).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var result = new List<DiscoveredService>();
+        foreach (var svc in services)
+        {
+            ct.ThrowIfCancellationRequested();
+            var parts = svc.ComposePath is null ? [] : ProjectFolderSplitter.Split(root, svc, nodes, naming, roots, ct);
+            if (parts.Count == 0) { result.Add(svc); continue; }
+            foreach (var (sub, node) in parts)
+            {
+                result.Add(sub);
+                bound[sub.Root] = node;
+            }
+        }
+        return result;
+    }
+
     // nodes/naming — узлы графа и правила имён: нужны только для монорепо с общим compose (см. ServiceNodeMatcher).
     public IReadOnlyList<ServiceAnalysis> Analyze(string root, ConventionPack pack, CancellationToken ct = default,
         IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null, bool readGuards = true, bool readErrors = true, bool readValidation = true, bool readAggregateTime = true, bool readFolders = true, bool readBus = false)
@@ -80,6 +102,9 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
                 bound[svc.Root] = node;
             }
         }
+        // Одно решение + общий compose с несколькими сервисами: делим решение по папкам проектов, дрейф идёт в узел сервиса (#60).
+        if (nodes is { Count: > 0 } && services.Any(s => s.ComposePath is not null))
+            services = SplitByProjectFolders(root, services, discovered, nodes, naming ?? Profiles.ServiceNaming.Default, bound, ct);
         if (services.Count == 0) return [];
 
         // Ограниченно-параллельный разбор: на 15–20 сервисах последовательный Roslyn = десятки секунд.
