@@ -45,7 +45,7 @@ public class ProjectProfileTests
         Assert.Equal(Strictness.Off, profile.Effective("dto-mapping"));
         Assert.Equal(Strictness.Off, profile.Effective("redundant-null-check"));
         Assert.Null(profile.Effective("service-cycle"));
-        Assert.Equal(["drift", "dto-mapping", "redundant-null-check", "mixed-error-strategy", "double-validation", "aggregate-time"], ProfileApplier.DisabledRules(profile));
+        Assert.Equal(["drift", "dto-mapping", "redundant-null-check", "mixed-error-strategy", "double-validation", "aggregate-time", "folder-structure"], ProfileApplier.DisabledRules(profile));
     }
 
     [Fact]
