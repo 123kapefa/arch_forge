@@ -25,6 +25,7 @@ public static class Registration
         services.AddSingleton<IBusSource>(sp => new CachingBusSource(new RoslynBusSource(), sp.GetRequiredService<ScanCache>()));   // pub/sub шины (#61)
         services.AddSingleton<IConfigKeySource>(sp => new RoslynConfigKeySource(sp.GetRequiredService<ScanCache>()));   // ключи конфигурации (E9.3)
         services.AddSingleton<IFolderSource>(sp => new CachingFolderSource(new RoslynFolderSource(), sp.GetRequiredService<ScanCache>()));   // раскладка (folder-structure)
+        services.AddSingleton<IAggregateEventSource>(sp => new CachingAggregateEventSource(new RoslynAggregateEventSource(), sp.GetRequiredService<ScanCache>()));   // события в агрегате (aggregate-events)
         services.AddSingleton<IAggregateTimeSource>(sp => new CachingAggregateTimeSource(new RoslynAggregateTimeSource(), sp.GetRequiredService<ScanCache>()));   // время и аудит (aggregate-time)
         services.AddSingleton<IValidationSource>(sp => new CachingValidationSource(new RoslynValidationSource(), sp.GetRequiredService<ScanCache>()));   // валидация (double-validation)
         services.AddSingleton<IErrorStrategySource>(sp => new CachingErrorStrategySource(new RoslynErrorStrategySource(), sp.GetRequiredService<ScanCache>()));   // стратегия ошибок (mixed-error-strategy)
