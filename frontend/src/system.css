@@ -1008,3 +1008,23 @@
 .ov__cov-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov__bar--sm { height: 6px; border-radius: 3px; }
 .ov__cov-unk { text-align: right; opacity: 0.7; }
+
+/* --- единый инспектор (R18, #90): метка «что это» + заголовок + подзаголовок + секции --- */
+.uinsp { display: flex; flex-direction: column; gap: 8px; padding: 2px 2px 8px; }
+.uinsp__what { font-size: 9px; letter-spacing: 0.1em; font-weight: 600; color: var(--accent); }
+.uinsp__head { display: flex; align-items: center; gap: 8px; }
+.uinsp__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.uinsp__title { font-weight: 600; font-size: 14px; word-break: break-word; }
+.uinsp__title--mono { font-family: ui-monospace, monospace; }
+.uinsp__sub { color: var(--muted); font-size: 11px; }
+.uinsp__link { all: unset; cursor: pointer; border-bottom: 1px dotted var(--muted); }
+.uinsp__link:hover, .uinsp__link:focus-visible { color: var(--accent); border-bottom-color: var(--accent); }
+.uinsp--empty { gap: 10px; padding: 12px 4px; }
+.uinsp--empty .uinsp__what { color: var(--muted); }
+.uinsp__hint { font-size: 12px; line-height: 1.45; }
+.uinsp__tips { margin: 0; padding-left: 16px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.inspector__edges .iedge__open {
+  flex: none; font-size: 10px; color: var(--muted); border: 1px solid var(--card-line);
+  border-radius: 10px; padding: 0 7px; background: none; cursor: pointer;
+}
+.inspector__edges .iedge__open:hover { color: var(--accent); border-color: var(--accent); }

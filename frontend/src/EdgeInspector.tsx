@@ -1,3 +1,4 @@
+import { InspectorFrame } from './InspectorFrame';
 import { CONFIDENCE_LABEL, confidenceLevel, matchLabel, relativeFile, shortFile, sortCalls, summarizeCalls, type HttpCall } from './edgeCalls';
 
 export interface SelectedEdge {
@@ -17,22 +18,26 @@ const KIND_LABEL: Record<string, string> = {
 const VIA_LABEL: Record<string, string> = { compose: 'из compose', config: 'из конфигурации', code: 'из кода', unknown: 'источник неизвестен' };
 
 /** Инспектор связи: откуда → куда, чем подтверждена и список конкретных вызовов с источником (E3.1). */
-export function EdgeInspector({ edge, names, scanRoot, callsRequested }: { edge: SelectedEdge; names: Record<string, string>; scanRoot: string; callsRequested: boolean }) {
+export function EdgeInspector({ edge, names, scanRoot, callsRequested, onFocus }: { edge: SelectedEdge; names: Record<string, string>; scanRoot: string; callsRequested: boolean; onFocus?: (id: string) => void }) {
   const from = names[edge.source] ?? edge.source;
   const to = names[edge.target] ?? edge.target;
   const calls = edge.calls ? sortCalls(edge.calls) : undefined;
   const lvl = confidenceLevel(edge.confidence);
   return (
-    <div className="einspect">
-      <div className="einspect__title">{from} <span aria-hidden>→</span> {to}</div>
-      <div className="einspect__tags">
+    <InspectorFrame what="СВЯЗЬ" className="einspect"
+      title={<>
+        {onFocus ? <button type="button" className="uinsp__link" onClick={() => onFocus(edge.source)} title="Перейти к узлу">{from}</button> : from}
+        {' '}<span aria-hidden>→</span>{' '}
+        {onFocus ? <button type="button" className="uinsp__link" onClick={() => onFocus(edge.target)} title="Перейти к узлу">{to}</button> : to}
+      </>}
+      subtitle={<span className="einspect__tags">
         <span className="einspect__tag">{KIND_LABEL[edge.kind] ?? edge.kind}</span>
         {edge.via && <span className="einspect__tag">{VIA_LABEL[edge.via] ?? edge.via}</span>}
         <span className={`einspect__tag einspect__conf--${lvl}`} title={`уверенность ${edge.confidence.toFixed(2)}`}>
           уверенность: {CONFIDENCE_LABEL[lvl]}
         </span>
         {edge.violation && <span className="einspect__tag einspect__tag--bad">нарушение</span>}
-      </div>
+      </span>}>
 
       {edge.kind === 'http-call' ? (
         <>
@@ -73,6 +78,6 @@ export function EdgeInspector({ edge, names, scanRoot, callsRequested }: { edge:
       ) : (
         <div className="finspect__hint">Для этого вида связи конкретных вызовов нет.</div>
       )}
-    </div>
+    </InspectorFrame>
   );
 }
