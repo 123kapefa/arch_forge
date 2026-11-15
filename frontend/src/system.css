@@ -927,3 +927,43 @@
 .einspect__src { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .einspect__path { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .einspect__line { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--text); margin-left: -6px; flex: none; }
+
+/* --- Deploy-оверлеи на плашках (E3.2 / #89) --- */
+.sys-node { flex-wrap: wrap; }
+.dep-strip { display: flex; flex-wrap: wrap; gap: 3px; flex-basis: 100%; margin-top: 6px; }
+.svc-card .dep-strip { padding: 0 10px 6px; margin-top: 0; }
+.dep-chip { font-size: 9.5px; line-height: 1.5; padding: 0 6px; border-radius: 10px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); background: rgba(124, 134, 152, 0.14);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.dep-chip--start { color: var(--accent); background: rgba(108, 140, 255, 0.16); }
+.dep-chip--exposed { color: var(--crit); background: rgba(229, 72, 77, 0.16); }
+.dep-chip--public { color: var(--warn); background: rgba(224, 178, 74, 0.14); }
+.dep-chip--internal { color: var(--ok); background: rgba(111, 207, 119, 0.12); }
+.dep-chip--hc-on { color: var(--ok); background: rgba(111, 207, 119, 0.12); }
+.dep-chip--hc-off { color: var(--muted); }
+
+/* --- Вид «Сравнение сред» (E3.3 / #89) --- */
+.cmp { position: absolute; inset: 0; overflow: auto; padding: 14px 16px; background: var(--bg, transparent); }
+.cmp__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
+.cmp__title { font-size: 13px; font-weight: 600; color: var(--text); }
+.cmp__note { margin: 0 0 10px; font-size: 11px; color: var(--muted); }
+.cmp__err { color: var(--crit); font-size: 12px; margin-bottom: 8px; }
+.cmp__table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.cmp__table th, .cmp__table td { border: 1px solid var(--card-line); padding: 6px 8px; text-align: left; vertical-align: top; }
+.cmp__table thead th { position: sticky; top: 0; background: var(--card); z-index: 1; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.cmp__table th.cmp__prod { color: var(--accent); }
+.cmp__name { font-weight: 600; white-space: nowrap; }
+.cmp__kind { display: block; font-weight: 400; font-size: 10px; color: var(--muted); }
+.cmp__row--breaks > th { box-shadow: inset 3px 0 0 var(--crit); }
+.cmp__row--changed > th { box-shadow: inset 3px 0 0 var(--warn); }
+.cmp__cell--diff { background: rgba(224, 178, 74, 0.07); }
+.cmp__cell--absent { color: var(--muted); font-style: italic; }
+.cmp__line { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 3px; }
+.cmp__tag { font-size: 10px; padding: 0 6px; border-radius: 10px; }
+.cmp__tag--break { color: var(--crit); background: rgba(229, 72, 77, 0.16); }
+.cmp__tag--change { color: var(--warn); background: rgba(224, 178, 74, 0.14); }
+.cmp__empty { color: var(--muted); padding: 24px 0; font-size: 13px; }
+.sysview__flow { position: relative; }
+.panel__sub { margin: 2px 0 4px 18px; }
+.dep-chip--bound { color: var(--muted); background: rgba(124, 134, 152, 0.14); }
+.dep-chip--net { color: var(--muted); }
