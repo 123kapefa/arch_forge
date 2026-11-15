@@ -51,6 +51,8 @@ public static class RuleCatalog
         new("mixed-error-strategy", ProblemCategory.Convention, "Смесь стратегий ошибок: Result и исключения", "Стратегия ошибок и нулей", OffOnSimple, new RuleExample(["// в одном сервисе:", "Task<Result<Order>> Get(Guid id);              // ошибка возвращается", "throw new NotFoundException(\"order\");        // та же ошибка бросается"], ["// одна стратегия на сервис:", "return Result.Failure<Order>(OrderErrors.NotFound);", "// или везде исключения + middleware"])),
         // Двойная валидация: формат поля проверяют и валидатор, и Value Object (стиль → на Simple выключено).
         new("double-validation", ProblemCategory.Convention, "Двойная валидация: валидатор и Value Object", "Валидация — один раз", OffOnSimple, new RuleExample(["RuleFor(x => x.Title).MaximumLength(150);   // валидатор", "TagTitle.Of(title);                        // и VO проверяет длину"], ["RuleFor(x => x.Title).MustBe(TagTitle.Of);   // валидатор делегирует VO", "// правило формата одно — в TagTitle.Of"])),
+        // Время и аудит не в агрегате: часы в домене или аудит-поля ставит interceptor (стиль → на Simple выключено, там допустим один хук).
+        new("aggregate-time", ProblemCategory.Convention, "Время и аудит не в агрегате", "Агрегаты, VO и доменные события", OffOnSimple, new RuleExample(["// в агрегате:", "UpdatedAt = DateTime.UtcNow;     // агрегат читает часы"], ["public void Rename(WidgetName name, DateTime now)", "{", "    Name = name;", "    UpdatedAt = now;           // время — параметром, из TimeProvider в хендлере", "}"])),
     ];
 
     private static readonly Dictionary<string, RuleDef> ById = All.ToDictionary(r => r.Id, StringComparer.Ordinal);

@@ -163,6 +163,12 @@ internal sealed class CachingValidationSource(IValidationSource inner, ScanCache
         cache.GetOrAdd("validation", root, () => inner.Read(root, ct), ct);
 }
 
+internal sealed class CachingAggregateTimeSource(IAggregateTimeSource inner, ScanCache cache) : IAggregateTimeSource
+{
+    public AggregateTimeFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("aggtime", root, () => inner.Read(root, ct), ct);
+}
+
 internal sealed class CachingConstructionSource(IConstructionSource inner, ScanCache cache) : IConstructionSource
 {
     public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>
