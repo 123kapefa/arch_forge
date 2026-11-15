@@ -5,6 +5,22 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // Единственный чанк >500 кБ — elkjs (~1.4 МБ, неделимая библиотека), он грузится лениво при первой раскладке.
+    // Порог поднят осознанно: основной чанк ~140 кБ, всё остальное меньше.
+    chunkSizeWarningLimit: 1500,
+    rolldownOptions: {
+      output: {
+        // Вендоры — отдельными чанками (#57): кэшируются независимо от кода приложения.
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-react-flow', test: /node_modules[\\/](@xyflow|d3-[^\\/]+|classcat|zustand)[\\/]/, priority: 20 },
+            { name: 'vendor-react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 10 },
+          ],
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {
