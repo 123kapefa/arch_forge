@@ -18,6 +18,42 @@ public class ServiceCycleDetectorTests
     }
 
     [Fact]
+    public void Cycle_reports_all_members_and_min_confidence_and_colors_every_node()
+    {
+        var g = new SystemGraph([Svc("a"), Svc("b"), Svc("c"), Svc("d")],
+            [Http("a", "b"), Http("b", "c"), new SystemEdge("c", "a", "http-call", EdgeVia.Code, 0.9), Http("c", "d")], []);
+
+        var p = Assert.Single(ServiceCycleDetector.Detect(g));
+        Assert.Equal(["a", "b", "c"], p.Members);
+        Assert.Equal(0.8, p.Confidence);
+
+        var dto = (g with { Problems = [p] }).ToGraphDto("t");
+        Assert.All(dto.Nodes.Where(n => n.Id is "a" or "b" or "c"), n => Assert.Equal("critical", n.Health));
+        Assert.Equal("ok", dto.Nodes.Single(n => n.Id == "d").Health);
+        Assert.Equal(["a", "b", "c"], dto.Problems![0].Members);
+        Assert.NotNull(dto.Problems[0].Fix);
+    }
+
+    [Fact]
+    public void Low_confidence_edges_do_not_form_cycle_and_threshold_is_tunable()
+    {
+        var g = new SystemGraph([Svc("a"), Svc("b")],
+            [new SystemEdge("a", "b", "http-call", EdgeVia.Code, 0.5), new SystemEdge("b", "a", "http-call", EdgeVia.Code, 0.5)], []);
+
+        Assert.Empty(ServiceCycleDetector.Detect(g));
+        Assert.Single(ServiceCycleDetector.Detect(g, minConfidence: 0.5));
+    }
+
+    [Theory]
+    [InlineData("unattributed-calls")]
+    [InlineData("ambiguous-target")]
+    public void Coverage_kinds_have_fix_hint(string kind)
+    {
+        var dto = new SystemProblem(ProblemSeverity.Coverage, kind, "t", "x").ToProblemDto(0);
+        Assert.False(string.IsNullOrEmpty(dto.Fix));
+    }
+
+    [Fact]
     public void No_cycle_in_dag()
     {
         var g = new SystemGraph([Svc("a"), Svc("b"), Svc("c")],

@@ -20,21 +20,30 @@ public static class ServiceCycleDetector
             .GroupBy(n => n.Id, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.Ordinal);
 
+        var edgeConf = new Dictionary<(string, string), double>();
         var adj = services.ToDictionary(s => s, _ => new List<string>(), StringComparer.Ordinal);
         foreach (var e in graph.Edges)
             if (e is { Kind: "http-call", Deferred: false } && e.Confidence >= minConfidence &&
                 e.Source != e.Target && services.Contains(e.Source) && services.Contains(e.Target))
+            {
                 adj[e.Source].Add(e.Target);
+                var k = (e.Source, e.Target);
+                edgeConf[k] = edgeConf.TryGetValue(k, out var c) ? Math.Max(c, e.Confidence) : e.Confidence;
+            }
 
         var problems = new List<SystemProblem>();
         foreach (var scc in Tarjan(adj).Where(c => c.Count >= 2))
         {
             var ordered = scc.OrderBy(id => id, StringComparer.Ordinal).ToList();
+            var inScc = scc.ToHashSet(StringComparer.Ordinal);
+            var members = edgeConf.Keys.Where(k => inScc.Contains(k.Item1) && inScc.Contains(k.Item2)).ToList();
             var names = ordered.Select(id => nameById.GetValueOrDefault(id, id));
             problems.Add(new SystemProblem(
                 ProblemSeverity.Critical, "service-cycle",
                 $"цикл сервисов ({scc.Count}): {string.Join(" ↔ ", names)}",
-                ordered[0])); // локализуем на узел (health узла подсветится, ревью P1.5-E M3)
+                ordered[0],                // якорь для навигации; health красит всех Members
+                Members: ordered,
+                Confidence: members.Count > 0 ? members.Min(k => edgeConf[k]) : null));
         }
         return problems;
     }

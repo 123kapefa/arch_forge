@@ -12,9 +12,11 @@ public static class SystemGraphMapping
         ConventionPack? pack = null)
     {
         // здоровье узла — по самой суровой проблеме, где он location (Critical=0 < Warning=1 < Coverage=2)
+        // проблема с Members (цикл сервисов) красит каждого участника, а не только якорь Location
         var worstByLocation = g.Problems
-            .GroupBy(p => p.Location, StringComparer.Ordinal)
-            .ToDictionary(x => x.Key, x => x.Min(p => (int)p.Severity), StringComparer.Ordinal);
+            .SelectMany(p => (p.Members is { Count: > 0 } m ? m : [p.Location]).Select(loc => (Loc: loc, Sev: (int)p.Severity)))
+            .GroupBy(x => x.Loc, x => x.Sev, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.Min(), StringComparer.Ordinal);
 
         var nodes = g.Nodes.Select(n => n.ToNodeDto(worstByLocation, nodeLayers)).ToList();
         var edges = g.Edges.Select(e => e.ToEdgeDto()).ToList();
@@ -79,7 +81,8 @@ public static class SystemGraphMapping
         $"p{index}", SeverityString(p.Severity), p.Kind, p.Title, p.Location,
         Category: p.Category,
         Items: p.Items?.Select(it => it.ToProblemItemDto()).ToList(),
-        Fix: FixFor(p.Kind));
+        Fix: FixFor(p.Kind),
+        Members: p.Members, Confidence: p.Confidence);
 
     // Совет «как чинить» — по виду проблемы (одинаков для всех её случаев); неизвестный вид → без подсказки.
     private static string? FixFor(string kind) => kind switch
@@ -102,6 +105,8 @@ public static class SystemGraphMapping
         "aggregate-time" => "Передавайте время в метод агрегата параметром (DateTime now; источник — TimeProvider в хендлере), агрегат часов не читает. Аудит-поля (CreatedAt/UpdatedAt) ставит метод агрегата, а не interceptor — один способ на проект. На простом уровне один хук SaveChanges допустим.",
         "aggregate-events" => "Каждая публичная мутация агрегата поднимает доменное событие с временем (RaiseDomainEvent(new XChanged(Id, …, now))) и обновляет UpdatedAt; время приходит параметром. Если изменение намеренно тихое (служебное поле, кэш) — игнорируйте или выключите правило в профиле. На простом уровне события не обязательны.",
         "folder-structure" => "Раскладывайте по сущности: Features/{Entity}/ и Domain/{Entity}/, а не Services/Helpers/Common. Файл назовите по действию (FindOrCreateFounder вместо FounderResolver) и положите к владельцу данных; нужен нескольким срезам — публичный контракт владельца. Для вспомогательного кода общего назначения вынесите в Shared, когда появится второй потребитель.",
+        "unattributed-calls" => "Привяжите исходящие вызовы к узлу: задайте имя сервиса в compose так, чтобы оно совпадало с проектом (или оставьте один app-узел на систему).",
+        "ambiguous-target" => "Хост совпал с несколькими узлами — переименуйте сервисы так, чтобы имя было уникальным, или укажите явный хост в конфиге.",
         "drift" => "Приведите тип к своду (нужный маркер/суффикс) или дополните archforge.conventions.json.",
         "drift-scan-failed" or "layer-scan-failed" => "Разбор сервиса не удался — проверьте, что он собирается (restore/build).",
         _ => null,

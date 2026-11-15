@@ -93,6 +93,8 @@ export interface Problem {
   via?: string;
   fix?: string;
   category?: string;     // architecture (реальные проблемы) | convention (дрейф) — линза; null → architecture
+  members?: string[];    // узлы-участники (service-cycle): подсвечиваются все; location — якорь
+  confidence?: number;   // 0..1 (цикл — слабейшее ребро)
   items?: ProblemItem[]; // отдельные факты (типы дрейфа / пары нарушений) — раскрываются списком
 }
 
