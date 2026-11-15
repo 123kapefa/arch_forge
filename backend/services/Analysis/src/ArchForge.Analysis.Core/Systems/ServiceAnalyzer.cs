@@ -11,6 +11,9 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
     // исходящие HTTP-вызовы сервиса (HttpClient.GetAsync/… с абсолютным URL) — питает call-graph (E3.1).
     public IReadOnlyList<HttpCallHit> HttpCalls { get; init; } = [];
 
+    // DI-контейнер сервиса: регистрации времён жизни + зависимости конструкторов (E4.2). null — не разбирался (источник не подключён/сбой).
+    public DiModel? Di { get; init; }
+
     // Монорепо с общим compose: узел графа, к которому сервис привязан по имени (ServiceNodeMatcher). Есть → проблемы, вызовы и слои
     // идут в ЭТОТ узел, а не по namespace системы (в ней десятки узлов). null — у сервиса свой compose, привязка по namespace, как раньше.
     public string? NodeId { get; init; }
@@ -32,7 +35,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IDiSource? di = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -99,7 +102,11 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             }
             catch (OperationCanceledException) { throw; }
             catch { /* библиотеки не разобрались — остаются собственные вызовы */ }
-            results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id };
+            DiModel? diModel = null;                       // DI-контейнер (E4.2) — свой try: сбой не роняет разбор
+            try { diModel = di?.Read(svc.Root, ct); }
+            catch (OperationCanceledException) { throw; }
+            catch { diModel = null; }
+            results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Di = diModel };
         });
         return results;
     }

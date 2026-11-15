@@ -111,6 +111,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             var extra = new List<SystemProblem>();
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
             if (query.Layers) extra.AddRange(LayerViolationDetector.Detect(analyses));
+            if (query.Layers) extra.AddRange(DiLifetimeDetector.Detect(analyses));   // E4.2: DI архитектурный, едет с линзой слоёв (контракт запроса не менялся)
             if (hasCustom) extra.AddRange(CustomRuleDetector.Detect(analyses, profile.CustomRules));
             // свод-линза «маппинг не централизован» — по оси конструирования (data-DTO собран инлайн в N мест)
             if (query.Drift && construction is not null)
