@@ -4,7 +4,7 @@ namespace ArchForge.Analysis.Core.Systems;
 // Сейчас: общая БД/хранилище (SharedDbDetector) + цикл сервисов (ServiceCycleDetector) +
 // событийный поток (DanglingEventDetector: isolated-topic сейчас; dangling/orphaned — при рёбрах pub/sub из кода) +
 // публикация хранилища наружу (ExposedPortDetector, E9.2 — на данных DeployInfo из compose).
-// Отложено (backlog): направление pub/sub из кода (активирует dangling/orphaned);
+// Рёбра pub/sub из кода добавляет PubSubGraphBuilder (#61) и пересчитывает dangling/orphaned.
 // дрейф/слои/покрытие из Фазы 1 (нужны per-service тип-графы в системном IR).
 public static class SystemProblemDetector
 {

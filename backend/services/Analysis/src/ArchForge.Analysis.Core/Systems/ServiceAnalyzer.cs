@@ -21,6 +21,9 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
     // проверки параметров на null (правило redundant-null-check); читаются вместе с остальным разбором сервиса
     public IReadOnlyList<NullGuardSite> Guards { get; init; } = [];
 
+    // публикации/подписки шины сообщений из кода (направление pub/sub, #61) — питает рёбра publishes/subscribes
+    public IReadOnlyList<BusSite> BusSites { get; init; } = [];
+
     // чем сервис сообщает об ожидаемых ошибках (правило mixed-error-strategy)
     public ErrorStrategyFacts ErrorStrategy { get; init; } = ErrorStrategyFacts.Empty;
 
@@ -50,7 +53,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IDiSource? di = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -60,7 +63,7 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
 
     // nodes/naming — узлы графа и правила имён: нужны только для монорепо с общим compose (см. ServiceNodeMatcher).
     public IReadOnlyList<ServiceAnalysis> Analyze(string root, ConventionPack pack, CancellationToken ct = default,
-        IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null, bool readGuards = true, bool readErrors = true, bool readValidation = true, bool readAggregateTime = true, bool readFolders = true)
+        IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null, bool readGuards = true, bool readErrors = true, bool readValidation = true, bool readAggregateTime = true, bool readFolders = true, bool readBus = false)
     {
         if (!Directory.Exists(root)) return []; // код-разбор идёт по коду сервисов — нужен корень-папка
 
@@ -121,6 +124,10 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { guardSites = readGuards ? guards?.Read(svc.Root, ct) ?? [] : []; }
             catch (OperationCanceledException) { throw; }
             catch { guardSites = []; }
+            IReadOnlyList<BusSite> busSites = [];          // pub/sub шины (#61) — свой try; читаем лишь по запросу (линза вызовов)
+            try { busSites = readBus ? bus?.Read(svc.Root, ct) ?? [] : []; }
+            catch (OperationCanceledException) { throw; }
+            catch { busSites = []; }
             var errorFacts = ErrorStrategyFacts.Empty;     // стратегия ошибок — тоже свой try
             try { errorFacts = readErrors ? errors?.Read(svc.Root, ct) ?? ErrorStrategyFacts.Empty : ErrorStrategyFacts.Empty; }
             catch (OperationCanceledException) { throw; }
@@ -137,11 +144,7 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { folderFacts = readFolders ? folders?.Read(svc.Root, ct) ?? FolderFacts.Empty : FolderFacts.Empty; }
             catch (OperationCanceledException) { throw; }
             catch { folderFacts = FolderFacts.Empty; }
-            DiModel? diModel = null;                       // DI-контейнер (E4.2) — свой try: сбой не роняет разбор
-            try { diModel = di?.Read(svc.Root, ct); }
-            catch (OperationCanceledException) { throw; }
-            catch { diModel = null; }
-            results[i] = new ServiceAnalysis(svc, location, result) { Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, Di = diModel };
+            results[i] = new ServiceAnalysis(svc, location, result) { Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites };
         });
         return results;
     }

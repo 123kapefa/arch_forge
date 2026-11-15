@@ -22,6 +22,7 @@ public static class Registration
         services.AddSingleton<IHttpCallSource>(sp => new CachingHttpCallSource(new RoslynHttpCallSource(), sp.GetRequiredService<ScanCache>()));
         services.AddSingleton<IDiSource>(sp => new CachingDiSource(new RoslynDiSource(), sp.GetRequiredService<ScanCache>()));   // DI-контейнер сервиса, E4.2
         services.AddSingleton<IGuardSource>(sp => new CachingGuardSource(new RoslynGuardSource(), sp.GetRequiredService<ScanCache>()));   // проверки на null (redundant-null-check)
+        services.AddSingleton<IBusSource>(sp => new CachingBusSource(new RoslynBusSource(), sp.GetRequiredService<ScanCache>()));   // pub/sub шины (#61)
         services.AddSingleton<IConfigKeySource>(sp => new RoslynConfigKeySource(sp.GetRequiredService<ScanCache>()));   // ключи конфигурации (E9.3)
         services.AddSingleton<IFolderSource>(sp => new CachingFolderSource(new RoslynFolderSource(), sp.GetRequiredService<ScanCache>()));   // раскладка (folder-structure)
         services.AddSingleton<IAggregateTimeSource>(sp => new CachingAggregateTimeSource(new RoslynAggregateTimeSource(), sp.GetRequiredService<ScanCache>()));   // время и аудит (aggregate-time)
