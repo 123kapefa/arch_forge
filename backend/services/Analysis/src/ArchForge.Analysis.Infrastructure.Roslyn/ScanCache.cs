@@ -169,6 +169,12 @@ internal sealed class CachingAggregateTimeSource(IAggregateTimeSource inner, Sca
         cache.GetOrAdd("aggtime", root, () => inner.Read(root, ct), ct);
 }
 
+internal sealed class CachingFolderSource(IFolderSource inner, ScanCache cache) : IFolderSource
+{
+    public FolderFacts Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("folders", root, () => inner.Read(root, ct), ct);
+}
+
 internal sealed class CachingConstructionSource(IConstructionSource inner, ScanCache cache) : IConstructionSource
 {
     public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>

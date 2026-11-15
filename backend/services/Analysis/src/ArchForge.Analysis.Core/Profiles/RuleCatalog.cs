@@ -53,6 +53,8 @@ public static class RuleCatalog
         new("double-validation", ProblemCategory.Convention, "Двойная валидация: валидатор и Value Object", "Валидация — один раз", OffOnSimple, new RuleExample(["RuleFor(x => x.Title).MaximumLength(150);   // валидатор", "TagTitle.Of(title);                        // и VO проверяет длину"], ["RuleFor(x => x.Title).MustBe(TagTitle.Of);   // валидатор делегирует VO", "// правило формата одно — в TagTitle.Of"])),
         // Время и аудит не в агрегате: часы в домене или аудит-поля ставит interceptor (стиль → на Simple выключено, там допустим один хук).
         new("aggregate-time", ProblemCategory.Convention, "Время и аудит не в агрегате", "Агрегаты, VO и доменные события", OffOnSimple, new RuleExample(["// в агрегате:", "UpdatedAt = DateTime.UtcNow;     // агрегат читает часы"], ["public void Rename(WidgetName name, DateTime now)", "{", "    Name = name;", "    UpdatedAt = now;           // время — параметром, из TimeProvider в хендлере", "}"])),
+        // Раскладка по тех. признаку: папки Common/Utils/Services и файлы *Manager/*Helper/*Resolver (стиль → на Simple выключено).
+        new("folder-structure", ProblemCategory.Convention, "Раскладка по тех. признаку, а не по сущности", "Структура папок", OffOnSimple, new RuleExample(["Application/", "  Services/", "    FounderResolver.cs      // про Founder, лежит в тех. папке"], ["Features/Founders/", "  FindOrCreateFounder.cs    // что делает, в папке владельца"])),
     ];
 
     private static readonly Dictionary<string, RuleDef> ById = All.ToDictionary(r => r.Id, StringComparer.Ordinal);
