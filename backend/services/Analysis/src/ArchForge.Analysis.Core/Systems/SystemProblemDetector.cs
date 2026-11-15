@@ -8,11 +8,11 @@ namespace ArchForge.Analysis.Core.Systems;
 // дрейф/слои/покрытие из Фазы 1 (нужны per-service тип-графы в системном IR).
 public static class SystemProblemDetector
 {
-    public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph) =>
+    public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph, PortSourceLookup? portSource = null) =>
     [
         .. SharedDbDetector.Detect(graph),
         .. ServiceCycleDetector.Detect(graph),
         .. DanglingEventDetector.Detect(graph),
-        .. ExposedPortDetector.Detect(graph),
+        .. ExposedPortDetector.Detect(graph, locate: portSource),
     ];
 }
