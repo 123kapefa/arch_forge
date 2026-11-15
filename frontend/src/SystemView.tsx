@@ -17,6 +17,9 @@ import { fetchSystem, type SystemGraph, type ProblemItem, type Problem, type Sys
 import { fetchMap, fetchImports, type GraphDto, type MemberDto, type ImportsDto } from './api';
 import { isAbortError } from './http';
 import { ImportsScreen, ConventionsView, ProfileView, CompareView, FolderPicker } from './lazyScreens';
+import { Overview } from './Overview';
+import { CommandPalette } from './CommandPalette';
+import { buildSearchIndex, type SearchEntry } from './overviewModel';
 import { buildSystemFlow, buildLayerFlow, filterFlow, edgeKindsOf, edgeStyle, portExposure, portLabel, type SystemNodeData } from './systemFlow';
 import { buildLayerFlowRich, buildTypeFlow, type LayerCardData } from './layerFlow';
 import { dagreLayout } from './dagreLayout';
@@ -767,6 +770,9 @@ export function SystemView() {
   const [importsLoading, setImportsLoading] = useState(false);
   const [convOpen, setConvOpen] = useState(false); // модалка просмотра свода
   const [profileOpen, setProfileOpen] = useState(false); // окно «Профиль проекта» (adr/0012)
+  const [overviewOpen, setOverviewOpen] = useState(false); // стартовый обзор/триаж (E8)
+  const [cmdkOpen, setCmdkOpen] = useState(false);         // поиск ⌘K (E8)
+  const overviewShownFor = useRef('');                     // обзор открывается сам один раз на проект
   const flowRef = useRef<FlowHandle>(null);
   const flagsRef = useRef({ layers: true, drift: true }); // текущие флаги анализа (для стабильного load)
   flagsRef.current = { layers: runLayers, drift: runDrift };
@@ -984,6 +990,9 @@ export function SystemView() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         flowRef.current?.save();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCmdkOpen((o) => !o);
       } else if (e.key === 'Escape') {
         setMenuOpen(false);
       }
@@ -1214,6 +1223,31 @@ export function SystemView() {
     const ord: Record<string, number> = { critical: 0, warning: 1, coverage: 2, info: 3 };
     return [...(graph?.problems ?? [])].sort((a, b) => (ord[a.severity] ?? 9) - (ord[b.severity] ?? 9));
   }, [graph]);
+  // E8: обзор открывается сам при первом показе проекта; ⌘K-индекс и переходы.
+  useEffect(() => {
+    if (graph && loadedPath && overviewShownFor.current !== loadedPath) {
+      overviewShownFor.current = loadedPath;
+      setOverviewOpen(true);
+    }
+  }, [graph, loadedPath]);
+  const searchIndex = useMemo(
+    () => (graph ? buildSearchIndex(graph, l1Map, drill ? (drill.data as SystemNodeData).node.id : null) : []),
+    [graph, l1Map, drill],
+  );
+  // К узлу на карте: из любого режима/уровня возвращаемся на L0 и центрируем (после перерисовки холста).
+  const goToNode = useCallback((id: string) => {
+    setImportsOpen(false);
+    setViewMode('structure');
+    setDrill(null); setDrill2(null);
+    setSelectedFact(null);
+    setTimeout(() => focusNode(id), 150);
+  }, [focusNode]);
+  const pickSearch = useCallback((e: SearchEntry) => {
+    setCmdkOpen(false);
+    setOverviewOpen(false);
+    if (e.kind === 'type' && e.item) { setImportsOpen(false); setViewMode('structure'); gotoBlock(e.item); return; }
+    goToNode(e.nodeId);
+  }, [goToNode, gotoBlock]);
   // v3: игнорируем прежние авто-сохранённые раскладки — при открытии всегда свежая ELK-раскладка.
   const storageKey = loadedPath ? `af_layout3:${loadedPath}` : '';
 
@@ -1293,6 +1327,16 @@ export function SystemView() {
             <span className={`saved ${saved ? 'saved--ok' : 'saved--dirty'}`}>
               {saved ? '✓ сохранено' : '● есть изменения'}
             </span>
+          )}
+          {graph && (
+            <button className="sysview__nav" onClick={() => setOverviewOpen(true)} title="Обзор: где болит">
+              <Icon name="box" size={15} />обзор
+            </button>
+          )}
+          {graph && (
+            <button className="sysview__nav" onClick={() => setCmdkOpen(true)} title="Поиск по системе (⌘K)">
+              ⌘K поиск
+            </button>
           )}
           {graph && (
             <button
@@ -1624,6 +1668,18 @@ export function SystemView() {
           onSelect={(p) => { setPickerOpen(false); openFresh(p); }}
           onClose={() => setPickerOpen(false)}
         />
+      )}
+      {overviewOpen && graph && (
+        <Overview
+          graph={graph}
+          onClose={() => setOverviewOpen(false)}
+          onSearch={() => { setOverviewOpen(false); setCmdkOpen(true); }}
+          onService={(id) => { setOverviewOpen(false); goToNode(id); }}
+          onProblem={(p) => { setOverviewOpen(false); setProblemsOpen(true); setExpandedProblems(new Set([p.id])); goToNode(p.location); }}
+        />
+      )}
+      {cmdkOpen && graph && (
+        <CommandPalette index={searchIndex} onPick={pickSearch} onClose={() => setCmdkOpen(false)} />
       )}
       {convOpen && graph?.conventions && (
         <ConventionsView conventions={graph.conventions} onClose={() => setConvOpen(false)} />
