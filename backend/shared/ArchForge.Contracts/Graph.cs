@@ -118,7 +118,11 @@ public sealed record ProblemDto(
     // линза для фильтрации на фронте: architecture (реальные проблемы) | convention (дрейф от свода)
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Category = null,
     // отдельные факты агрегированной проблемы (типы дрейфа / пары нарушений) — для раскрытия списком
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ProblemItemDto>? Items = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ProblemItemDto>? Items = null,
+    // узлы-участники (цикл сервисов): все подсвечиваются; Location — якорь навигации
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Members = null,
+    // уверенность проблемы 0..1 (цикл — слабейшее ребро); null — не применимо
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Confidence = null);
 
 /// <summary>Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка.
 /// File/Line — где живёт тип (для перехода «к файлу/плашке»); File пуст, если источник не дал путь.</summary>

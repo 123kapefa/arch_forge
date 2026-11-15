@@ -63,7 +63,9 @@ public sealed record HttpCall(
 public sealed record SystemProblem(
     ProblemSeverity Severity, string Kind, string Title, string Location,
     string Category = ProblemCategory.Architecture,
-    IReadOnlyList<ProblemItem>? Items = null); // отдельные факты (типы дрейфа / пары нарушений) для раскрытия
+    IReadOnlyList<ProblemItem>? Items = null, // отдельные факты (типы дрейфа / пары нарушений) для раскрытия
+    IReadOnlyList<string>? Members = null,     // все узлы-участники (цикл): health красит каждого, а не только Location
+    double? Confidence = null);                // уверенность проблемы 0..1 (цикл — слабейшее ребро цикла)
 
 // Отдельный факт агрегированной проблемы: имя (тип / «From → To»), слой, короткая заметка.
 // File/Line — где живёт тип (переход «к файлу/плашке»); File пуст, если источник не дал путь.

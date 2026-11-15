@@ -43,7 +43,7 @@ export function severityCounts(problems: Problem[] | undefined): Record<string, 
 
 /** Проблемы, чей `location` точно совпадает с id узла (node-located: shared-db, service-cycle, dangling…). */
 export function problemsAt(problems: Problem[] | undefined, nodeId: string): Problem[] {
-  return (problems ?? []).filter((p) => p.location === nodeId);
+  return (problems ?? []).filter((p) => p.location === nodeId || (p.members?.includes(nodeId) ?? false));
 }
 
 /**

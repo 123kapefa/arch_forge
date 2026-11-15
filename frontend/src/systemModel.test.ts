@@ -166,3 +166,11 @@ describe('ownerByRoot / lensHitsByNode (подсветка линзы #70)', () 
     expect(conv.has('gw')).toBe(false); // факты специфичнее — на gw ничего
   });
 });
+
+describe('problemsAt: участники цикла', () => {
+  it('находит проблему и по members, не только по location', () => {
+    const p = { id: 'p0', severity: 'critical', kind: 'service-cycle', title: 't', location: 'a', members: ['a', 'b'] };
+    expect(problemsAt([p], 'b')).toHaveLength(1);
+    expect(problemsAt([p], 'c')).toHaveLength(0);
+  });
+});
