@@ -55,6 +55,8 @@ public static class RuleCatalog
         new("aggregate-time", ProblemCategory.Convention, "Время и аудит не в агрегате", "Агрегаты, VO и доменные события", OffOnSimple, new RuleExample(["// в агрегате:", "UpdatedAt = DateTime.UtcNow;     // агрегат читает часы"], ["public void Rename(WidgetName name, DateTime now)", "{", "    Name = name;", "    UpdatedAt = now;           // время — параметром, из TimeProvider в хендлере", "}"])),
         // Раскладка по тех. признаку: папки Common/Utils/Services и файлы *Manager/*Helper/*Resolver (стиль → на Simple выключено).
         new("folder-structure", ProblemCategory.Convention, "Раскладка по тех. признаку, а не по сущности", "Структура папок", OffOnSimple, new RuleExample(["Application/", "  Services/", "    FounderResolver.cs      // про Founder, лежит в тех. папке"], ["Features/Founders/", "  FindOrCreateFounder.cs    // что делает, в папке владельца"])),
+        // Мутации агрегата без доменного события и UpdatedAt (стиль → на Simple выключено: события там не обязательны).
+        new("aggregate-events", ProblemCategory.Convention, "Мутация агрегата без доменного события", "Агрегаты, VO и доменные события", OffOnSimple, new RuleExample(["public void Rename(WidgetName name)", "{", "    Name = name;               // изменили, а события нет", "}"], ["public void Rename(WidgetName name, DateTime now)", "{", "    Name = name;", "    UpdatedAt = now;", "    RaiseDomainEvent(new WidgetRenamed(Id, name, now));", "}"])),
     ];
 
     private static readonly Dictionary<string, RuleDef> ById = All.ToDictionary(r => r.Id, StringComparer.Ordinal);
