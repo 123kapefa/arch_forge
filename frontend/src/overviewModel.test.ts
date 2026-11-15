@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SystemGraph } from './system';
-import { worstServices, topProblems, coverageShare, buildSearchIndex, searchEntries } from './overviewModel';
+import { worstServices, topProblems, coverageShare, buildSearchIndex, searchEntries, serviceCoverage } from './overviewModel';
 
 const g: SystemGraph = {
   project: 'p',
@@ -47,6 +47,21 @@ describe('coverageShare', () => {
   });
   it('total=0 → нули', () => {
     expect(coverageShare({ ...g, coverage: { marker: 0, heuristic: 0, unknown: 0, total: 0 } }).marker).toBe(0);
+  });
+});
+
+describe('serviceCoverage', () => {
+  const svc = (id: string, name: string, c?: { marker: number; heuristic: number; unknown: number; total: number }) =>
+    ({ id, name, health: 'ok', layers: [], coverage: c });
+  it('доли по сервисам, сперва с большей долей неизвестного; без разбивки — пропуск', () => {
+    const rows = serviceCoverage({ ...g, services: [
+      svc('a', 'A', { marker: 8, heuristic: 2, unknown: 0, total: 10 }),
+      svc('b', 'B', { marker: 1, heuristic: 1, unknown: 2, total: 4 }),
+      svc('c', 'C'),
+      svc('d', 'D', { marker: 0, heuristic: 0, unknown: 0, total: 0 }),
+    ] });
+    expect(rows.map((r) => r.name)).toEqual(['B', 'A']);
+    expect(rows[0]).toMatchObject({ unknown: 50, marker: 25, total: 4 });
   });
 });
 

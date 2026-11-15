@@ -184,4 +184,5 @@ public sealed record ServiceSummaryDto(
     string Id,         // namespace ({system})
     string Name,       // имя решения/сервиса
     string Health,     // ok | warning | critical (worst слоёв)
-    IReadOnlyList<LayerSummaryDto> Layers);
+    IReadOnlyList<LayerSummaryDto> Layers,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] CoverageDto? Coverage = null);   // роли типов сервиса: marker/heuristic/unknown (#59)

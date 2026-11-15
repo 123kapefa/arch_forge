@@ -117,6 +117,7 @@ export interface ServiceSummary {
   name: string;
   health: string;        // ok | warning | critical (worst слоёв)
   layers: LayerSummary[];
+  coverage?: SystemCoverage; // роли типов сервиса (marker/heuristic/unknown); нет у старых бэков и без код-анализа
 }
 
 /** Среда развёртывания (E9.1 слой 2): kind=compose (из override/named compose-файлов). active — какая применена сейчас. */

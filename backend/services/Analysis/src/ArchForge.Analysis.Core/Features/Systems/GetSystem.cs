@@ -100,6 +100,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         // Общий per-service разбор ОДИН раз → чистые детекторы по флагам + L0-сводка слоёв (без двойного Roslyn).
         IReadOnlyList<ServiceSummaryDto> services = [];
         IReadOnlyDictionary<string, MicroserviceLayerBuilder.Entry>? nodeLayers = null;
+        CoverageDto? coverage = null;   // #59: реальное покрытие ролей по разобранным сервисам; null → заглушка маппера
         List<string> degradations = []; // P1.5-H: что пропущено при разборе → «карта неполная» (видимо в контракте/UI)
         var hasCustom = profile.CustomRules is { Count: > 0 };   // свои правила читают код, как линзы дрейфа и слоёв
         if ((query.Drift || query.Layers || query.Calls || hasCustom) && analyzer is not null && Directory.Exists(query.Path))
@@ -132,6 +133,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             }
             if (configKeys is not null) extra.AddRange(MissingEnvKeys(graph, analyses, configKeys, ct));   // E9.3: чего не хватает в выбранной среде
             if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
+            coverage = ServiceSummaryBuilder.Aggregate(analyses);
             services = ServiceSummaryBuilder.Build(analyses);              // .sln-сводка (Services[])
             // compose-узлы сервисов → привязка кода вне /Services/ (gateway) к своему узлу по имени (#75)
             var composeServices = graph.Nodes
@@ -164,8 +166,10 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         string project = File.Exists(query.Path)
             ? Path.GetFileName(Path.GetDirectoryName(query.Path)) ?? "system"
             : new DirectoryInfo(query.Path.TrimEnd('/', '\\')).Name;
-        var dto = graph.ToGraphDto(project, nodeLayers, pack) with
+        var dto0 = graph.ToGraphDto(project, nodeLayers, pack);
+        var dto = dto0 with
         {
+            Coverage = coverage ?? dto0.Coverage,
             Services = services.Count > 0 ? services : null,
             Degradations = degradations.Count > 0 ? degradations : null,
         };

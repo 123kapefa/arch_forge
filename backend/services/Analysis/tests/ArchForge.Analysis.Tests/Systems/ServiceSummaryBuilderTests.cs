@@ -13,6 +13,29 @@ public class ServiceSummaryBuilderTests
         new(new DiscoveredService(loc, "/" + loc, "compose.yml"), loc, null);
 
     [Fact]
+    public void Aggregate_sums_roles_over_parsed_services_and_skips_failed()
+    {
+        var a = Svc("a", [new("CreateWidgetCommand", "record", ["ICommand"], "(string N)", "Application", "a.cs"),
+                          new("Thing", "class", [], "()", "Domain", "t.cs")]);
+        var b = Svc("b", [new("RegisterHandler", "class", [], "(Dep d)", "Application", "b.cs")]);
+        var total = ServiceSummaryBuilder.Aggregate([a, b, Failed("c")])!;
+
+        var ca = a.Result!.Coverage; var cb = b.Result!.Coverage;
+        Assert.Equal(ca.Marker + cb.Marker, total.Marker);
+        Assert.Equal(ca.Heuristic + cb.Heuristic, total.Heuristic);
+        Assert.Equal(ca.Unknown + cb.Unknown, total.Unknown);
+        Assert.Equal(3, total.Total);   // упавший сервис в сумму не входит — он в Degradations
+        Assert.Equal(ServiceSummaryBuilder.ToCoverageDto(ca), ServiceSummaryBuilder.Build([a])[0].Coverage);
+    }
+
+    [Fact]
+    public void Aggregate_without_parsed_services_is_null()
+    {
+        Assert.Null(ServiceSummaryBuilder.Aggregate([]));
+        Assert.Null(ServiceSummaryBuilder.Aggregate([Failed("c")]));
+    }
+
+    [Fact]
     public void Summarizes_layers_with_per_layer_health()
     {
         RawType[] raw =

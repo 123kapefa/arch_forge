@@ -29,7 +29,8 @@ public static class SystemGraphMapping
             ? envs.Select(e => new EnvironmentDto(e.Name, e.Name, "compose", Active: e.Active)).ToList()
             : null;
 
-        // TODO(P1.5-G): системное покрытие — заглушка (total=узлы); настоящая агрегация per-service — позже.
+        // Без код-анализа ролей типов нет: разбивка нулевая, total=узлы (старые клиенты так и читают «нет данных»).
+        // С код-анализом GetSystem подменяет Coverage реальной суммой по сервисам (ServiceSummaryBuilder.Aggregate, #59).
         return new GraphDto(project, nodes, edges,
             new CoverageDto(0, 0, 0, nodes.Count), Drift: [],
             Health: health,

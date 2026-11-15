@@ -72,6 +72,20 @@ export function coverageShare(graph: SystemGraph): CoverageShare {
   return { marker: pct(c?.marker ?? 0), heuristic: pct(c?.heuristic ?? 0), unknown: pct(c?.unknown ?? 0), total };
 }
 
+export interface ServiceCoverageRow { id: string; name: string; marker: number; heuristic: number; unknown: number; total: number }
+
+/** Покрытие по сервисам (доли в %), сперва с наибольшей долей неизвестного — туда стоит смотреть. Сервисы без разбивки опускаем. */
+export function serviceCoverage(graph: SystemGraph): ServiceCoverageRow[] {
+  const rows: ServiceCoverageRow[] = [];
+  for (const s of graph.services ?? []) {
+    const c = s.coverage;
+    if (!c || c.total <= 0) continue;
+    const pct = (n: number) => Math.round((n / c.total) * 100);
+    rows.push({ id: s.id, name: s.name, marker: pct(c.marker), heuristic: pct(c.heuristic), unknown: pct(c.unknown), total: c.total });
+  }
+  return rows.sort((a, b) => b.unknown - a.unknown || a.name.localeCompare(b.name));
+}
+
 // ---------- Поиск ⌘K ----------
 
 export type SearchKind = 'service' | 'datastore' | 'topic' | 'external' | 'endpoint' | 'type';

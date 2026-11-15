@@ -1003,3 +1003,8 @@
 .ck__sub { font-size: 12px; opacity: .6; margin-left: auto; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ck__empty { padding: 12px; opacity: .6; font-size: 13px; }
 .ck__hint { padding: 6px 12px; font-size: 11px; opacity: .55; border-top: 1px solid var(--card-line); }
+.ov__cov-rows { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.ov__cov-rows li { display: grid; grid-template-columns: 1fr 90px 36px; gap: 8px; align-items: center; font-size: 12px; }
+.ov__cov-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov__bar--sm { height: 6px; border-radius: 3px; }
+.ov__cov-unk { text-align: right; opacity: 0.7; }
