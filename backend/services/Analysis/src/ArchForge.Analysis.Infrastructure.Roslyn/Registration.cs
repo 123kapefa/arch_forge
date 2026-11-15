@@ -20,6 +20,7 @@ public static class Registration
         services.AddSingleton<IConstructionSource>(sp => new CachingConstructionSource(new RoslynConstructionSource(), sp.GetRequiredService<ScanCache>()));
         services.AddSingleton<IEndpointSource>(sp => new CachingEndpointSource(new RoslynMinimalApiSource(), sp.GetRequiredService<ScanCache>()));
         services.AddSingleton<IHttpCallSource>(sp => new CachingHttpCallSource(new RoslynHttpCallSource(), sp.GetRequiredService<ScanCache>()));
+        services.AddSingleton<IDiSource>(sp => new CachingDiSource(new RoslynDiSource(), sp.GetRequiredService<ScanCache>()));   // DI-контейнер сервиса, E4.2
         services.AddSingleton<IGuardSource>(sp => new CachingGuardSource(new RoslynGuardSource(), sp.GetRequiredService<ScanCache>()));   // проверки на null (redundant-null-check)
         services.AddSingleton<IConfigKeySource>(sp => new RoslynConfigKeySource(sp.GetRequiredService<ScanCache>()));   // ключи конфигурации (E9.3)
         services.AddSingleton<IFolderSource>(sp => new CachingFolderSource(new RoslynFolderSource(), sp.GetRequiredService<ScanCache>()));   // раскладка (folder-structure)
