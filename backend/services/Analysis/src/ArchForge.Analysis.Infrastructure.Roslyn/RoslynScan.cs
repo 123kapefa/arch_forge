@@ -22,9 +22,55 @@ internal static class RoslynScan
                 if (PathFilter.IsNoise(path, f)) return false; // копии из .claude/worktrees и т.п. дублируют разбор
                 var n = f.Replace('\\', '/');
                 if (n.EndsWith(".g.cs") || n.EndsWith(".Designer.cs")) return false;
-                try { return new FileInfo(f).Length <= MaxFileBytes; }
+                try { return new FileInfo(f).Length <= MaxFileBytes && !IsTooDeep(f); }
                 catch { return false; } // недоступный файл — пропускаем (изоляция ошибок)
             });
+
+    // Предел вложенности скобок ( [ { и угловых < > до ParseText. StackOverflow в Roslyn не ловится catch и роняет весь
+    // процесс (замер на стеке 1,5 МБ: «(» падает на 4000–8000, «Task<» и вложенная интерполяция — на 1000–2000).
+    // Реальный код глубже ~100 не бывает; пропуск файла лучше падения (#167).
+    internal const int MaxBracketDepth = 500;
+    internal const int MaxAngleDepth = 200;
+
+    // Кэш вердикта по (путь, размер, mtime): EnumerateCs зовут ~15 источников подряд — читаем файл один раз.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long Len, long Ticks, bool Deep)> DepthCache = new();
+
+    private static bool IsTooDeep(string file)
+    {
+        var fi = new FileInfo(file);
+        var key = Path.GetFullPath(file);
+        if (DepthCache.TryGetValue(key, out var c) && c.Len == fi.Length && c.Ticks == fi.LastWriteTimeUtc.Ticks) return c.Deep;
+        var deep = ExceedsDepth(File.ReadAllText(file));
+        if (deep)
+            // деградация видна (adr/0008): файл исключён из карты, а не молча «чистый»
+            Console.Error.WriteLine($"[arch_forge] WARN: файл пропущен — вложенность скобок выше предела ({MaxBracketDepth}/{MaxAngleDepth}), риск StackOverflow в Roslyn: {file}");
+        DepthCache[key] = (fi.Length, fi.LastWriteTimeUtc.Ticks, deep);
+        return deep;
+    }
+
+    /// <summary>Дешёвый предфильтр по тексту: глубина ( [ { и дженерик-угловых &lt; &gt; выше порога. Угловые сбрасываются
+    /// на ; { } (дженерики их не пересекают), чтобы сравнения «a &lt; b» не копились; // комментарии пропускаются.</summary>
+    internal static bool ExceedsDepth(string text)
+    {
+        int br = 0, an = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            switch (text[i])
+            {
+                case '/' when i + 1 < text.Length && text[i + 1] == '/':
+                    while (i < text.Length && text[i] != '\n') i++;
+                    break;
+                case '(': case '[': if (++br > MaxBracketDepth) return true; break;
+                case '{': an = 0; if (++br > MaxBracketDepth) return true; break;
+                case ')': case ']': if (br > 0) br--; break;
+                case '}': an = 0; if (br > 0) br--; break;
+                case ';': an = 0; break;
+                case '<': if (++an > MaxAngleDepth) return true; break;
+                case '>': if (an > 0) an--; break;
+            }
+        }
+        return false;
+    }
 
     /// <summary>Список .cs с капом числа файлов (backstop). <paramref name="capped"/> = список был урезан
     /// (пата-репо) → вызывающий логирует деградацию (adr/0008).</summary>
