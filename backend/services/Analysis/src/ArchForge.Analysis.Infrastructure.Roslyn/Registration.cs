@@ -16,6 +16,7 @@ public static class Registration
         services.AddSingleton<ITypeSource>(sp => new CachingTypeSource(
             ActivatorUtilities.CreateInstance<RoslynSemanticTypeSource>(sp, sp.GetRequiredService<RoslynTypeSource>()),
             sp.GetRequiredService<ScanCache>()));
+        services.AddSingleton<IScanLimitSource, RoslynScanLimitSource>();   // кап .cs → заметка деградации (#49)
         services.AddSingleton<IImportSource, CsprojImportSource>();
         services.AddSingleton<IConstructionSource>(sp => new CachingConstructionSource(new RoslynConstructionSource(), sp.GetRequiredService<ScanCache>()));
         services.AddSingleton<IEndpointSource>(sp => new CachingEndpointSource(new RoslynMinimalApiSource(), sp.GetRequiredService<ScanCache>()));

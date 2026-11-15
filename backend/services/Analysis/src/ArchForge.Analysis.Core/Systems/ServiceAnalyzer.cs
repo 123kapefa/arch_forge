@@ -38,6 +38,10 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
 
     // мутации агрегата без доменного события / UpdatedAt (правило aggregate-events)
     public AggregateEventFacts AggregateEvents { get; init; } = AggregateEventFacts.Empty;
+
+    // Файлов в сервисе больше капа разбора → разобрана только часть, карта по нему неполная (#49, adr/0008).
+    public int? TruncatedAtFiles { get; init; }
+    public bool Truncated => TruncatedAtFiles is not null;
 }
 
 /// <summary>Хелперы над результатами разбора — единая точка понятия «сервис не разобрался».</summary>
@@ -56,7 +60,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null, IAggregateEventSource? aggregateEvents = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null, IAggregateEventSource? aggregateEvents = null, IScanLimitSource? scanLimits = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -176,7 +180,11 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { eventFacts = readAggregateEvents ? aggregateEvents?.Read(svc.Root, ct) ?? AggregateEventFacts.Empty : AggregateEventFacts.Empty; }
             catch (OperationCanceledException) { throw; }
             catch { eventFacts = AggregateEventFacts.Empty; }
-            results[i] = new ServiceAnalysis(svc, location, result) { AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites };
+            int? truncatedAt = null;                         // кап числа файлов — свой try: сбой проверки не роняет разбор
+            try { if (scanLimits?.IsTruncated(svc.Root, ct) == true) truncatedAt = scanLimits.MaxFiles; }
+            catch (OperationCanceledException) { throw; }
+            catch { truncatedAt = null; }
+            results[i] = new ServiceAnalysis(svc, location, result) { TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites };
         });
         return results;
     }

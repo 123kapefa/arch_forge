@@ -73,14 +73,21 @@ internal static class RoslynScan
     }
 
     /// <summary>Список .cs с капом числа файлов (backstop). <paramref name="capped"/> = список был урезан
-    /// (пата-репо) → вызывающий логирует деградацию (adr/0008).</summary>
-    internal static IReadOnlyList<string> EnumerateCsCapped(string path, out bool capped, int max = MaxFilesPerScan)
+    /// (пата-репо) → вызывающий сообщает деградацию (adr/0008). Обход потоковый: берём не больше <paramref name="max"/> + 1
+    /// файла и останавливаемся — не материализуем дерево и не читаем лишние файлы. Оставленные файлы сортируем, чтобы порядок
+    /// не зависел от обхода (какие именно файлы попали под кап, определяет порядок ФС — он стабилен для одного дерева).</summary>
+    internal static IReadOnlyList<string> EnumerateCsCapped(string path, out bool capped, int max = MaxFilesPerScan, CancellationToken ct = default)
     {
-        var files = EnumerateCs(path).ToList();
-        capped = files.Count > max;
-        if (!capped) return files;
-        files.Sort(StringComparer.Ordinal); // порядок EnumerateFiles не гарантирован → сортируем, чтобы усечение было детерминированным
-        return files.Take(max).ToList();
+        var files = new List<string>();
+        capped = false;
+        foreach (var f in EnumerateCs(path))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (files.Count >= max) { capped = true; break; } // файл №max+1 существует → усечено; дальше не читаем
+            files.Add(f);
+        }
+        if (capped) files.Sort(StringComparer.Ordinal);
+        return files;
     }
 
     public static bool IsTypeName(string name) =>

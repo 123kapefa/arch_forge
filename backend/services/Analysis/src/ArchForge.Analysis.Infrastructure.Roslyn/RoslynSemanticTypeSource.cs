@@ -51,7 +51,7 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
 
     private IReadOnlyList<RawType>? ReadSemantic(string path, CancellationToken ct)
     {
-        var files = RoslynScan.EnumerateCsCapped(path, out var capped);
+        var files = RoslynScan.EnumerateCsCapped(path, out var capped, ct: ct);
         if (capped)
             _log.LogWarning("Сервис крупнее капа: > {Max} .cs — разбираем первые {Max} (робастность): {Path}",
                 RoslynScan.MaxFilesPerScan, RoslynScan.MaxFilesPerScan, path);
