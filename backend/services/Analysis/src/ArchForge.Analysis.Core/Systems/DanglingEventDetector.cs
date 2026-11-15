@@ -10,8 +10,7 @@ namespace ArchForge.Analysis.Core.Systems;
 //   • только uses-bus            → направление неизвестно → МОЛЧИМ (не выдумываем dangling);
 //   • топик вообще без рёбер      → isolated-topic — не используется ИЛИ связь в коде (не разобрано) — Coverage.
 //
-// Пока направление pub/sub не извлекается из кода, dangling/orphaned честно молчат на compose-таргетах
-// (там только uses-bus). Каркас готов и активируется, как только появятся ориентированные рёбра.
+// Рёбра publishes/subscribes даёт PubSubGraphBuilder (разбор кода, #61); без них (только uses-bus) dangling/orphaned молчат.
 public static class DanglingEventDetector
 {
     public static IReadOnlyList<SystemProblem> Detect(SystemGraph graph)

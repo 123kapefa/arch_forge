@@ -28,13 +28,13 @@ internal static class RoslynScan
 
     /// <summary>Список .cs с капом числа файлов (backstop). <paramref name="capped"/> = список был урезан
     /// (пата-репо) → вызывающий логирует деградацию (adr/0008).</summary>
-    internal static IReadOnlyList<string> EnumerateCsCapped(string path, out bool capped)
+    internal static IReadOnlyList<string> EnumerateCsCapped(string path, out bool capped, int max = MaxFilesPerScan)
     {
         var files = EnumerateCs(path).ToList();
-        capped = files.Count > MaxFilesPerScan;
+        capped = files.Count > max;
         if (!capped) return files;
         files.Sort(StringComparer.Ordinal); // порядок EnumerateFiles не гарантирован → сортируем, чтобы усечение было детерминированным
-        return files.Take(MaxFilesPerScan).ToList();
+        return files.Take(max).ToList();
     }
 
     public static bool IsTypeName(string name) =>

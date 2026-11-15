@@ -157,6 +157,16 @@ internal sealed class CachingGuardSource(IGuardSource inner, ScanCache cache) : 
         cache.GetOrAdd("guards", root, () => inner.Read(root, ct), ct);
 }
 
+internal sealed class CachingBusSource(IBusSource inner, ScanCache cache) : IBusSource
+{
+    public IReadOnlyList<BusSite> Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAddDegradable<IReadOnlyList<BusSite>>("bus", root, () =>
+        {
+            var r = inner.Read(root, ct);
+            return (r, r.Any(x => x.Basis == BusBasis.Truncated));   // усечённый скан — короткий срок жизни записи, как у деградировавшей семантики
+        }, ct);
+}
+
 internal sealed class CachingConstructionSource(IConstructionSource inner, ScanCache cache) : IConstructionSource
 {
     public IReadOnlyList<ConstructionSite> Read(string path, CancellationToken ct = default) =>

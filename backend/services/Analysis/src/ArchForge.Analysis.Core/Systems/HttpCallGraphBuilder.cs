@@ -130,7 +130,7 @@ public static class HttpCallGraphBuilder
 
     // Узел-источник для анализа: сервис-узлы его системы (SystemOf(id) == location). Один → он; иначе снимаем
     // сателлиты (migrate/seed/cron) и берём совпавший по имени с .sln; неоднозначно → null (не гадаем).
-    private static string? SourceNodeId(ServiceAnalysis sa, IReadOnlyDictionary<string, List<SystemNode>> bySystem, Profiles.ServiceNaming naming)
+    internal static string? SourceNodeId(ServiceAnalysis sa, IReadOnlyDictionary<string, List<SystemNode>> bySystem, Profiles.ServiceNaming naming)
     {
         if (sa.NodeId is not null) return sa.NodeId;                       // монорепо: сервис уже привязан к своему узлу по имени
         if (!bySystem.TryGetValue(sa.Location, out var cands) || cands.Count == 0) return null;

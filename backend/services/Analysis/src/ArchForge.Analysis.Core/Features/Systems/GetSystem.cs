@@ -106,7 +106,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
         {
             // проверки на null читаем, только если правило может сработать: линза свода включена и правило не выключено профилем
             var wantGuards = query.Drift && profile.Effective(RedundantNullCheckDetector.Kind) != Strictness.Off;
-            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming, wantGuards);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
+            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming, wantGuards, readBus: query.Calls);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
             // сервис не разобрался (изоляция ошибок) → его типы/связи отсутствуют: честно помечаем деградацию
             foreach (var a in analyses.Failed())
                 degradations.Add($"сервис «{a.Service.Name}» не разобрался — часть карты пропущена");
@@ -142,7 +142,10 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             // call-graph (E3.1): конкретные http-вызовы из кода → на рёбра. ПОСЛЕ дедупа (граф из source уже сведён)
             // и после nodeLayers (нужны эндпоинты цели для RouteMatch). Дополняем рёбра, не заменяем (adr/0008).
             if (query.Calls)
+            {
                 graph = HttpCallGraphBuilder.Enrich(graph, analyses, nodeLayers, naming);
+                graph = PubSubGraphBuilder.Enrich(graph, analyses, naming);   // направление pub/sub → рёбра и dangling/orphaned (#61)
+            }
         }
 
         // Профиль: выключенные правила убираем, остальным ставим заданную строгость (после всех детекторов).
