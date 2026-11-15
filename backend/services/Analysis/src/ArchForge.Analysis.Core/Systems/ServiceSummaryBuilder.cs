@@ -17,9 +17,27 @@ public static class ServiceSummaryBuilder
             if (result is null) continue; // сбой разбора — сервиса в сводке нет (Coverage уже поднята линзой)
             var layers = Layers(result.Types, result.Edges);
             if (layers.Count == 0) continue;
-            services.Add(new ServiceSummaryDto(location, svc.Name, WorstHealth(layers), layers));
+            services.Add(new ServiceSummaryDto(location, svc.Name, WorstHealth(layers), layers, ToCoverageDto(result.Coverage)));
         }
         return services;
+    }
+
+    /// <summary>Покрытие ролей одного сервиса → DTO (total = сумма трёх долей).</summary>
+    public static CoverageDto ToCoverageDto(Coverage c) => new(c.Marker, c.Heuristic, c.Unknown, c.Marker + c.Heuristic + c.Unknown);
+
+    /// <summary>Системное покрытие: сумма по РАЗОБРАННЫМ сервисам. Не разобравшиеся (Result == null) в сумму не входят —
+    /// это не «unknown», а пропуск; он отдельно виден в Degradations (adr/0008). Нет ни одного разобранного → null.</summary>
+    public static CoverageDto? Aggregate(IReadOnlyList<ServiceAnalysis> analyses)
+    {
+        int m = 0, h = 0, u = 0;
+        var any = false;
+        foreach (var a in analyses)
+        {
+            if (a.Result is not { } r) continue;
+            any = true;
+            m += r.Coverage.Marker; h += r.Coverage.Heuristic; u += r.Coverage.Unknown;
+        }
+        return any ? new CoverageDto(m, h, u, m + h + u) : null;
     }
 
     /// <summary>Сводка слоёв по набору типов и рёбер тип-графа (для .sln целиком или одного микросервиса).</summary>

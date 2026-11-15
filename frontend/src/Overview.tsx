@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo } from 'react';
 import type { Problem, SystemGraph } from './system';
-import { coverageShare, topProblems, worstServices } from './overviewModel';
+import { coverageShare, serviceCoverage, topProblems, worstServices } from './overviewModel';
 
 const SEV_ICON: Record<string, string> = { critical: '●', warning: '⚠', coverage: '○', info: 'ℹ' };
 
@@ -17,6 +17,7 @@ export function Overview({ graph, onService, onProblem, onSearch, onClose }: {
   const worst = useMemo(() => worstServices(graph), [graph]);
   const top = useMemo(() => topProblems(graph), [graph]);
   const cov = useMemo(() => coverageShare(graph), [graph]);
+  const covRows = useMemo(() => serviceCoverage(graph), [graph]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -79,6 +80,22 @@ export function Overview({ graph, onService, onProblem, onSearch, onClose }: {
                   <span className="ov__bar-u" style={{ width: `${cov.unknown}%` }} />
                 </div>
                 <p className="ov__legend">по маркеру {cov.marker}% · эвристика {cov.heuristic}% · неизвестно {cov.unknown}% <span>(из {cov.total} типов)</span></p>
+                {covRows.length > 1 && (
+                  <ul className="ov__cov-rows">
+                    {covRows.map((r) => (
+                      <li key={r.id} title={`по маркеру ${r.marker}% · эвристика ${r.heuristic}% · неизвестно ${r.unknown}% (из ${r.total} типов)`}>
+                        <span className="ov__cov-name">{r.name}</span>
+                        <span className="ov__bar ov__bar--sm">
+                          <span className="ov__bar-m" style={{ width: `${r.marker}%` }} />
+                          <span className="ov__bar-h" style={{ width: `${r.heuristic}%` }} />
+                          <span className="ov__bar-u" style={{ width: `${r.unknown}%` }} />
+                        </span>
+                        <span className="ov__cov-unk">{r.unknown}%</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {degr.length > 0 && <p className="ov__legend">Не вошли в сумму: сервисы, что не разобрались (см. ниже).</p>}
               </>
             )}
           </section>

@@ -123,6 +123,27 @@ public class GetSystemHandlerTests
     }
 
     [Fact]
+    public void Code_lens_fills_real_coverage_from_roles()
+    {
+        // #59: покрытие — реальные роли типов (RegisterHandler → эвристика), а не число узлов; без кода — старая заглушка
+        var dir = TempDir("sysc");
+        try
+        {
+            var handler = new GetSystemHandler(new FakeSource(OneService()), Analyzer(dir, Drift));
+
+            var off = handler.Handle(new GetSystemQuery(dir));
+            Assert.Equal(0, off!.Coverage.Marker + off.Coverage.Heuristic + off.Coverage.Unknown);
+
+            var on = handler.Handle(new GetSystemQuery(dir, Drift: true))!;
+            Assert.Equal(1, on.Coverage.Total);
+            Assert.Equal(1, on.Coverage.Marker + on.Coverage.Heuristic + on.Coverage.Unknown);
+            var svc = Assert.Single(on.Services!);
+            Assert.Equal(on.Coverage, svc.Coverage);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
     public void Layers_flag_toggles_architecture_lens()
     {
         var dir = TempDir("sysl");
