@@ -191,6 +191,12 @@ internal sealed class CachingConstructionSource(IConstructionSource inner, ScanC
         cache.GetOrAdd("construction", path, () => inner.Read(path, ct), ct);
 }
 
+internal sealed class CachingDiSource(IDiSource inner, ScanCache cache) : IDiSource
+{
+    public DiModel Read(string root, CancellationToken ct = default) =>
+        cache.GetOrAdd("di", root, () => inner.Read(root, ct), ct);
+}
+
 internal sealed class CachingErrorStrategySource(IErrorStrategySource inner, ScanCache cache) : IErrorStrategySource
 {
     public ErrorStrategyFacts Read(string root, CancellationToken ct = default) =>

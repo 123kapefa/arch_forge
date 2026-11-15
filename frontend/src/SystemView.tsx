@@ -30,6 +30,9 @@ import { problemsByLens, severityCounts, categoryOf, namespaceOf, ownerByRoot, l
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
 import { LensContext } from './lensContext';
+import { DeployContext, type DeployOverlays } from './deployContext';
+import { startTiers, type EnvGraph } from './deploy';
+import { CompareView } from './CompareView';
 import { FolderPicker } from './FolderPicker';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
@@ -750,6 +753,13 @@ export function SystemView() {
   const flowObsRef = useRef<ResizeObserver | null>(null);
   const [flowReady, setFlowReady] = useState(false); // монтируем ReactFlow только когда контейнер измерен (>0×0) — иначе warning про размер (#58)
   const [magnet, setMagnet] = useState(true); // магнит к сетке по инерции: медленно тянешь → притягивает
+  // Режим системы (E3.2/E3.3): Структура (как раньше) · Deploy (оверлеи на плашках) · Сравнение сред (таблица).
+  const [viewMode, setViewMode] = useState<'structure' | 'deploy' | 'compare'>('structure');
+  const [overlays, setOverlays] = useState<DeployOverlays>({ ports: true, networks: true, healthcheck: true, start: true });
+  const [cmpEnvs, setCmpEnvs] = useState<EnvGraph[]>([]);
+  const [cmpLoading, setCmpLoading] = useState(false);
+  const cmpCacheRef = useRef<{ path: string; byEnv: Map<string, SystemGraph> }>({ path: '', byEnv: new Map() }); // неактивные среды
+  const [cmpErrors, setCmpErrors] = useState<string[]>([]);
   const [loadedPath, setLoadedPath] = useState(''); // путь загруженного проекта — ключ раскладки
   const [branch, setBranch] = useState<string | null>(null); // git-ветка открытого проекта
   const [saved, setSaved] = useState(true);         // раскладка совпадает с сохранённой
@@ -784,6 +794,7 @@ export function SystemView() {
   const load = useCallback(async (rawPath: string, opts?: { cache?: boolean; refresh?: boolean }) => {
     const path = rawPath.trim();
     if (!path) return;
+    if (opts?.refresh) cmpCacheRef.current = { path: '', byEnv: new Map() }; // «пере-анализировать» → сравнение берёт среды заново
     const { drift, layers } = flagsRef.current; // какие код-анализы гнать (выбор пользователя)
     const env = envRef.current;                 // выбранная среда развёртывания (E9.1 слой 2)
     // Кэш на перезагрузку (#64): при restore берём готовый граф, не гоняем полный разбор.
@@ -1149,6 +1160,59 @@ export function SystemView() {
   const lensProblems = useMemo(() => problemsByLens(graph?.problems, lens), [graph, lens]);
   // Линза красит узлы L0 по её проблемам (#70) — чистая логика в systemModel (тестируемо).
   const lensHits = useMemo(() => lensHitsByNode(graph, lens), [graph, lens]);
+  const deployCtx = useMemo(
+    () => (viewMode === 'deploy' && graph ? { overlays, tiers: startTiers(graph) } : null),
+    [viewMode, overlays, graph],
+  );
+  // Смена проекта — не показываем таблицу прежнего проекта.
+  useEffect(() => { setCmpEnvs([]); setCmpErrors([]); }, [loadedPath]);
+
+  // Сравнение сред: по каждой среде проекта — свой /api/system?env= (только структура, без код-линз: дёшево).
+  // Активную среду берём из текущего графа; неактивные кэшируем (cmpCacheRef) — повторное включение режима и смена
+  // активной среды не перезапрашивают их. «Пере-анализировать» (refresh) и смена проекта кэш сбрасывают.
+  useEffect(() => {
+    if (viewMode !== 'compare' || !graph || !loadedPath) return;
+    const envs = graph.environments ?? [];
+    if (cmpCacheRef.current.path !== loadedPath) cmpCacheRef.current = { path: loadedPath, byEnv: new Map() };
+    const cache = cmpCacheRef.current.byEnv;
+    const ctrl = new AbortController();
+    setCmpErrors([]);
+    if (envs.length <= 1) {
+      setCmpEnvs([{ name: envs[0]?.name ?? 'default', graph }]);
+      setCmpLoading(false);
+      return;
+    }
+    const pending = envs.filter((e) => !e.active && !cache.has(e.name));
+    const assemble = () => setCmpEnvs(envs.flatMap((e) => {
+      const g = e.active ? graph : cache.get(e.name);
+      return g ? [{ name: e.name, graph: g }] : [];
+    }));
+    if (pending.length === 0) { assemble(); setCmpLoading(false); return; }
+    setCmpLoading(true);
+    void Promise.allSettled(pending.map(async (e) => {
+      const g = await fetchSystem({ path: loadedPath, env: e.name === 'default' ? undefined : e.name }, ctrl.signal);
+      cache.set(e.name, g);
+    })).then((res) => {
+      if (ctrl.signal.aborted) return;
+      assemble();
+      setCmpErrors(res.flatMap((r, i) => (r.status === 'rejected'
+        ? [`Среда «${pending[i].name}»: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`] : [])));
+      setCmpLoading(false);
+    });
+    return () => { ctrl.abort(); setCmpLoading(false); };
+  }, [viewMode, loadedPath, graph]);
+
+  // Esc закрывает «Сравнение сред» (если фокус не в поле ввода).
+  useEffect(() => {
+    if (viewMode !== 'compare') return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== 'Escape' || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      setViewMode('structure');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewMode]);
   // Нижний список — ВСЕ проблемы (обе линзы), с тегом категории: линза красит граф, а не прячет список.
   const allProblems = useMemo(() => {
     const ord: Record<string, number> = { critical: 0, warning: 1, coverage: 2, info: 3 };
@@ -1264,6 +1328,30 @@ export function SystemView() {
             ВИД<Icon name="chevronLeft" size={15} />
           </button>
           <div className="panel__body">
+          <div className="panel__group">
+            <div className="panel__label">РЕЖИМ</div>
+            {([['structure', 'Структура'], ['deploy', 'Deploy'], ['compare', 'Сравнение сред']] as const).map(([m, label]) => (
+              <label key={m} className="opt">
+                <input type="radio" name="viewmode" checked={viewMode === m} onChange={() => setViewMode(m)} />
+                {label}
+              </label>
+            ))}
+            {viewMode === 'deploy' && (
+              <div className="panel__sub">
+                {([['ports', 'порты'], ['networks', 'сети'], ['healthcheck', 'healthcheck'], ['start', 'depends_on (хранилища)']] as const).map(([k, label]) => (
+                  <label key={k} className="opt">
+                    <input type="checkbox" checked={overlays[k]} onChange={(e) => setOverlays((o) => ({ ...o, [k]: e.target.checked }))} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="panel__hint">
+              {viewMode === 'deploy' ? 'на плашках: порты (published/internal), сети, healthcheck, ярус зависимости от хранилищ (depends_on) — для выбранной среды'
+                : viewMode === 'compare' ? 'таблица отличий dev/stage/prod: что меняется и что ломается к prod'
+                : 'схема архитектуры; Deploy и Сравнение сред — поверх тех же данных compose'}
+            </div>
+          </div>
           <div className="panel__group">
             <div className="panel__label">ЛИНЗА</div>
             <label className="opt">
@@ -1386,6 +1474,7 @@ export function SystemView() {
               flowReady && (
               <HiddenLayersContext.Provider value={hiddenLayers}>
                 <LensContext.Provider value={{ lens, hits: lensHits }}>
+                <DeployContext.Provider value={deployCtx}>
                 <ReactFlowProvider>
                   <Flow
                     ref={flowRef}
@@ -1405,6 +1494,7 @@ export function SystemView() {
                     focusTargetRef={focusCardRef}
                   />
                 </ReactFlowProvider>
+                </DeployContext.Provider>
                 </LensContext.Provider>
               </HiddenLayersContext.Provider>
               )
@@ -1412,6 +1502,9 @@ export function SystemView() {
               <div className="sysview__empty">
                 {loading ? 'анализирую…' : <>Проект не открыт. Нажми <b>«Открыть проект»</b> вверху слева.</>}
               </div>
+            )}
+            {graph && viewMode === 'compare' && (
+              <CompareView envs={cmpEnvs} loading={cmpLoading} errors={cmpErrors} onClose={() => setViewMode('structure')} />
             )}
           </div>
         </main>

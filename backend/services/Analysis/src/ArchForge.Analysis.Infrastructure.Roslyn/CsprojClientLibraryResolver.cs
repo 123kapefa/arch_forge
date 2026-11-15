@@ -161,7 +161,7 @@ public sealed class CsprojClientLibraryResolver : IClientLibraryResolver
 
     private static bool IsClientRegistration(InvocationExpressionSyntax inv) =>
         RoslynHttpCallSource.CalleeName(inv) is "AddHttpClient" or "AddRefitClient"
-        || (RoslynHttpCallSource.CalleeName(inv) == "For" && inv.Expression is MemberAccessExpressionSyntax { Expression: var q } && q.ToString().EndsWith("RestService", StringComparison.Ordinal));
+        || (RoslynHttpCallSource.CalleeName(inv) == "For" && inv.Expression is MemberAccessExpressionSyntax { Expression: var q } && RoslynScan.LastIdentifier(q) == "RestService");
 
     private static bool IsNoise(string path)
     {

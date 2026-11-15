@@ -51,6 +51,15 @@ internal static class RoslynScan
         _ => t.ToString(),
     };
 
+    /// <summary>Правый идентификатор выражения (<c>a.b.RestService</c> → «RestService») без сериализации узла в строку
+    /// (<c>ToString()</c> на длинных цепочках вызовов квадратичен по длине).</summary>
+    public static string? LastIdentifier(ExpressionSyntax e) => e switch
+    {
+        IdentifierNameSyntax i => i.Identifier.Text,
+        MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
+        _ => null,
+    };
+
     public static IReadOnlyList<string> SyntacticBases(TypeDeclarationSyntax decl) =>
         decl.BaseList?.Types.Select(b => Simple(b.Type)).ToList() ?? [];
 

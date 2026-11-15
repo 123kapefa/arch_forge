@@ -70,7 +70,7 @@ public sealed class GetSystemWithProfileEndpoint : IEndpoint
         });
 }
 
-public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? analyzer = null, IConstructionSource? construction = null, IScanCacheControl? cache = null)
+public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? analyzer = null, IConstructionSource? construction = null, IScanCacheControl? cache = null, IConfigKeySource? configKeys = null)
 {
     public GraphDto? Handle(GetSystemQuery query, CancellationToken ct = default)
     {
@@ -122,6 +122,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             if (query.Drift) extra.AddRange(AggregateTimeDetector.Detect(analyses));   // свод: часы в домене / аудит в interceptor
             if (query.Drift) extra.AddRange(FolderStructureDetector.Detect(analyses));   // свод: папки и имена по тех. признаку
             if (query.Layers) extra.AddRange(LayerViolationDetector.Detect(analyses));
+            if (query.Layers) extra.AddRange(DiLifetimeDetector.Detect(analyses));   // E4.2: DI архитектурный, едет с линзой слоёв (контракт запроса не менялся)
             if (hasCustom) extra.AddRange(CustomRuleDetector.Detect(analyses, profile.CustomRules));
             // свод-линза «маппинг не централизован» — по оси конструирования (data-DTO собран инлайн в N мест)
             if (query.Drift && construction is not null)
@@ -129,6 +130,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
                 var loc = analyses.Count > 0 ? analyses[0].Location : "";
                 extra.AddRange(DtoMappingDetector.Detect(construction.Read(query.Path, ct), loc, pack.DtoMapping));
             }
+            if (configKeys is not null) extra.AddRange(MissingEnvKeys(graph, analyses, configKeys, ct));   // E9.3: чего не хватает в выбранной среде
             if (extra.Count > 0) graph = graph with { Problems = [.. graph.Problems, .. extra] };
             services = ServiceSummaryBuilder.Build(analyses);              // .sln-сводка (Services[])
             // compose-узлы сервисов → привязка кода вне /Services/ (gateway) к своему узлу по имени (#75)
@@ -168,6 +170,33 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             Degradations = degradations.Count > 0 ? degradations : null,
         };
         return dto;
+    }
+
+    // E9.3: ключи конфигурации, читаемые кодом сервиса, против env-ключей его узлов compose и appsettings выбранной среды.
+    // Сервис → узел: монорепо — его привязанный узел; иначе единственный Service-узел системы либо единственный с совпадающим именем.
+    // Неоднозначно (api + worker…) — не угадываем и не склеиваем env-ключи всех узлов: чужой ключ скрыл бы настоящую нехватку. Сбой чтения не роняет разбор (изоляция) — просто нет находки.
+    private static IReadOnlyList<SystemProblem> MissingEnvKeys(
+        SystemGraph graph, IReadOnlyList<ServiceAnalysis> analyses, IConfigKeySource source, CancellationToken ct)
+    {
+        var services = new List<(string, IReadOnlyList<string>, ServiceConfigKeys)>();
+        foreach (var a in analyses)
+        {
+            ct.ThrowIfCancellationRequested();
+            IReadOnlyList<string> nodeIds = a.NodeId is { } nid ? [nid] : SingleNodeOf(graph, a);
+            if (nodeIds.Count == 0) continue;
+            try { services.Add((a.Service.Name, nodeIds, source.Read(a.Service.Root, ct))); }
+            catch (OperationCanceledException) { throw; }
+            catch { /* сервис не разобрался по ключам — без находки */ }
+        }
+        return MissingEnvKeyDetector.Detect(graph, services);
+    }
+
+    private static IReadOnlyList<string> SingleNodeOf(SystemGraph graph, ServiceAnalysis a)
+    {
+        var inSystem = graph.Nodes.Where(n => n.Kind == SystemNodeKind.Service && n.Id.StartsWith(a.Location + "/", StringComparison.Ordinal)).ToList();
+        if (inSystem.Count == 1) return [inSystem[0].Id];
+        var named = inSystem.Where(n => n.Name.Contains(a.Service.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+        return named.Count == 1 ? [named[0].Id] : [];
     }
 
     // Заменяет проблемы заданных видов на пересчитанные, СОХРАНЯЯ порядок прочих: новые встают на место первой прежней;
