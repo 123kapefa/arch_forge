@@ -1,11 +1,13 @@
 import { useContext } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { SystemNodeData } from '../systemFlow';
-import { isInfra, nodeHasExposedPort } from '../systemFlow';
+import { isInfra, nodeHasExposedPort, portExposure, portLabel } from '../systemFlow';
 import { namespaceOf } from '../systemModel';
 import { repoColor } from '../theme';
 import { HiddenLayersContext } from '../layersContext';
 import { LensContext } from '../lensContext';
+import { DeployContext } from '../deployContext';
+import type { SystemNode } from '../system';
 
 export type SystemNodeType = Node<SystemNodeData, 'sys'>;
 
@@ -18,6 +20,42 @@ const KIND_ACCENT: Record<string, string> = { datastore: '#6fcf77', topic: '#b98
 
 // индикатор слоя: ✓ ok · ⚠ warning · ● critical
 const layerMark = (h: string) => (h === 'critical' ? '●' : h === 'warning' ? '⚠' : '✓');
+
+const MAX_PORT_CHIPS = 3;
+
+/** Deploy-оверлеи плашки (E3.2): ярус старта · порты (published/internal) · healthcheck · сети. Только в режиме Deploy. */
+export function DeployStrip({ node }: { node: SystemNode }) {
+  const dep = useContext(DeployContext);
+  if (!dep) return null;
+  const { overlays, tiers } = dep;
+  const d = node.deploy;
+  const tier = tiers.get(node.id);
+  const ports = d?.ports ?? [];
+  const shown = ports.slice(0, MAX_PORT_CHIPS);
+  const hasAny = (overlays.start && tier !== undefined) || (overlays.ports && ports.length > 0)
+    || (overlays.healthcheck && d) || (overlays.networks && (d?.networks.length ?? 0) > 0);
+  if (!hasAny) return null;
+  return (
+    <div className="dep-strip" data-testid="deploy-strip">
+      {overlays.start && tier !== undefined && (
+        <span className="dep-chip dep-chip--start" title={`depends_on на хранилища: ярус ${tier + 1} (зависимости сервис→сервис не учитываются)`}>⛓ {tier + 1}</span>
+      )}
+      {overlays.ports && shown.map((p, i) => {
+        const ex = portExposure(p, node.kind);
+        return <span key={`${p.container}-${i}`} className={`dep-chip dep-chip--port dep-chip--${ex}`} title={portLabel(p)}>{portLabel(p)}</span>;
+      })}
+      {overlays.ports && ports.length > shown.length && (
+        <span className="dep-chip" title={ports.slice(shown.length).map(portLabel).join(', ')}>+{ports.length - shown.length}</span>
+      )}
+      {overlays.healthcheck && d && (
+        <span className={`dep-chip dep-chip--hc-${d.hasHealthcheck ? 'on' : 'off'}`} title={d.hasHealthcheck ? 'healthcheck задан' : 'healthcheck не задан'}>
+          hc {d.hasHealthcheck ? '✓' : '—'}
+        </span>
+      )}
+      {overlays.networks && d?.networks.map((net, i) => <span key={`${net}-${i}`} className="dep-chip dep-chip--net" title={`сеть ${net}`}>{net}</span>)}
+    </div>
+  );
+}
 
 /** Узел L0: сервис (карточка СО слоями, если они есть) или компактная плашка (инфра / сервис без слоёв). */
 export function SystemNodeView({ data, selected }: NodeProps<SystemNodeType>) {
@@ -62,6 +100,7 @@ export function SystemNodeView({ data, selected }: NodeProps<SystemNodeType>) {
             </div>
           ))}
         </div>
+        <DeployStrip node={node} />
         <div className="svc-card__foot">
           {node.endpoints && node.endpoints.length > 0 && <>⇄ {node.endpoints.length} endpoint(ов) · </>}
           двойной клик → слои (L1)
@@ -92,6 +131,7 @@ export function SystemNodeView({ data, selected }: NodeProps<SystemNodeType>) {
       </div>
       {infra && <span className="sys-node__dot" style={{ background: HEALTH_DOT[health] ?? HEALTH_DOT.ok }} />}
       {lensBadge}
+      <DeployStrip node={node} />
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
