@@ -273,6 +273,31 @@ public class GetSystemHandlerTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    // #49: сервис крупнее капа файлов → видимая деградация «урезан», а не молча полная карта.
+    private sealed class CappedLimit : IScanLimitSource
+    {
+        public int MaxFiles => 20_000;
+        public bool IsTruncated(string root, CancellationToken ct = default) => true;
+    }
+
+    [Fact]
+    public void Truncated_service_surfaces_degradation()
+    {
+        var dir = TempDir("syscap");
+        try
+        {
+            var analyzer = new ServiceAnalyzer(
+                new FakeDiscovery([new DiscoveredService("Svc.A", Path.Combine(dir, "svc-a"), "docker-compose.yml")]),
+                new FakeTypes([]), new TypeClassifier(), scanLimits: new CappedLimit());
+
+            var dto = new GetSystemHandler(new FakeSource(OneService()), analyzer)
+                .Handle(new GetSystemQuery(dir, Drift: true));
+
+            Assert.Contains(dto!.Degradations!, d => d.Contains("Svc.A") && d.Contains("урезан") && d.Contains("20000"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     // Все сервисы разобрались → деградаций нет (поле опущено).
     [Fact]
     public void No_degradation_when_all_services_parse()
