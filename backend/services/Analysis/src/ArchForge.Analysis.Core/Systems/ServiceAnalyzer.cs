@@ -14,6 +14,21 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
     // Монорепо с общим compose: узел графа, к которому сервис привязан по имени (ServiceNodeMatcher). Есть → проблемы, вызовы и слои
     // идут в ЭТОТ узел, а не по namespace системы (в ней десятки узлов). null — у сервиса свой compose, привязка по namespace, как раньше.
     public string? NodeId { get; init; }
+
+    // проверки параметров на null (правило redundant-null-check); читаются вместе с остальным разбором сервиса
+    public IReadOnlyList<NullGuardSite> Guards { get; init; } = [];
+
+    // чем сервис сообщает об ожидаемых ошибках (правило mixed-error-strategy)
+    public ErrorStrategyFacts ErrorStrategy { get; init; } = ErrorStrategyFacts.Empty;
+
+    // правила формата в валидаторах и Value Object-ы (правило double-validation)
+    public ValidationFacts Validation { get; init; } = ValidationFacts.Empty;
+
+    // часы в домене и аудит в interceptor (правило aggregate-time)
+    public AggregateTimeFacts AggregateTime { get; init; } = AggregateTimeFacts.Empty;
+
+    // раскладка по папкам и имена файлов (правило folder-structure)
+    public FolderFacts Folders { get; init; } = FolderFacts.Empty;
 }
 
 /// <summary>Хелперы над результатами разбора — единая точка понятия «сервис не разобрался».</summary>
@@ -32,7 +47,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -42,7 +57,7 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
 
     // nodes/naming — узлы графа и правила имён: нужны только для монорепо с общим compose (см. ServiceNodeMatcher).
     public IReadOnlyList<ServiceAnalysis> Analyze(string root, ConventionPack pack, CancellationToken ct = default,
-        IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null)
+        IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null, bool readGuards = true, bool readErrors = true, bool readValidation = true, bool readAggregateTime = true, bool readFolders = true)
     {
         if (!Directory.Exists(root)) return []; // код-разбор идёт по коду сервисов — нужен корень-папка
 
@@ -99,7 +114,27 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             }
             catch (OperationCanceledException) { throw; }
             catch { /* библиотеки не разобрались — остаются собственные вызовы */ }
-            results[i] = new ServiceAnalysis(svc, location, result) { MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id };
+            IReadOnlyList<NullGuardSite> guardSites = [];  // проверки на null — свой try: их сбой не роняет разбор
+            try { guardSites = readGuards ? guards?.Read(svc.Root, ct) ?? [] : []; }
+            catch (OperationCanceledException) { throw; }
+            catch { guardSites = []; }
+            var errorFacts = ErrorStrategyFacts.Empty;     // стратегия ошибок — тоже свой try
+            try { errorFacts = readErrors ? errors?.Read(svc.Root, ct) ?? ErrorStrategyFacts.Empty : ErrorStrategyFacts.Empty; }
+            catch (OperationCanceledException) { throw; }
+            catch { errorFacts = ErrorStrategyFacts.Empty; }
+            var validationFacts = ValidationFacts.Empty;   // правила валидации — тоже свой try
+            try { validationFacts = readValidation ? validation?.Read(svc.Root, ct) ?? ValidationFacts.Empty : ValidationFacts.Empty; }
+            catch (OperationCanceledException) { throw; }
+            catch { validationFacts = ValidationFacts.Empty; }
+            var timeFacts = AggregateTimeFacts.Empty;      // время и аудит — тоже свой try
+            try { timeFacts = readAggregateTime ? aggregateTime?.Read(svc.Root, ct) ?? AggregateTimeFacts.Empty : AggregateTimeFacts.Empty; }
+            catch (OperationCanceledException) { throw; }
+            catch { timeFacts = AggregateTimeFacts.Empty; }
+            var folderFacts = FolderFacts.Empty;           // раскладка — тоже свой try
+            try { folderFacts = readFolders ? folders?.Read(svc.Root, ct) ?? FolderFacts.Empty : FolderFacts.Empty; }
+            catch (OperationCanceledException) { throw; }
+            catch { folderFacts = FolderFacts.Empty; }
+            results[i] = new ServiceAnalysis(svc, location, result) { Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts };
         });
         return results;
     }
