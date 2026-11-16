@@ -10,12 +10,12 @@ export type EdgeLite = { id: string; source: string; target: string };
 const MARGIN = 14;    // базовый отступ линий сетки от габаритов препятствия
 const LANE_STEP = 7;  // разнос «полос»: у каждого ребра свой отступ → каналы не совпадают
 const TURN = 40;      // штраф за поворот (в px пути)
-const MAX_CELLS = 1200; // предохранитель: слишком большая сетка → прямой заход
+const MAX_CELLS = 6000; // предохранитель: слишком большая сетка → запасной Z-путь (с кучей Dijkstra укладывается в бюджет)
 
 /**
  * Маршрут sPort→tPort, огибая obstacles. Заходит в порты перпендикулярно через стабы (sStub/tStub).
  * lane — «полоса» ребра (0..): сдвигает отступ сетки, чтобы параллельные рёбра не ложились друг на друга.
- * Нет пути / сетка слишком большая → прямой L-заход [sPort, sStub, tStub, tPort].
+ * Нет пути / сетка слишком большая → запасной ОРТОГОНАЛЬНЫЙ Z-путь (может пересечь блоки, но без диагоналей).
  */
 export function routeOrtho(sPort: XY, sStub: XY, tPort: XY, tStub: XY, obstacles: Rect[], lane = 0): XY[] {
   const margin = MARGIN + (lane % 5) * LANE_STEP;
@@ -30,7 +30,7 @@ export function routeOrtho(sPort: XY, sStub: XY, tPort: XY, tStub: XY, obstacles
   const X = [...xset].sort((a, b) => a - b);
   const Y = [...yset].sort((a, b) => a - b);
   const nx = X.length, ny = Y.length;
-  if (nx * ny > MAX_CELLS) return [sPort, sStub, tStub, tPort];
+  if (nx * ny > MAX_CELLS) return fallbackZ(sPort, sStub, tPort, tStub);
   const ixOf = new Map(X.map((v, i) => [v, i]));
   const iyOf = new Map(Y.map((v, i) => [v, i]));
 
@@ -47,12 +47,12 @@ export function routeOrtho(sPort: XY, sStub: XY, tPort: XY, tStub: XY, obstacles
   const prev = new Int32Array(NS).fill(-1);
   const sid = (Sx * ny + Sy) * 3;
   dist[sid] = 0;
-  const pq: [number, number][] = [[0, sid]];
-  const pop = () => { let bi = 0; for (let i = 1; i < pq.length; i++) if (pq[i][0] < pq[bi][0]) bi = i; return pq.splice(bi, 1)[0]; };
+  const pq = new MinHeap();
+  pq.push(0, sid);
 
   let goal = -1;
-  while (pq.length) {
-    const [c, id] = pop();
+  while (pq.size) {
+    const [c, id] = pq.pop()!;
     if (c > dist[id]) continue;
     const dir = id % 3;
     const rest = (id - dir) / 3;
@@ -61,14 +61,14 @@ export function routeOrtho(sPort: XY, sStub: XY, tPort: XY, tStub: XY, obstacles
     const push = (nix: number, niy: number, ndir: number, seg: number) => {
       const nid = (nix * ny + niy) * 3 + ndir;
       const cost = c + seg + (dir !== 0 && dir !== ndir ? TURN : 0);
-      if (cost < dist[nid]) { dist[nid] = cost; prev[nid] = id; pq.push([cost, nid]); }
+      if (cost < dist[nid]) { dist[nid] = cost; prev[nid] = id; pq.push(cost, nid); }
     };
     if (ix + 1 < nx && freeH(ix, ix + 1, iy)) push(ix + 1, iy, 1, X[ix + 1] - X[ix]);
     if (ix - 1 >= 0 && freeH(ix - 1, ix, iy)) push(ix - 1, iy, 1, X[ix] - X[ix - 1]);
     if (iy + 1 < ny && freeV(ix, iy, iy + 1)) push(ix, iy + 1, 2, Y[iy + 1] - Y[iy]);
     if (iy - 1 >= 0 && freeV(ix, iy - 1, iy)) push(ix, iy - 1, 2, Y[iy] - Y[iy - 1]);
   }
-  if (goal < 0) return [sPort, sStub, tStub, tPort];
+  if (goal < 0) return fallbackZ(sPort, sStub, tPort, tStub);
 
   const chain: XY[] = [];
   for (let id = goal; id >= 0; id = prev[id]) {
@@ -77,6 +77,57 @@ export function routeOrtho(sPort: XY, sStub: XY, tPort: XY, tStub: XY, obstacles
   }
   chain.reverse();
   return simplify([sPort, ...chain, tPort]);
+}
+
+/**
+ * Запасной путь, когда сетка слишком велика или пути нет: Z-образный sStub → (midX, sStub.y) → (midX, tStub.y) → tStub.
+ * Все сегменты горизонтальные/вертикальные (диагоналей не бывает); блоки на пути не огибаются — редкий случай.
+ */
+export function fallbackZ(sPort: XY, sStub: XY, tPort: XY, tStub: XY): XY[] {
+  const midX = (sStub.x + tStub.x) / 2;
+  return simplify([sPort, sStub, { x: midX, y: sStub.y }, { x: midX, y: tStub.y }, tStub, tPort]);
+}
+
+// Бинарная куча (мин.) для Dijkstra: O(log n) вместо линейного поиска минимума.
+class MinHeap {
+  // при равных ключах первым идёт добавленный раньше (seq) — поведение как у прежнего линейного поиска, маршруты не меняются
+  private k: number[] = [];
+  private q: number[] = [];
+  private v: number[] = [];
+  private seq = 0;
+  get size() { return this.k.length; }
+  private less(ak: number, aq: number, bk: number, bq: number) { return ak < bk || (ak === bk && aq < bq); }
+  push(key: number, val: number) {
+    const k = this.k, q = this.q, v = this.v;
+    const sq = this.seq++;
+    let i = k.length;
+    k.push(key); q.push(sq); v.push(val);
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (!this.less(key, sq, k[p], q[p])) break;
+      k[i] = k[p]; q[i] = q[p]; v[i] = v[p]; i = p;
+    }
+    k[i] = key; q[i] = sq; v[i] = val;
+  }
+  pop(): [number, number] | undefined {
+    const k = this.k, q = this.q, v = this.v;
+    if (!k.length) return undefined;
+    const top: [number, number] = [k[0], v[0]];
+    const lk = k.pop()!, lq = q.pop()!, lv = v.pop()!;
+    const n = k.length;
+    if (n > 0) {
+      let i = 0;
+      for (;;) {
+        let c = 2 * i + 1;
+        if (c >= n) break;
+        if (c + 1 < n && this.less(k[c + 1], q[c + 1], k[c], q[c])) c++;
+        if (!this.less(k[c], q[c], lk, lq)) break;
+        k[i] = k[c]; q[i] = q[c]; v[i] = v[c]; i = c;
+      }
+      k[i] = lk; q[i] = lq; v[i] = lv;
+    }
+    return top;
+  }
 }
 
 // Убрать коллинеарные и совпадающие точки.

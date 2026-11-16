@@ -13,6 +13,11 @@ import {
   Background, Controls, MiniMap, type Edge, type Node, type NodeChange,
 } from '@xyflow/react';
 import { routeAll, type Rect, type XY } from './orthoRouter';
+import { buildAdjacency, highlightFor } from './hoverModel';
+import { createHoverIntent, type HoverTarget } from './hoverIntent';
+import { bboxOfNodes, viewportShowsContent } from './viewportGuard';
+import { CaptionToggleContext } from './captionContext';
+import { isoKey, subgroupOf } from './typeGroups';
 import '@xyflow/react/dist/style.css';
 import './system.css';
 
@@ -30,6 +35,7 @@ import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
 import { TypeCard, type TypeCardData } from './nodes/TypeCard';
+import { CaptionNode } from './nodes/CaptionNode';
 import { problemsByLens, severityCounts, categoryOf, namespaceOf, ownerByRoot, lensHitsByNode, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
@@ -39,10 +45,10 @@ import { startTiers, type EnvGraph } from './deploy';
 import { fetchGitBranch } from './fs';
 import { Icon, type IconName } from './Icon';
 import {
-  readViewport, writeViewport, readBool, readNum, setSS, readGraphCache, writeGraphCache,
+  readIsoCollapsed, writeIsoCollapsed, readViewport, writeViewport, readBool, readNum, setSS, readGraphCache, writeGraphCache,
 } from './persist';
 
-const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeCard };
+const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeCard, caption: CaptionNode };
 const edgeTypes = { ortho: OrthoEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
@@ -60,25 +66,33 @@ export type FlowHandle = { save: () => void; reset: () => void; focus: (ids: str
  * Раскладка (позиции узлов) сохраняется в localStorage по ключу проекта и восстанавливается при загрузке.
  */
 const Flow = forwardRef<FlowHandle, {
-  flow: { nodes: Node[]; edges: Edge[] };
+  flow: { nodes: Node[]; edges: Edge[]; layoutKey?: string }; // layoutKey: тот же ключ → «обновление» раскладки (напр. сворачивание группы): камера не трогается
   magnet: boolean;
   storageKey: string;                // ключ localStorage для раскладки ('' → не сохранять)
   onDirty: (saved: boolean) => void; // true = совпадает с сохранённой, false = есть изменения
   selectedId: string | null;         // выбранный узел — его связи подсвечиваем
   flowEdges?: ReadonlySet<string> | null; // E3.4: рёбра потока (ключ source|target|kind) — путь подсвечен, остальное приглушено
   flowNodes?: ReadonlySet<string> | null;
+  hoverEdges?: Edge[];               // L2: слабые рёбра (refs) — рисуются ТОЛЬКО у наведённого/выбранного узла
   onSelect: (n: Node) => void;
   onSelectEdge?: (e: Edge) => void;  // клик по связи (инспектор связи, E3.1)
   onDoubleClick: (n: Node) => void;  // двойной клик — drill на следующий уровень
   onClear: () => void;
   focusTargetRef?: { current: string | null }; // id карточки для центровки при пересборке (переход «к плашке»)
-}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, flowEdges, flowNodes, onSelect, onSelectEdge, onDoubleClick, onClear, focusTargetRef }, ref) {
+}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, flowEdges, flowNodes, hoverEdges, onSelect, onSelectEdge, onDoubleClick, onClear, focusTargetRef }, ref) {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
   const [version, setVersion] = useState(0); // версия раскладки: растёт при новой раскладке и drag-stop
   const [routes, setRoutes] = useState<Map<string, XY[]>>(new Map()); // предрассчитанные маршруты (с развязкой)
-  const [hoverId, setHoverId] = useState<string | null>(null); // узел под курсором — подсветка связей
+  // Подсветка наведения — ОДНО состояние, меняется только по «намерению» (курсор задержался), см. hoverIntent.ts
+  const [hover, setHover] = useState<HoverTarget | null>(null);
+  const hoverId = hover?.kind === 'node' ? hover.id : null;
+  const hoverEdgeId = hover?.kind === 'edge' ? hover.id : null;
+  const intent = useMemo(() => createHoverIntent({ onChange: setHover }), []);
+  const overNode = useRef(false); // курсор над узлом: у узлов приоритет над рёбрами
+  useEffect(() => () => intent.dispose(), [intent]);
+  useEffect(() => { intent.suspend(); intent.resume(); }, [flow, intent]); // новая раскладка/уровень — подсветку сбросить
   const last = useRef<{ x: number; y: number; t: number } | null>(null);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -129,7 +143,17 @@ const Flow = forwardRef<FlowHandle, {
     onDirty(true);
   }, [storageKey, onDirty]);
 
+  const prevLayoutKey = useRef<string | undefined>(undefined);
   useEffect(() => {
+    // Тот же layoutKey (сворачивание/разворачивание группы, галочка слабых связей): только обновляем узлы и рёбра,
+    // сохраняя измерения и выделение; вьюпорт (масштаб/позиция) НЕ трогаем — fitView только при смене слоя/проекта.
+    if (flow.layoutKey != null && flow.layoutKey === prevLayoutKey.current && flow.nodes.length > 0 && !focusTargetRef?.current) {
+      const prev = new Map(nodesRef.current.map((n) => [n.id, n] as const));
+      setNodes(applySaved(flow.nodes).map((n) => { const o = prev.get(n.id); return o ? { ...n, measured: o.measured, selected: o.selected } : n; }));
+      setEdges(flow.edges);
+      return;
+    }
+    prevLayoutKey.current = flow.layoutKey;
     // при переходе «к плашке» помечаем целевую карточку selected прямо в посеве (кольцо; без доп. setNodes, чтобы не сбить центровку)
     const focusId = focusTargetRef?.current;
     const seeded = applySaved(flow.nodes);
@@ -157,7 +181,13 @@ const Flow = forwardRef<FlowHandle, {
       // там, где был пользователь (saved обновляется на каждый его пан/зум). Drill (storageKey='') → fitView.
       // Re-assert несколько раз: React Flow делает внутренний fitView, когда контейнер получает размер
       // (render-gate монтирует его с задержкой), иначе он затирает восстановление — как в центровке «к плашке».
-      const saved = storageKey ? readViewport(storageKey) : null;
+      let saved = storageKey ? readViewport(storageKey) : null;
+      // сохранённый вьюпорт (мог быть для другого набора узлов) не применяем, если он уводит всё содержимое за экран
+      if (saved) {
+        const { width, height } = storeApi.getState();
+        const box = bboxOfNodes(flow.nodes);
+        if (box && !viewportShowsContent(saved, box, { w: width, h: height })) saved = null;
+      }
       if (saved) {
         [70, 220, 450, 750].forEach((d) => timers.push(setTimeout(() => rf.setViewport(saved), d)));
         timers.push(setTimeout(() => setVersion((v) => v + 1), 80));
@@ -166,7 +196,7 @@ const Flow = forwardRef<FlowHandle, {
       }
     }
     return () => timers.forEach(clearTimeout);
-  }, [flow, applySaved, setNodes, setEdges, rf, onDirty, focusTargetRef, storageKey]);
+  }, [flow, applySaved, setNodes, setEdges, rf, onDirty, focusTargetRef, storageKey, storeApi]);
 
   useImperativeHandle(ref, () => ({
     save() { persist(); },
@@ -201,27 +231,59 @@ const Flow = forwardRef<FlowHandle, {
     setSnapNow((cur) => (cur === want ? cur : want));
   }, []);
 
-  // Подсветка связей: наведение (или выбор) узла → его рёбра ярче и над блоками, остальные приглушены.
-  const highlightId = hoverId ?? selectedId;
+  // Подсветка: наведение на узел/ребро (hover) или выбор узла (sel). Работает через CSS-классы: dim остального делает
+  // CSS по классу корня (`has-hl`), а новые объекты получают только затронутые рёбра/узлы — остальные сохраняют
+  // идентичность, React Flow их не перерисовывает; маршруты (routeAll) и раскладка не пересчитываются.
+  const hoverMode = hoverId != null || hoverEdgeId != null;
+  const hlNode = hoverEdgeId ? null : (hoverId ?? selectedId);
   const routesReady = routes.size > 0; // маршруты посчитаны — можно показывать рёбра (иначе мелькнёт дефолт)
-  const displayEdges = useMemo(() => edges.map((e) => {
+  const adjacency = useMemo(() => buildAdjacency(edges), [edges]);
+  const weakAdjacency = useMemo(() => buildAdjacency(hoverEdges ?? []), [hoverEdges]);
+  const hl = useMemo(() => {
+    if (flowEdges) return highlightFor(adjacency, {});
+    const strong = highlightFor(adjacency, { nodeId: hlNode, edgeId: hoverEdgeId });
+    if (!hlNode || hoverEdgeId || !hoverEdges?.length) return strong;
+    const weak = highlightFor(weakAdjacency, { nodeId: hlNode }); // слабые связи узла: рёбра и «использующие» соседи
+    if (weak.edgeIds.size === 0) return strong;
+    return { edgeIds: new Set([...strong.edgeIds, ...weak.edgeIds]), nodeIds: new Set([...strong.nodeIds, ...weak.nodeIds]), mainIds: strong.mainIds };
+  }, [adjacency, weakAdjacency, hlNode, hoverEdgeId, flowEdges, hoverEdges]);
+  const baseEdges = useMemo(() => edges.map((e) => {
     const route = routes.get(e.id);                    // предрассчитанный маршрут с развязкой
     const onFlow = flowEdges ? flowEdges.has(e.id) : false;
-    const on = flowEdges ? onFlow : highlightId != null && (e.source === highlightId || e.target === highlightId);
-    const dim = flowEdges ? !onFlow : highlightId != null;
     return {
       ...e,
       data: { ...e.data, route },
       hidden: !routesReady,                            // прячем до готовности маршрутов (без flicker при reload/drill)
-      zIndex: on ? 1000 : 0,
-      style: { ...e.style, opacity: on ? 1 : dim ? 0.08 : 1, strokeWidth: on ? 3 : e.style?.strokeWidth },
+      // E3.4: путь потока подсвечен, остальное приглушено (инлайн: это отдельный режим, не hover)
+      ...(flowEdges ? { zIndex: onFlow ? 1000 : 0, style: { ...e.style, opacity: onFlow ? 1 : 0.08, strokeWidth: onFlow ? 3 : e.style?.strokeWidth } } : {}),
     };
-  }), [edges, routes, routesReady, highlightId, flowEdges]);
+  }), [edges, routes, routesReady, flowEdges]);
+  // слабые рёбра узла (из hoverEdges), которых нет в основном наборе: временные, поверх приглушённого фона
+  const tempEdges = useMemo(() => (hoverEdges && hl.edgeIds.size > 0
+    ? hoverEdges.filter((e) => hl.edgeIds.has(e.id) && !adjacency.byId.has(e.id)).map((e) => ({ ...e, className: 'is-hl is-temp', zIndex: 1000, hidden: !routesReady }))
+    : []), [hoverEdges, hl, adjacency, routesReady]);
+  const displayEdges = useMemo(() => (hl.edgeIds.size === 0 ? baseEdges : [...baseEdges.map((e) => {
+    if (!hl.edgeIds.has(e.id)) return e;
+    const hovered = e.id === hoverEdgeId;
+    const accent = 'var(--accent)';
+    return {
+      ...e,
+      className: `is-hl${hovered ? ' is-hover' : ''}`,
+      zIndex: 1000,
+      markerEnd: hovered && e.markerEnd && typeof e.markerEnd === 'object' ? { ...e.markerEnd, color: accent, width: 18, height: 18 } : e.markerEnd,
+    };
+  }), ...tempEdges]), [baseEdges, hl, hoverEdgeId, tempEdges]);
 
-  // E3.4: узлы вне потока приглушены (только пока поток показан)
-  const displayNodes = useMemo(() => flowNodes
-    ? nodes.map((n) => (flowNodes.has(n.id) ? n : { ...n, style: { ...n.style, opacity: 0.25 } }))
-    : nodes, [nodes, flowNodes]);
+  // E3.4: узлы вне потока приглушены (только пока поток показан); подсветка hover — классами только у затронутых узлов
+  const displayNodes = useMemo(() => {
+    if (flowNodes) return nodes.map((n) => (flowNodes.has(n.id) ? n : { ...n, style: { ...n.style, opacity: 0.25 } }));
+    if (hl.mainIds.size === 0 && hl.nodeIds.size === 0) return nodes;
+    return nodes.map((n) => {
+      if (hl.mainIds.has(n.id)) return { ...n, className: 'is-hl-main' };
+      if (hl.nodeIds.has(n.id)) return { ...n, className: 'is-hl' };
+      return n;
+    });
+  }, [nodes, flowNodes, hl]);
 
   return (
     <ReactFlow
@@ -231,6 +293,7 @@ const Flow = forwardRef<FlowHandle, {
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
+      className={hl.mainIds.size > 0 || hl.edgeIds.size > 0 ? `has-hl ${hoverMode ? 'hl-hover' : 'hl-sel'}` : undefined}
       minZoom={0.08}
       // начальная камера L0 = сохранённый вьюпорт (переживает reload); onInit добивает, когда ReactFlow готов
       // (render-gate монтирует его с задержкой — reseed-таймеры могут не застать). Drill: storageKey='' → fitView.
@@ -241,16 +304,19 @@ const Flow = forwardRef<FlowHandle, {
       elevateEdgesOnSelect
       snapToGrid={magnet && snapNow}
       snapGrid={[GRID, GRID]}
-      onNodeDragStart={() => { last.current = null; }}
+      onNodeDragStart={() => { last.current = null; intent.suspend(); }}
       onNodeDrag={onNodeDrag}
-      onNodeDragStop={() => { last.current = null; setSnapNow(false); setVersion((v) => v + 1); }}
-      onNodeMouseEnter={(_, n) => setHoverId(n.id)}
-      onNodeMouseLeave={() => setHoverId(null)}
+      onNodeDragStop={() => { last.current = null; setSnapNow(false); setVersion((v) => v + 1); intent.resume(); }}
+      onMoveStart={() => intent.suspend()}
+      onNodeMouseEnter={(_, n) => { overNode.current = true; intent.enter({ kind: 'node', id: n.id }); }}
+      onNodeMouseLeave={() => { overNode.current = false; intent.leave(); }}
+      onEdgeMouseEnter={(_, e) => { if (!overNode.current) intent.enter({ kind: 'edge', id: e.id }); }}
+      onEdgeMouseLeave={() => { if (!overNode.current) intent.leave(); }}
       onNodeClick={(_, n) => onSelect(n)}
       onEdgeClick={(_, e) => onSelectEdge?.(e)}
       onNodeDoubleClick={(_, n) => onDoubleClick(n)}
       onPaneClick={onClear}
-      onMoveEnd={(e, vp) => { if (e && storageKey) writeViewport(storageKey, vp); }} // сохраняем только пользовательский пан/зум (event≠null), не программный fitView
+      onMoveEnd={(e, vp) => { intent.resume(); if (e && storageKey) writeViewport(storageKey, vp); }} // сохраняем только пользовательский пан/зум (event≠null), не программный fitView
     >
       <Background gap={GRID} />
       <Controls />
@@ -264,13 +330,14 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 /** Инспектор для выбранного узла — диспетчер по уровню: системный узел (L0) / слой (L1) / тип+члены (L2). */
-function Inspector({ node, graph, lens, onFocus, onOpenEdge, onFlow }: {
+function Inspector({ node, graph, lens, onFocus, onOpenEdge, onFlow, onOpenType }: {
   node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void; onOpenEdge: (e: SystemEdge) => void; onFlow?: (n: SystemNode) => void;
+  onOpenType?: (id: string, layer: string) => void;
 }) {
   const d = node.data as Record<string, unknown>;
   if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} onOpenEdge={onOpenEdge} onFlow={onFlow} />;
   if ('role' in d && 'via' in d) {
-    return <TypeInspector data={node.data as unknown as TypeCardData} members={(d.members as MemberDto[] | undefined) ?? []} />;
+    return <TypeInspector data={node.data as unknown as TypeCardData} members={(d.members as MemberDto[] | undefined) ?? []} onOpenType={onOpenType} />;
   }
   if ('count' in d) return <LayerInspector data={node.data as unknown as LayerCardData} />;
   return null;
@@ -294,7 +361,7 @@ function memberTitle(m: MemberDto): string {
 }
 
 /** L2: инспектор типа — стереотип/слой/дрейф + ВСЕ члены (эндпоинты/методы/свойства/поля), сгруппированные по виду. */
-function TypeInspector({ data, members }: { data: TypeCardData; members: MemberDto[] }) {
+function TypeInspector({ data, members, onOpenType }: { data: TypeCardData; members: MemberDto[]; onOpenType?: (id: string, layer: string) => void }) {
   const groups = useMemo(() => {
     const by = new Map<string, MemberDto[]>();
     for (const m of members) {
@@ -311,6 +378,48 @@ function TypeInspector({ data, members }: { data: TypeCardData; members: MemberD
         <div className="inspector__sub">СТЕРЕОТИП</div>
         <div>{data.role || '—'} <span className="iedge__kind">{data.via}</span></div>
       </div>
+      {data.entry && (
+        <div className="inspector__block">
+          <div className="inspector__sub">ВХОД ДЛЯ ФРЕЙМВОРКА</div>
+          <div>{data.entry}</div>
+          <div className="panel__empty">Его запускает фреймворк, а не прямой вызов из кода, поэтому связей может не быть — это не значит «не нужен».</div>
+        </div>
+      )}
+      {data.outside && data.outside.links.length > 0 && (
+        <div className="inspector__block">
+          <div className="inspector__sub">СВЯЗИ ВНЕ СЛОЯ · {data.outside.links.length} (→ {data.outside.out}, ← {data.outside.in})</div>
+          <ul className="inspector__edges">
+            {data.outside.links.map((l) => (
+              <li key={`${l.dir}|${l.peerId}`}>
+                <button className="outlink" disabled={!onOpenType} onClick={() => onOpenType?.(l.peerId, l.peerLayer)}
+                  title={`${l.dir === 'out' ? 'этот тип ссылается на' : 'ссылается на этот тип'} ${l.peerName} (${l.peerLayer}) · ${l.kinds.join(', ')}${l.weak ? ' · слабая связь' : ''}`}>
+                  <span className="outlink__dir">{l.dir === 'out' ? '→' : '←'}</span>
+                  <span className="outlink__name">{l.peerName}</span>
+                  <span className="outlink__layer" style={{ color: layerColor(l.peerLayer) }}>{l.peerLayer}</span>
+                  <span className="iedge__kind">{l.kinds.join(' · ')}{l.weak ? ' · слабая' : ''}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {data.insideWeak && data.insideWeak.links.length > 0 && (
+        <div className="inspector__block">
+          <div className="inspector__sub">СЛАБЫЕ СВЯЗИ ВНУТРИ СЛОЯ (используют / используется) · {data.insideWeak.links.length} (→ {data.insideWeak.out}, ← {data.insideWeak.in})</div>
+          <ul className="inspector__edges">
+            {data.insideWeak.links.map((l) => (
+              <li key={`${l.dir}|${l.peerId}`}>
+                <button className="outlink" disabled={!onOpenType} onClick={() => onOpenType?.(l.peerId, l.peerLayer)}
+                  title={`${l.dir === 'out' ? 'этот тип ссылается на' : 'ссылается на этот тип'} ${l.peerName} · ${l.kinds.join(', ')}`}>
+                  <span className="outlink__dir">{l.dir === 'out' ? '→' : '←'}</span>
+                  <span className="outlink__name">{l.peerName}</span>
+                  <span className="iedge__kind">{l.kinds.join(' · ')}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {data.drift && data.drift.length > 0 && (
         <div className="inspector__block">
           <div className="inspector__sub">дрейф от свода</div>
@@ -1059,14 +1168,36 @@ export function SystemView() {
     return m;
   }, [graph]);
   // L2: слой раскрыт в свои типы (плашки Фазы 1 + внутрислойные связи). Раскладка ELK — асинхронная.
-  const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] });
+  const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[]; weakEdges?: Edge[]; layoutKey?: string }>({ nodes: [], edges: [] });
+  const [isoCollapsed, setIsoCollapsed] = useState<Record<string, boolean>>(readIsoCollapsed); // свёрнутые подгруппы одиночек (персист)
+  const setGroupCollapsed = useCallback((key: string, collapsed: boolean) => {
+    setIsoCollapsed((prev) => { const next = { ...prev, [key]: collapsed }; writeIsoCollapsed(next); return next; });
+  }, []);
+  // раскрыть группу (если свёрнута), чтобы показать в ней конкретный тип (переход по ссылке/поиск/«использует»)
+  const expandGroup = useCallback((key: string) => {
+    setIsoCollapsed((prev) => { if (prev[key] === false) return prev; const next = { ...prev, [key]: false }; writeIsoCollapsed(next); return next; });
+  }, []);
+  const [showWeak, setShowWeak] = useState(false); // слабые связи (refs) внутри слоя: по умолчанию скрыты, на раскладку не влияют
   useEffect(() => {
     if (!drill2 || !l1Map) { setTypeFlow({ nodes: [], edges: [] }); return; }
     let alive = true;
-    void buildTypeFlow(l1Map, drill2, dtoHotspots).then((f) => { if (alive) setTypeFlow(f); });
+    // layoutKey = сервис+слой: сворачивание групп/галочки пересобирают flow с тем же ключом → камера остаётся на месте.
+    // alive: результат устаревшего запроса (пришёл позже нового) отбрасывается.
+    const key = `${l1Map.project}|${drill ? (drill.data as SystemNodeData).node.id : ''}|${drill2}`;
+    void buildTypeFlow(l1Map, drill2, dtoHotspots, isoCollapsed).then((f) => { if (alive) setTypeFlow({ ...f, layoutKey: key }); });
     return () => { alive = false; };
-  }, [drill2, l1Map, dtoHotspots]);
-  const activeFlow = drill2 ? typeFlow : drill ? drilledFlow : flow;
+  }, [drill, drill2, l1Map, dtoHotspots, isoCollapsed]);
+  const typeFlowShown = useMemo(
+    () => (showWeak && typeFlow.weakEdges?.length ? { nodes: typeFlow.nodes, edges: [...typeFlow.edges, ...typeFlow.weakEdges], layoutKey: typeFlow.layoutKey } : typeFlow),
+    [typeFlow, showWeak],
+  );
+  // слабые рёбра для показа ТОЛЬКО при наведении/выборе узла (если галочка «слабые связи» выключена); только между видимыми узлами
+  const typeHoverEdges = useMemo(() => {
+    if (!drill2 || showWeak || !typeFlow.weakEdges?.length) return undefined;
+    const ids = new Set(typeFlow.nodes.map((n) => n.id));
+    return typeFlow.weakEdges.filter((e) => ids.has(e.source) && ids.has(e.target));
+  }, [drill2, showWeak, typeFlow]);
+  const activeFlow = drill2 ? typeFlowShown : drill ? drilledFlow : flow;
   const onDoubleClick = useCallback((n: Node) => {
     if (drill2) return; // L2 — лист: члены типа смотрим в инспекторе (клик по типу)
     if (drill) { // L1 → L2: двойной клик по карточке слоя раскрывает её типы
@@ -1115,9 +1246,10 @@ export function SystemView() {
     // не нашли — не сбрасываем цель: при смене сервиса l1Map мгновение остаётся от прошлого; дождёмся своей карты
     if (!m) return;
     t.focusId = m.id;
+    expandGroup(isoKey(subgroupOf({ name: m.name, role: m.role, kind: m.kind, members: (m.members ?? []).length })));
     focusCardRef.current = m.id;                     // Flow отцентрирует её при пересборке typeFlow
     setDrill2(m.layer || null);
-  }, [l1Map, drill, revealTick]);
+  }, [l1Map, drill, revealTick, expandGroup]);
 
   // Шаг 2: слой раскрыт (typeFlow построен) → выбираем карточку (инспектор типа); центрирует её сам Flow.
   useEffect(() => {
@@ -1128,6 +1260,20 @@ export function SystemView() {
     revealRef.current = null;
     setSelected(tn);
   }, [typeFlow]);
+
+  // Из инспектора типа: «связь вне слоя» → открыть тип в соседнем слое (тот же приём, что у «Показать плашку»).
+  const openTypeById = useCallback((id: string, layer: string) => {
+    const sid = drill ? (drill.data as SystemNodeData).node.id : null;
+    const m = l1Map?.nodes.find((n) => n.id === id);
+    if (!sid || !m) return;
+    const tn = drill2 === layer ? typeFlow.nodes.find((n) => n.id === id) : undefined;
+    if (tn) { setSelected(tn); flowRef.current?.focus([id]); return; } // тип уже на экране (тот же слой) — просто выбрать
+    revealRef.current = { serviceId: sid, file: m.file, name: m.name, focusId: m.id };
+    expandGroup(isoKey(subgroupOf({ name: m.name, role: m.role, kind: m.kind, members: (m.members ?? []).length }))); // тип может лежать в свёрнутой группе
+    focusCardRef.current = m.id;
+    setSelected(null);
+    setDrill2(layer);
+  }, [drill, drill2, l1Map, typeFlow, expandGroup]);
 
   // Клик по проблеме/связи → навести на узел. Если location — узел: выбрать + центрировать.
   // Если это namespace-префикс (дрейф/слой per-service): навести на все узлы репозитория. Иначе — не двигать.
@@ -1494,6 +1640,10 @@ export function SystemView() {
               <input type="checkbox" checked={hideIsolated} onChange={(e) => setHideIsolated(e.target.checked)} />
               без одиночек
             </label>
+            <label className="opt" title="Связи вида refs (возвращаемые типы, аргументы базового типа, статический доступ, тело метода). Скрыты, чтобы карта не превращалась в клубок; в раскладке не участвуют.">
+              <input type="checkbox" checked={showWeak} onChange={(e) => setShowWeak(e.target.checked)} />
+              слабые связи (refs) в слое
+            </label>
             <label className="opt">
               <input type="checkbox" checked={hideTests} onChange={(e) => setHideTests(e.target.checked)} />
               без tests
@@ -1528,6 +1678,7 @@ export function SystemView() {
               <HiddenLayersContext.Provider value={hiddenLayers}>
                 <LensContext.Provider value={{ lens, hits: lensHits }}>
                 <DeployContext.Provider value={deployCtx}>
+                <CaptionToggleContext.Provider value={setGroupCollapsed}>
                 <ReactFlowProvider>
                   <Flow
                     ref={flowRef}
@@ -1538,6 +1689,7 @@ export function SystemView() {
                     selectedId={selected?.id ?? null}
                     flowEdges={viewMode === 'structure' && !drill ? flowEdges : null}
                     flowNodes={viewMode === 'structure' && !drill ? flowNodes : null}
+                    hoverEdges={drill2 ? typeHoverEdges : undefined}
                     onSelect={(n) => { setSelected(n); setSelectedFact(null); setSelectedEdge(null); }}
                     onSelectEdge={(e) => {
                       const d = e.data as EdgeData;
@@ -1549,6 +1701,7 @@ export function SystemView() {
                     focusTargetRef={focusCardRef}
                   />
                 </ReactFlowProvider>
+                </CaptionToggleContext.Provider>
                 </DeployContext.Provider>
                 </LensContext.Provider>
               </HiddenLayersContext.Provider>
@@ -1595,7 +1748,7 @@ export function SystemView() {
                       onFlow={setFlowChain} onClose={closeFlow} onFocus={focusNode} />
                   : selected && graph
                   ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} onOpenEdge={openEdge}
-                      onFlow={(n) => { setFlowFor({ id: n.id, name: n.name }); }} />
+                      onFlow={(n) => { setFlowFor({ id: n.id, name: n.name }); }} onOpenType={openTypeById} />
                   : selectedEdge && graph
                     ? <EdgeInspector edge={selectedEdge} onFocus={focusNode} scanRoot={loadedPath} callsRequested={callsAsked}
                         names={Object.fromEntries(graph.nodes.map((n) => [n.id, n.name]))} />

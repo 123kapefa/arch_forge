@@ -62,3 +62,17 @@ export function writeGraphCache(path: string, drift: boolean, layers: boolean, g
   } catch { /* ignore */ }
   setSS(keep, JSON.stringify(g));
 }
+
+// --- Свёрнутые подгруппы «одиночек» экрана типов (localStorage): ключ группы → свёрнута ли ---
+
+const ISO_COLLAPSED_KEY = 'archforge:isoCollapsed';
+export function readIsoCollapsed(): Record<string, boolean> {
+  try {
+    const v = JSON.parse(localStorage.getItem(ISO_COLLAPSED_KEY) ?? '{}') as unknown;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x === 'boolean')) as Record<string, boolean>;
+  } catch { return {}; }
+}
+export function writeIsoCollapsed(state: Record<string, boolean>): void {
+  try { localStorage.setItem(ISO_COLLAPSED_KEY, JSON.stringify(state)); } catch { /* quota */ }
+}
