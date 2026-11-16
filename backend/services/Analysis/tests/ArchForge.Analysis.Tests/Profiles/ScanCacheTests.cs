@@ -171,7 +171,7 @@ public class ScanCacheTests
     }
 
     [Fact]
-    public void Waiting_for_another_read_can_be_cancelled()
+    public async Task Waiting_for_another_read_can_be_cancelled()
     {
         var dir = Project("A.cs");
         var cache = new ScanCache();
@@ -186,7 +186,7 @@ public class ScanCacheTests
 
         Assert.True(sw.ElapsedMilliseconds < 2000);                             // ожидание у замка прервано отменой, а не висит до конца чужого чтения
         release.Set();
-        slow.Wait();
+        await slow;
     }
 
     [Fact]

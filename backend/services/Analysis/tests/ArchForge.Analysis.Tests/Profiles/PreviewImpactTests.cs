@@ -198,7 +198,7 @@ public class PreviewImpactTests
 
         var pv = h.Handle(new PreviewQuery(dir, ProjectProfile.Default))!;
 
-        Assert.Empty(pv.MarkerCounts.Where(kv => kv.Value > 0));
+        Assert.DoesNotContain(pv.MarkerCounts, kv => kv.Value > 0);
         Assert.Contains(pv.Hint.Reasons, r => r.Contains("4"));
         Assert.Contains(pv.Hint.Reasons, r => r.Contains("брокер"));
     }

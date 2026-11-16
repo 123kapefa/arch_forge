@@ -245,6 +245,7 @@ public class PubSubEndToEndTests
 
             Assert.True(spy.Reads > 0);
             Assert.Contains(dto.Edges, e => e.Kind == "publishes");
+            Assert.NotNull(dto.Problems);
             Assert.Contains(dto.Problems, p => p.Kind == "dangling-event");
         }
         finally { Directory.Delete(dir, recursive: true); }

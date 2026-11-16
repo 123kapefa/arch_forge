@@ -3,15 +3,8 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using static ArchForge.Analysis.Infrastructure.Roslyn.HttpSyntax;
-using static ArchForge.Analysis.Infrastructure.Roslyn.HttpClientCalls;
-using static ArchForge.Analysis.Infrastructure.Roslyn.HttpWrapperCalls;
 using static ArchForge.Analysis.Infrastructure.Roslyn.HttpBaseAddresses;
-using static ArchForge.Analysis.Infrastructure.Roslyn.HttpConfigRefs;
-using static ArchForge.Analysis.Infrastructure.Roslyn.HttpConfigSections;
 using static ArchForge.Analysis.Infrastructure.Roslyn.HttpClientRegistry;
-using static ArchForge.Analysis.Infrastructure.Roslyn.HttpRegisteredClients;
-using static ArchForge.Analysis.Infrastructure.Roslyn.HttpCallEmitter;
-using static ArchForge.Analysis.Infrastructure.Roslyn.HttpRefitCalls;
 
 namespace ArchForge.Analysis.Infrastructure.Roslyn;
 

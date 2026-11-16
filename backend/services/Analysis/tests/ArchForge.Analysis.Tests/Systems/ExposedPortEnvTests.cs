@@ -124,14 +124,14 @@ public class ExposedPortEnvTests : IDisposable
     }
 
     [Fact]
-    public void Hostile_yaml_aliases_do_not_crash_or_hang()
+    public async Task Hostile_yaml_aliases_do_not_crash_or_hang()
     {
         // цикл алиасов в записи ports и в x-расширении + вложенные алиасы («billion laughs»)
         var laughs = string.Join("\n", new[] { "x0: &x0 [a,a,a,a,a,a,a,a,a,a]" }.Concat(Enumerable.Range(1, 9).Select(i =>
             $"x{i}: &x{i} [{string.Join(",", Enumerable.Repeat($"*x{i - 1}", 10))}]")));
         Write("docker-compose.yml", "x-r: &r {k: *r}\n" + laughs + "\nservices:\n  db:\n    image: postgres:17\n    ports:\n      - *r\n      - *x9\n      - \"5432:5432\"\n");
         Write("docker-compose.prod.yml", "x-r: &r {k: *r}\nservices:\n  db:\n    ports:\n      - *r\n      - \"5432:5432\"\n");
-        var graph = Task.Run(() => new ComposeSystemSource().Read(Path.Combine(_dir, "docker-compose.yml"), "prod")).WaitAsync(TimeSpan.FromSeconds(20)).GetAwaiter().GetResult();
+        var graph = await Task.Run(() => new ComposeSystemSource().Read(Path.Combine(_dir, "docker-compose.yml"), "prod")).WaitAsync(TimeSpan.FromSeconds(20));
         Assert.NotNull(graph);   // главное — процесс жив (раньше: переполнение стека)
     }
 

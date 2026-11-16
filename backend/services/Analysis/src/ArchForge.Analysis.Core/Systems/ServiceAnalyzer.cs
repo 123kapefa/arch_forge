@@ -59,6 +59,10 @@ public static class ServiceAnalysisExtensions
 // Общий per-service код-разбор для линз, требующих КОДА (дрейф от свода, нарушения слоёв):
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
+// CS9113: параметр di (IDiSource) принимается, но не читается — DI-модель сервиса в ServiceAnalysis.Di в проде не заполняется
+// (заполняется только в тестах DiLifetimeDetector). Это замеченная недоделка проводки, а не мусор: удалять параметр нельзя без
+// решения по детектору, чинить проводку — вне задачи «чистка предупреждений без смены поведения». См. описание PR.
+#pragma warning disable CS9113
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
     IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null, IAggregateEventSource? aggregateEvents = null, IScanLimitSource? scanLimits = null)
 {
@@ -189,3 +193,4 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
         return results;
     }
 }
+#pragma warning restore CS9113
