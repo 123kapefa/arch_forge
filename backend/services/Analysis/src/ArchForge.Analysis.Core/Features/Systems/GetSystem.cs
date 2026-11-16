@@ -119,6 +119,9 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             // сервис крупнее капа разбора → разобрана только часть файлов (#49): карта неполная, а не «чистая»
             foreach (var a in analyses.Where(x => x.Truncated))
                 degradations.Add($"сервис «{a.Service.Name}» урезан: разобраны не все файлы (кап {a.TruncatedAtFiles} .cs) — карта неполная");
+            // DI не прочитан (источник упал/не подключён) → детектор пропустит сервис, это не «чисто» (adr/0008)
+            foreach (var a in analyses.Where(x => x.DiReadFailed))
+                degradations.Add($"DI сервиса «{a.Service.Name}» не прочитан — проверка времён жизни пропущена");
             var extra = new List<SystemProblem>();
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
             if (query.Drift) extra.AddRange(RedundantNullCheckDetector.Detect(analyses));   // свод: лишний ThrowIfNull на ненулевом параметре

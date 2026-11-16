@@ -11,6 +11,9 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
     // исходящие HTTP-вызовы сервиса (HttpClient.GetAsync/… с абсолютным URL) — питает call-graph (E3.1).
     public IReadOnlyList<HttpCallHit> HttpCalls { get; init; } = [];
 
+    // readDi запрошен, но DI не прочитан (источник не подключён или упал): «чисто» тут нельзя — карта по DI неполная (adr/0008)
+    public bool DiReadFailed { get; init; }
+
     // DI-контейнер сервиса: регистрации времён жизни + зависимости конструкторов (E4.2). null — не разбирался (источник не подключён/сбой).
     public DiModel? Di { get; init; }
 
@@ -181,14 +184,15 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             catch (OperationCanceledException) { throw; }
             catch { eventFacts = AggregateEventFacts.Empty; }
             DiModel? diModel = null;                       // DI-контейнер (E4.2) — читаем лишь по запросу (линза слоёв); сбой → null, детектор молчит
-            try { diModel = readDi ? di?.Read(svc.Root, ct) : null; }
+            var diFailed = false;
+            try { diModel = readDi ? di?.Read(svc.Root, ct) : null; diFailed = readDi && diModel is null; }
             catch (OperationCanceledException) { throw; }
-            catch { diModel = null; }
+            catch { diModel = null; diFailed = true; }
             int? truncatedAt = null;                         // кап числа файлов — свой try: сбой проверки не роняет разбор
             try { if (scanLimits?.IsTruncated(svc.Root, ct) == true) truncatedAt = scanLimits.MaxFiles; }
             catch (OperationCanceledException) { throw; }
             catch { truncatedAt = null; }
-            results[i] = new ServiceAnalysis(svc, location, result) { TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites, Di = diModel };
+            results[i] = new ServiceAnalysis(svc, location, result) { TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites, Di = diModel, DiReadFailed = diFailed };
         });
         return results;
     }
