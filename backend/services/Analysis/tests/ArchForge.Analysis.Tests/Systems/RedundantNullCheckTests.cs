@@ -96,6 +96,7 @@ public class RedundantNullCheckTests
     public void Handler_reports_it_with_the_drift_lens_only_and_profile_can_turn_it_off()
     {
         var withDrift = Handler().Handle(new GetSystemQuery(Root, Drift: true))!;
+        Assert.NotNull(withDrift.Problems);
         var p = Assert.Single(withDrift.Problems, x => x.Kind == RedundantNullCheckDetector.Kind);
         Assert.Equal("convention", p.Category);
         Assert.Single(p.Items!);
