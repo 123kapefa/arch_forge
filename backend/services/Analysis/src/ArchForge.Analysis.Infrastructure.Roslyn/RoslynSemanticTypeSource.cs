@@ -79,6 +79,11 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
         var own = compilation.Assembly;
+        // Имена ВСЕХ своих типов: тело метода смотрим только по идентификаторам с такими именами (дёшево, без GetSymbolInfo на каждый токен).
+        var ownNames = trees
+            .SelectMany(t => t.GetRoot().DescendantNodes().OfType<BaseTypeDeclarationSyntax>().Select(d => d.Identifier.Text))
+            .ToHashSet(StringComparer.Ordinal);
+        var truncated = 0;
         var result = new List<RawType>();
         foreach (var tree in trees)
         {
@@ -100,7 +105,8 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
                 }
 
                 var bases = Merge(SemanticBases(symbol), syntactic); // семантика ⊇ синтаксис
-                var refs = ResolveRefs(symbol, decl, model, own);
+                var refs = ResolveRefs(symbol, decl, model, own, ownNames, ct, out var cut);
+                if (cut) truncated++;
                 result.Add(new RawType(name, decl.Keyword.Text, bases, decl.ParameterList?.ToString() ?? "", layer, tree.FilePath)
                     { Refs = refs, Members = ExtractMembers(symbol) });
             }
@@ -111,6 +117,10 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
                 result.Add(new RawType(en.Identifier.Text, "enum", [], "", layer, tree.FilePath) { Members = values });
             }
         }
+        if (truncated > 0)
+            // усечение видно (adr/0008): у этих типов связи из тела метода неполны, остальные рёбра честные
+            _log.LogWarning("Тело метода: у {Count} тип(ов) превышен лимит {Max} узлов — связи refs из тела неполны: {Path}",
+                truncated, MaxBodyNodesPerType, path);
         return result;
     }
 
@@ -129,15 +139,21 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         return names;
     }
 
-    // Приоритет вида на пару типов (выше — тот и остаётся): handles > holds > raises > uses.
+    // Приоритет вида на пару типов (выше — тот и остаётся): handles > holds > raises > uses > refs.
     private static readonly Dictionary<string, int> KindRank = new(StringComparer.Ordinal)
     {
-        ["uses"] = 1, ["raises"] = 2, ["holds"] = 3, ["handles"] = 4,
+        ["refs"] = 0, ["uses"] = 1, ["raises"] = 2, ["holds"] = 3, ["handles"] = 4,
     };
 
     /// <summary>Исходящие ссылки типа на СВОИ (из этой же компиляции) типы, по видам рёбер.</summary>
-    private static IReadOnlyList<Ref> ResolveRefs(INamedTypeSymbol symbol, TypeDeclarationSyntax decl, SemanticModel model, IAssemblySymbol own)
+    // Лимит узлов тела на ОДИН тип: защита от гигантских/враждебных файлов (на реальном коде — сотни–тысячи).
+    internal const int MaxBodyNodesPerType = 20_000;
+    private const int CancelCheckEvery = 256;
+
+    private static IReadOnlyList<Ref> ResolveRefs(INamedTypeSymbol symbol, TypeDeclarationSyntax decl, SemanticModel model,
+        IAssemblySymbol own, ISet<string> ownNames, CancellationToken ct, out bool truncated)
     {
+        truncated = false;
         var best = new Dictionary<string, string>(StringComparer.Ordinal); // target → kind
 
         void Consider(ITypeSymbol? type, string kind)
@@ -157,8 +173,12 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
             {
                 case IFieldSymbol { IsStatic: false, IsImplicitlyDeclared: false } f: Consider(f.Type, "holds"); break;
                 case IPropertySymbol { IsStatic: false } p: Consider(p.Type, "holds"); break;
+                // статические поля/свойства — слабая связь (не состояние экземпляра)
+                case IFieldSymbol { IsStatic: true, IsImplicitlyDeclared: false } sf: Consider(sf.Type, "refs"); break;
+                case IPropertySymbol { IsStatic: true } sp: Consider(sp.Type, "refs"); break;
                 case IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.Ordinary } m:
                     foreach (var param in m.Parameters) Consider(param.Type, "uses");
+                    if (m.MethodKind == MethodKind.Ordinary && !m.IsImplicitlyDeclared) Consider(m.ReturnType, "refs"); // в т.ч. внутри Task<Result<List<T>>>
                     break;
             }
         }
@@ -168,9 +188,23 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
             if (iface.IsGenericType && iface.Name.Contains("Handler", StringComparison.Ordinal))
                 foreach (var arg in iface.TypeArguments) Consider(arg, "handles");
 
-        // raises: свои типы, бросаемые через throw
+        // refs: аргументы базового типа (AbstractValidator<Req>) и интерфейсов (не-Handler). Сами базы — это implements.
+        for (var b = symbol.BaseType; b is not null && b.SpecialType != SpecialType.System_Object; b = b.BaseType)
+            foreach (var arg in b.TypeArguments) Consider(arg, "refs");
+        foreach (var iface in symbol.AllInterfaces)
+            if (iface.IsGenericType && !iface.Name.Contains("Handler", StringComparison.Ordinal))
+                foreach (var arg in iface.TypeArguments) Consider(arg, "refs");
+
+        // атрибуты типа и членов (на уровне символов; тело метода обходим ниже по синтаксису)
+        foreach (var a in symbol.GetAttributes()) Consider(a.AttributeClass, "refs");
+
+        var visited = 0;
         foreach (var node in decl.DescendantNodes())
         {
+            if (++visited > MaxBodyNodesPerType) { truncated = true; break; }
+            if (visited % CancelCheckEvery == 0) ct.ThrowIfCancellationRequested();
+
+            // raises: свои типы, бросаемые через throw
             ExpressionSyntax? thrown = node switch
             {
                 ThrowStatementSyntax ts => ts.Expression,
@@ -178,6 +212,28 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
                 _ => null,
             };
             if (thrown is not null) Consider(model.GetTypeInfo(thrown).Type, "raises");
+
+            switch (node)
+            {
+                // new T(...), локальные, дженерик-аргументы вызовов, typeof, касты, атрибуты в теле и статический доступ Type.Member:
+                // везде это IdentifierName с именем СВОЕГО типа → резолвим только такие (остальные токены не трогаем).
+                case IdentifierNameSyntax id when ownNames.Contains(id.Identifier.Text):
+                    var sym = model.GetSymbolInfo(id).Symbol;
+                    switch (sym)
+                    {
+                        case INamedTypeSymbol nt: Consider(nt, "refs"); break;
+                        case IMethodSymbol { MethodKind: MethodKind.Constructor } ctor: Consider(ctor.ContainingType, "refs"); break; // [Attr]
+                    }
+                    break;
+                // var x = Foo.Create(); — тип локальной не написан, берём выведенный
+                case VariableDeclarationSyntax { Type.IsVar: true } vd:
+                    Consider(model.GetTypeInfo(vd.Type).Type, "refs");
+                    break;
+                // неявный new(...) — типа в тексте нет
+                case ImplicitObjectCreationExpressionSyntax io:
+                    Consider(model.GetTypeInfo(io).Type, "refs");
+                    break;
+            }
         }
 
         return best.Select(kv => new Ref(kv.Key, kv.Value)).ToList();

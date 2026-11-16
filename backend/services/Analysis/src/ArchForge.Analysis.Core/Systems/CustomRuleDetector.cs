@@ -68,6 +68,7 @@ public static class CustomRuleDetector
                 var layerOf = LayerGraph.LayerByName(types);
                 var fileOf = types.GroupBy(t => t.Name, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().File, StringComparer.Ordinal);
                 return [.. result.Edges
+                    .Where(e => !TypeEdgeKinds.IsWeak(e.Kind)) // слабые refs не судим (как и в LayerGraph)
                     .Where(e => layerOf.TryGetValue(e.From, out var fl) && layerOf.TryGetValue(e.To, out var tl)
                         && fl.Equals(rule.FromLayer, StringComparison.OrdinalIgnoreCase) && tl.Equals(rule.ToLayer, StringComparison.OrdinalIgnoreCase))
                     .Select(e => (e.From, e.To)).Distinct()

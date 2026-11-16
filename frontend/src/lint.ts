@@ -39,6 +39,7 @@ export function layerViolations(g: GraphDto): Violation[] {
   const info = new Map(g.nodes.map((n) => [n.id, n]));
   const out: Violation[] = [];
   for (const e of g.edges) {
+    if (e.kind === 'refs') continue; // слабый вид: направление слоёв не судим (как LayerGraph на бэке)
     const s = info.get(e.source);
     const t = info.get(e.target);
     if (!s || !t) continue;

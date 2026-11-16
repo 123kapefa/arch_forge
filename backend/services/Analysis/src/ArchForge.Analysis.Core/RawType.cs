@@ -1,6 +1,6 @@
 namespace ArchForge.Analysis.Core;
 
-// Исходящая ссылка типа на другой тип — для рёбер графа. Kind: uses | holds | raises | handles.
+// Исходящая ссылка типа на другой тип — для рёбер графа. Kind: uses | holds | raises | handles | refs (слабый).
 public sealed record Ref(string Name, string Kind);
 
 // Член типа (для L3: тип → члены). Kind: endpoint | method | property | field.
@@ -23,6 +23,10 @@ public sealed record RawType(
 {
     // Разрешённые семантикой исходящие ссылки. Пусто у пола → BuildEdges падает на CtorParams-регекс.
     public IReadOnlyList<Ref> Refs { get; init; } = [];
+
+    // Синтаксический пол: ВСЕ простые имена, встреченные в теле/сигнатурах типа. BuildEdges оставит только имена своих
+    // типов и сделает из них слабые refs (по именам, без семантики — возможны совпадения с одноимёнными членами).
+    public IReadOnlyList<string> WeakNames { get; init; } = [];
 
     // Члены типа (L3). Заполняет семантический источник; у синтаксического пола пусто.
     public IReadOnlyList<RawMember> Members { get; init; } = [];

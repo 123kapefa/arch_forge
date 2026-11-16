@@ -1,4 +1,5 @@
 using ArchForge.Analysis.Core;
+using ArchForge.Analysis.Domain;
 using ArchForge.Analysis.Infrastructure.Roslyn;
 using Xunit;
 
@@ -88,8 +89,10 @@ public class RoslynSemanticTests
         var syntactic = new TypeClassifier().Classify(new RoslynTypeSource().Read(Target), pack);
 
         // Семантика видит поля/свойства/параметры методов, а не только текст первичного ctor → рёбер строго больше.
-        Assert.True(semantic.Edges.Count > syntactic.Edges.Count,
-            $"semantic {semantic.Edges.Count} ≤ syntactic {syntactic.Edges.Count}");
+        // Сравниваем СИЛЬНЫЕ рёбра: слабые refs у пола теперь тоже есть (по именам) и их там даже больше.
+        int semStrong = semantic.Edges.Count(e => !TypeEdgeKinds.IsWeak(e.Kind));
+        int synStrong = syntactic.Edges.Count(e => !TypeEdgeKinds.IsWeak(e.Kind));
+        Assert.True(semStrong > synStrong, $"semantic {semStrong} ≤ syntactic {synStrong}");
 
         // Появляется holds — композиция по полям/свойствам своих типов (напр. AuthDbContext).
         Assert.Contains(semantic.Edges, e => e.Kind == "holds");
