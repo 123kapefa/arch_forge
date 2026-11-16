@@ -38,4 +38,11 @@ describe('getJson', () => {
     const err = await getJson('/system', { timeoutMs: 5 }).catch((e) => e);
     expect(err).toMatchObject({ name: 'ApiError', status: 408 });
   });
+
+  it('обрыв соединения (TypeError от fetch) → ApiError 0 «нет связи»', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const err = await getJson('/system').catch((e) => e);
+    expect(err).toMatchObject({ name: 'ApiError', status: 0 });
+    expect((err as Error).message).toMatch(/Нет связи/);
+  });
 });

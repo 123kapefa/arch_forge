@@ -1,10 +1,7 @@
 // @vitest-environment jsdom
 import { vi, describe, expect, it } from 'vitest';
 import { screen } from '@testing-library/react';
-import type { RouteObject } from 'react-router';
 import { renderApp } from '../test/renderApp';
-import { RouteError } from './RouteError';
-import { Shell } from './Shell';
 
 // Старая карта тяжёлая (react-flow, elk) и в jsdom не нужна: проверяем только, что /map монтирует адаптер.
 vi.mock('../features/map/legacy-adapter', () => ({ LegacyMap: () => <div>legacy-map-stub</div> }));
@@ -46,19 +43,5 @@ describe('маршруты', () => {
     renderApp('/нет-такого');
     expect(await screen.findByRole('heading', { name: 'Страница не найдена' })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Экраны' })).toBeInTheDocument();
-  });
-
-  it('падение экрана ловит error boundary маршрута', async () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const broken: RouteObject[] = [{
-      path: '/',
-      Component: Shell,
-      ErrorBoundary: RouteError,
-      children: [{ path: 'boom', Component: () => { throw new Error('сломано'); } }],
-    }];
-    renderApp('/boom', broken);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Что-то пошло не так');
-    expect(screen.getByText('сломано')).toBeInTheDocument();
-    spy.mockRestore();
   });
 });

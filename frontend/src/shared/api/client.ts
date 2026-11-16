@@ -28,6 +28,7 @@ export interface RequestOptions {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+/** Значения query: `undefined` и `false` отбрасываются, `true` уходит строкой "true" (флаги бэкенда: `?drift=true`). */
 function buildUrl(path: string, query: RequestOptions['query']): string {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) {
@@ -62,7 +63,9 @@ export async function getJson<T>(path: string, opts: RequestOptions = {}): Promi
     return (await res.json()) as T;
   } catch (e) {
     if (signal?.aborted) throw e;
-    if (isAbortError(e)) throw new ApiError(408, `Превышено время ожидания (${timeoutMs / 1000}с) — большой проект или сервис недоступен`);
+    if (isAbortError(e)) throw new ApiError(408, `Превышено время ожидания (${timeoutMs / 1000}с) — большой проект, анализ ещё идёт`);
+    // fetch сам кидает TypeError при обрыве соединения / недоступном сервисе
+    if (e instanceof TypeError) throw new ApiError(0, 'Нет связи с сервисом — проверьте, что Map запущен');
     throw e;
   } finally {
     clearTimeout(timer);

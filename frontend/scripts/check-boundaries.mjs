@@ -2,12 +2,15 @@
 //   1. features/<a> не импортирует features/<b> (экраны независимы; общее — в shared/);
 //   2. legacy/ импортируется ТОЛЬКО из features/map/legacy-adapter.tsx;
 //   3. слои: shared не знает про features/app; features не знает про app; legacy не знает про новый код.
+// Ограничения: проверяются только ОТНОСИТЕЛЬНЫЕ импорты (`./`, `../`); алиасы (`@/…`), `require`,
+// `import.meta.glob` не видны — не вводите алиасы, не обновив скрипт.
 // Лимит длины файла и запрет dangerouslySetInnerHTML проверяет oxlint (см. .oxlintrc.json).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src');
+// Каталог src можно передать аргументом (так скрипт гоняют тесты на фикстурах).
+const SRC = process.argv[2] ? resolve(process.argv[2]) : resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 const ADAPTER = join(SRC, 'features', 'map', 'legacy-adapter.tsx');
 // import x from '…', import '…', export … from '…', import('…')
 const IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]/g;
