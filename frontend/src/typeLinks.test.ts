@@ -131,3 +131,23 @@ describe('buildTypeFlow: подгруппы одиночек', () => {
     expect(d.usedBy.total).toBe(3);
   });
 });
+
+describe('сворачивание подгруппы не двигает связную часть', () => {
+  const mk2 = (id: string, role = 'unknown', kind = 'class'): NodeDto => ({ ...node(id, 'App', role), kind });
+  const vals = Array.from({ length: 5 }, (_, i) => mk2(`v${i}`, 'Validator'));
+  const g = map(
+    [mk2('a'), mk2('b'), mk2('hub'), mk2('rec', 'unknown', 'record'), ...vals],
+    [['a', 'b', 'uses'], ...vals.map((v): [string, string, string] => ['hub', v.id, 'refs']), ['hub', 'rec', 'refs']],
+  );
+  it('позиции связной части и подгрупп выше свёрнутой не меняются, нижние смещаются вверх', async () => {
+    const open = await buildTypeFlow(g, 'App', undefined, { 'linked:validators': false });
+    const shut = await buildTypeFlow(g, 'App', undefined, { 'linked:validators': true });
+    const pos = (f: typeof open, id: string) => f.nodes.find((n) => n.id === id)!.position;
+    expect(pos(shut, 'a')).toEqual(pos(open, 'a'));
+    expect(pos(shut, 'b')).toEqual(pos(open, 'b'));
+    expect(pos(shut, 'caption:linked:validators' as string)).toEqual(pos(open, 'caption:linked:validators' as string));
+    expect(shut.nodes.some((n) => n.id === 'v0')).toBe(false);
+    expect(pos(shut, 'rec').y).toBeLessThan(pos(open, 'rec').y); // «Записи» ниже валидаторов — поднялись на высоту свёрнутой группы
+    expect(open.nodes.every((n) => Number.isFinite(n.position.x) && Number.isFinite(n.position.y))).toBe(true);
+  });
+});

@@ -15,6 +15,7 @@ import {
 import { routeAll, type Rect, type XY } from './orthoRouter';
 import { buildAdjacency, highlightFor } from './hoverModel';
 import { createHoverIntent, type HoverTarget } from './hoverIntent';
+import { bboxOfNodes, viewportShowsContent } from './viewportGuard';
 import { CaptionToggleContext } from './captionContext';
 import { isoKey, subgroupOf } from './typeGroups';
 import '@xyflow/react/dist/style.css';
@@ -65,7 +66,7 @@ export type FlowHandle = { save: () => void; reset: () => void; focus: (ids: str
  * Раскладка (позиции узлов) сохраняется в localStorage по ключу проекта и восстанавливается при загрузке.
  */
 const Flow = forwardRef<FlowHandle, {
-  flow: { nodes: Node[]; edges: Edge[] };
+  flow: { nodes: Node[]; edges: Edge[]; layoutKey?: string }; // layoutKey: тот же ключ → «обновление» раскладки (напр. сворачивание группы): камера не трогается
   magnet: boolean;
   storageKey: string;                // ключ localStorage для раскладки ('' → не сохранять)
   onDirty: (saved: boolean) => void; // true = совпадает с сохранённой, false = есть изменения
@@ -142,7 +143,17 @@ const Flow = forwardRef<FlowHandle, {
     onDirty(true);
   }, [storageKey, onDirty]);
 
+  const prevLayoutKey = useRef<string | undefined>(undefined);
   useEffect(() => {
+    // Тот же layoutKey (сворачивание/разворачивание группы, галочка слабых связей): только обновляем узлы и рёбра,
+    // сохраняя измерения и выделение; вьюпорт (масштаб/позиция) НЕ трогаем — fitView только при смене слоя/проекта.
+    if (flow.layoutKey != null && flow.layoutKey === prevLayoutKey.current && flow.nodes.length > 0 && !focusTargetRef?.current) {
+      const prev = new Map(nodesRef.current.map((n) => [n.id, n] as const));
+      setNodes(applySaved(flow.nodes).map((n) => { const o = prev.get(n.id); return o ? { ...n, measured: o.measured, selected: o.selected } : n; }));
+      setEdges(flow.edges);
+      return;
+    }
+    prevLayoutKey.current = flow.layoutKey;
     // при переходе «к плашке» помечаем целевую карточку selected прямо в посеве (кольцо; без доп. setNodes, чтобы не сбить центровку)
     const focusId = focusTargetRef?.current;
     const seeded = applySaved(flow.nodes);
@@ -170,7 +181,13 @@ const Flow = forwardRef<FlowHandle, {
       // там, где был пользователь (saved обновляется на каждый его пан/зум). Drill (storageKey='') → fitView.
       // Re-assert несколько раз: React Flow делает внутренний fitView, когда контейнер получает размер
       // (render-gate монтирует его с задержкой), иначе он затирает восстановление — как в центровке «к плашке».
-      const saved = storageKey ? readViewport(storageKey) : null;
+      let saved = storageKey ? readViewport(storageKey) : null;
+      // сохранённый вьюпорт (мог быть для другого набора узлов) не применяем, если он уводит всё содержимое за экран
+      if (saved) {
+        const { width, height } = storeApi.getState();
+        const box = bboxOfNodes(flow.nodes);
+        if (box && !viewportShowsContent(saved, box, { w: width, h: height })) saved = null;
+      }
       if (saved) {
         [70, 220, 450, 750].forEach((d) => timers.push(setTimeout(() => rf.setViewport(saved), d)));
         timers.push(setTimeout(() => setVersion((v) => v + 1), 80));
@@ -179,7 +196,7 @@ const Flow = forwardRef<FlowHandle, {
       }
     }
     return () => timers.forEach(clearTimeout);
-  }, [flow, applySaved, setNodes, setEdges, rf, onDirty, focusTargetRef, storageKey]);
+  }, [flow, applySaved, setNodes, setEdges, rf, onDirty, focusTargetRef, storageKey, storeApi]);
 
   useImperativeHandle(ref, () => ({
     save() { persist(); },
@@ -1151,7 +1168,7 @@ export function SystemView() {
     return m;
   }, [graph]);
   // L2: слой раскрыт в свои типы (плашки Фазы 1 + внутрислойные связи). Раскладка ELK — асинхронная.
-  const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[]; weakEdges?: Edge[] }>({ nodes: [], edges: [] });
+  const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[]; weakEdges?: Edge[]; layoutKey?: string }>({ nodes: [], edges: [] });
   const [isoCollapsed, setIsoCollapsed] = useState<Record<string, boolean>>(readIsoCollapsed); // свёрнутые подгруппы одиночек (персист)
   const setGroupCollapsed = useCallback((key: string, collapsed: boolean) => {
     setIsoCollapsed((prev) => { const next = { ...prev, [key]: collapsed }; writeIsoCollapsed(next); return next; });
@@ -1164,11 +1181,14 @@ export function SystemView() {
   useEffect(() => {
     if (!drill2 || !l1Map) { setTypeFlow({ nodes: [], edges: [] }); return; }
     let alive = true;
-    void buildTypeFlow(l1Map, drill2, dtoHotspots, isoCollapsed).then((f) => { if (alive) setTypeFlow(f); });
+    // layoutKey = сервис+слой: сворачивание групп/галочки пересобирают flow с тем же ключом → камера остаётся на месте.
+    // alive: результат устаревшего запроса (пришёл позже нового) отбрасывается.
+    const key = `${l1Map.project}|${drill ? (drill.data as SystemNodeData).node.id : ''}|${drill2}`;
+    void buildTypeFlow(l1Map, drill2, dtoHotspots, isoCollapsed).then((f) => { if (alive) setTypeFlow({ ...f, layoutKey: key }); });
     return () => { alive = false; };
-  }, [drill2, l1Map, dtoHotspots, isoCollapsed]);
+  }, [drill, drill2, l1Map, dtoHotspots, isoCollapsed]);
   const typeFlowShown = useMemo(
-    () => (showWeak && typeFlow.weakEdges?.length ? { nodes: typeFlow.nodes, edges: [...typeFlow.edges, ...typeFlow.weakEdges] } : typeFlow),
+    () => (showWeak && typeFlow.weakEdges?.length ? { nodes: typeFlow.nodes, edges: [...typeFlow.edges, ...typeFlow.weakEdges], layoutKey: typeFlow.layoutKey } : typeFlow),
     [typeFlow, showWeak],
   );
   // слабые рёбра для показа ТОЛЬКО при наведении/выборе узла (если галочка «слабые связи» выключена); только между видимыми узлами
