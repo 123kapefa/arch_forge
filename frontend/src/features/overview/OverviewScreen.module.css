@@ -1,0 +1,4 @@
+.screen { width: 100%; max-width: 1200px; margin: 0 auto; padding: var(--sp-5) var(--sp-4); }
+.head { margin-bottom: var(--sp-4); }
+.title { margin: 0; font-size: var(--fs-xl); font-weight: 600; }
+.sub { margin: var(--sp-1) 0 0; color: var(--text-muted); overflow-wrap: anywhere; }

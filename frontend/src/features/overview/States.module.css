@@ -1,0 +1,10 @@
+.state { max-width: 640px; margin: var(--sp-6) auto; padding: var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.lead { margin: 0 0 var(--sp-2); font-size: var(--fs-lg); font-weight: 600; }
+.text { margin: 0 0 var(--sp-3); color: var(--text-muted); }
+.cta { display: inline-block; padding: var(--sp-2) var(--sp-4); font: inherit; color: var(--accent-contrast); background: var(--accent); border: 0; border-radius: var(--radius-sm); text-decoration: none; cursor: pointer; }
+.skeleton { display: grid; gap: var(--sp-4); }
+.cols { display: grid; grid-template-columns: 3fr 2fr; gap: var(--sp-4); }
+.bone { height: 180px; border-radius: var(--radius-lg); background: var(--surface-2); animation: pulse 1.4s ease-in-out infinite; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+@keyframes pulse { 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .bone { animation: none; } }

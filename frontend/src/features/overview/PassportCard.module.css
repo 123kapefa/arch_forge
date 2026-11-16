@@ -1,0 +1,5 @@
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); margin: var(--sp-3) 0 0; }
+.cell { margin: 0; padding: var(--sp-2); background: var(--surface-2); border-radius: var(--radius-sm); }
+.cell dt { font-size: var(--fs-xs); color: var(--text-muted); }
+.cell dd { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.layers { margin: var(--sp-3) 0 0; font-size: var(--fs-sm); color: var(--text-muted); }

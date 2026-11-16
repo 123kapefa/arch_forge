@@ -1,0 +1,5 @@
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); min-width: 0; }
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) var(--sp-2); }
+.title { margin: 0; font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.aside { font-size: var(--fs-sm); color: var(--text-muted); }
+.body { padding: 0 var(--sp-4) var(--sp-4); }

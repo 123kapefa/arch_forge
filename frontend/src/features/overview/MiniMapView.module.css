@@ -1,0 +1,10 @@
+.link { display: block; color: inherit; text-decoration: none; border-radius: var(--radius-md); }
+.svg { width: 100%; height: auto; display: block; }
+.edge { stroke: var(--border); stroke-width: 1.5; }
+.node { fill: var(--surface-2); stroke: var(--border); stroke-width: 1; }
+.warning { stroke: var(--status-warning); stroke-width: 2; stroke-dasharray: 4 2; }
+.critical { stroke: var(--status-error); stroke-width: 2.5; }
+.label { font-size: 10px; fill: var(--text); }
+.more { display: block; font-size: var(--fs-sm); color: var(--text-muted); margin-top: var(--sp-1); }
+.cta { display: inline-block; margin-top: var(--sp-2); color: var(--accent); font-size: var(--fs-sm); }
+.link:hover .cta { text-decoration: underline; }

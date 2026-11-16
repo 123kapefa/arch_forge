@@ -1,0 +1,13 @@
+.bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--status-unknown-bg); }
+.m { background: var(--status-ok); }
+.h { background: var(--accent); }
+.u { background: var(--status-unknown); opacity: 0.5; }
+.legend { margin: var(--sp-2) 0 0; font-size: var(--fs-sm); color: var(--text-muted); }
+.muted { opacity: 0.8; }
+.rows { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: grid; gap: var(--sp-2); }
+.row { display: grid; grid-template-columns: minmax(6em, 1fr) 2fr auto; gap: var(--sp-2); align-items: center; font-size: var(--fs-sm); }
+.name { overflow-wrap: anywhere; }
+.unk { color: var(--text-muted); white-space: nowrap; }
+.sub { margin: var(--sp-4) 0 var(--sp-1); font-size: var(--fs-md); }
+.degr { margin: 0; padding-left: var(--sp-4); color: var(--status-warning); font-size: var(--fs-sm); }
+.note { margin: var(--sp-3) 0 0; padding-top: var(--sp-2); border-top: 1px solid var(--border); font-size: var(--fs-sm); }
