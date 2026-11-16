@@ -165,6 +165,8 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             }
         }
 
+        graph = graph with { Problems = [.. graph.Problems, .. CrossServiceDetectors.Detect(graph)] };   // E7 (#92): кросс-сервисные детекторы по итоговому графу
+
         // Профиль: выключенные правила убираем, остальным ставим заданную строгость (после всех детекторов).
         graph = graph with { Problems = ProfileApplier.Apply(graph.Problems, profile) };
 

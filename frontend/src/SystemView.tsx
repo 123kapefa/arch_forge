@@ -1134,7 +1134,7 @@ export function SystemView() {
   // Узел → связь: открыть инспектор связи из списка СВЯЗИ в инспекторе узла (R18).
   const openEdge = useCallback((e: SystemEdge) => {
     setSelected(null); setSelectedFact(null);
-    setSelectedEdge({ id: e.id, source: e.source, target: e.target, kind: e.kind, confidence: e.confidence ?? 0, via: e.via, violation: !!e.violation, calls: e.calls });
+    setSelectedEdge({ id: e.id, source: e.source, target: e.target, kind: e.kind, confidence: e.confidence ?? 0, via: e.via, violation: !!e.violation, calls: e.calls, origin: e.origin });
   }, []);
 
   const focusNode = useCallback((location: string) => {
@@ -1542,7 +1542,7 @@ export function SystemView() {
                     onSelectEdge={(e) => {
                       const d = e.data as EdgeData;
                       setSelected(null); setSelectedFact(null);
-                      setSelectedEdge({ id: e.id, source: e.source, target: e.target, kind: d.kind, confidence: d.confidence, via: d.via, violation: d.violation, calls: d.calls });
+                      setSelectedEdge({ id: e.id, source: e.source, target: e.target, kind: d.kind, confidence: d.confidence, via: d.via, violation: d.violation, calls: d.calls, origin: d.origin });
                     }}
                     onDoubleClick={onDoubleClick}
                     onClear={() => { setSelected(null); setSelectedEdge(null); }}

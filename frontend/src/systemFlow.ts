@@ -1,4 +1,4 @@
-import { mergeCalls, type HttpCall } from './edgeCalls';
+import { mergeCalls, type EdgeOrigin, type HttpCall } from './edgeCalls';
 import { MarkerType, Position, type Edge, type Node } from '@xyflow/react';
 import type { Problem, SystemGraph, SystemNode, SystemPort } from './system';
 import { problemsAt } from './systemModel';
@@ -132,6 +132,7 @@ export interface EdgeData {
   violation: boolean;
   via?: string;
   calls?: HttpCall[];
+  origin?: EdgeOrigin;
   [key: string]: unknown;
 }
 
@@ -162,6 +163,7 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
       d.confidence = Math.max(d.confidence, conf);
       d.calls = mergeCalls(d.calls, e.calls);
       d.via ??= e.via;
+      d.origin ??= e.origin;
       // пересобираем стиль по слитым данным: цвет по нарушению, толщина по максимальной уверенности пары
       prev.style = { ...prev.style, ...edgeStyle(e.kind, d.violation), strokeWidth: edgeWidth(d.confidence, d.violation) };
       continue;
@@ -174,7 +176,7 @@ export function buildSystemFlow(g: SystemGraph): { nodes: Node[]; edges: Edge[] 
       type: 'ortho',                               // единый ортогональный роутер (обход плашек + порты)
       style,
       markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke },
-      data: { kind: e.kind, confidence: conf, violation, via: e.via, calls: e.calls } satisfies EdgeData,
+      data: { kind: e.kind, confidence: conf, violation, via: e.via, calls: e.calls, origin: e.origin } satisfies EdgeData,
     });
   }
 

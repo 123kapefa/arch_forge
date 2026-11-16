@@ -69,7 +69,8 @@ public static class SystemGraphMapping
     public static EdgeDto ToEdgeDto(this SystemEdge e) => new(
         $"{e.Source}-{e.Kind}->{e.Target}", e.Source, e.Target, e.Kind,
         Via: ViaString(e.Via), Confidence: e.Confidence,
-        Calls: e.Calls is { Count: > 0 } cs ? cs.Select(ToHttpCallDto).ToList() : null); // пусто/нет → поле опускаем
+        Calls: e.Calls is { Count: > 0 } cs ? cs.Select(ToHttpCallDto).ToList() : null, // пусто/нет → поле опускаем
+        Origin: e.Origin is { } o ? new EdgeOriginDto(o.Evidence, o.Basis, o.File, o.Line) : null);
 
     /// <summary>HTTP-вызов IR → DTO (E3.1). Провенанс вызова в срезе 1 всегда code (из RoslynHttpCallSource).</summary>
     private static HttpCallDto ToHttpCallDto(HttpCall c) => new(
@@ -105,6 +106,9 @@ public static class SystemGraphMapping
         "aggregate-time" => "Передавайте время в метод агрегата параметром (DateTime now; источник — TimeProvider в хендлере), агрегат часов не читает. Аудит-поля (CreatedAt/UpdatedAt) ставит метод агрегата, а не interceptor — один способ на проект. На простом уровне один хук SaveChanges допустим.",
         "aggregate-events" => "Каждая публичная мутация агрегата поднимает доменное событие с временем (RaiseDomainEvent(new XChanged(Id, …, now))) и обновляет UpdatedAt; время приходит параметром. Если изменение намеренно тихое (служебное поле, кэш) — игнорируйте или выключите правило в профиле. На простом уровне события не обязательны.",
         "folder-structure" => "Раскладывайте по сущности: Features/{Entity}/ и Domain/{Entity}/, а не Services/Helpers/Common. Файл назовите по действию (FindOrCreateFounder вместо FounderResolver) и положите к владельцу данных; нужен нескольким срезам — публичный контракт владельца. Для вспомогательного кода общего назначения вынесите в Shared, когда появится второй потребитель.",
+        "sync-chain" => "Длинная синхронная цепочка: отказ или задержка любого звена роняет весь запрос. Сократите глубину — отдайте часть шагов событиями или агрегируйте данные в одном сервисе.",
+        "sync-fan-out" => "Сервис синхронно зависит от многих: вынесите часть вызовов в события/кэш или разделите ответственность; для шлюза/BFF веер ожидаем.",
+        "contract-gap" => "Маршрут вызова не найден среди endpoints цели: сверьте путь/метод или версию (/v1↔/v2). Если маршрут объявлен нестандартно и статика его не видит — игнорируйте или выключите правило.",
         "unattributed-calls" => "Привяжите исходящие вызовы к узлу: задайте имя сервиса в compose так, чтобы оно совпадало с проектом (или оставьте один app-узел на систему).",
         "ambiguous-target" => "Хост совпал с несколькими узлами — переименуйте сервисы так, чтобы имя было уникальным, или укажите явный хост в конфиге.",
         "drift" => "Приведите тип к своду (нужный маркер/суффикс) или дополните archforge.conventions.json.",

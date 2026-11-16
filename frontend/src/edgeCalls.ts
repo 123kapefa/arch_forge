@@ -12,6 +12,40 @@ export interface HttpCall {
   evidence?: string;     // нормализованная строка вызова без query
 }
 
+/** Откуда известно само ребро (E5.1): зеркалит EdgeOriginDto. */
+export interface EdgeOrigin {
+  evidence: string;      // «что увидели», без значений/секретов
+  basis: string;         // declared | name | marker | string | heuristic
+  file?: string;
+  line?: number;
+}
+
+/** Основание вывода по-человечески. confirmed — прямо объявлено/маркер; иначе вывод (adr/0008: не выдаём вывод за факт). */
+export function basisInfo(basis: string): { label: string; confirmed: boolean } {
+  switch (basis) {
+    case 'declared': return { label: 'задано явно', confirmed: true };
+    case 'marker': return { label: 'по маркеру в коде', confirmed: true };
+    case 'name': return { label: 'вывод по имени хоста', confirmed: false };
+    case 'string': return { label: 'вывод по строковому литералу', confirmed: false };
+    case 'heuristic': return { label: 'эвристика', confirmed: false };
+    default: return { label: 'основание неизвестно', confirmed: false };
+  }
+}
+
+/** Ссылка «открыть в редакторе» (vscode://file/<абс. путь>:строка). Относительный путь достраиваем от корня скана
+ *  (если корень — файл compose, берём его папку). Пустой путь → нет ссылки. */
+export function codeLink(file: string | undefined, line: number | undefined, root: string): string | undefined {
+  if (!file) return undefined;
+  const f = file.replace(/\\/g, '/');
+  let abs = f;
+  if (!(f.startsWith('/') || /^[A-Za-z]:\//.test(f))) {
+    let r = root.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (/\.ya?ml$/i.test(r)) r = r.slice(0, Math.max(0, r.lastIndexOf('/')));
+    abs = r ? `${r}/${f}` : f;
+  }
+  return `vscode://file/${encodeURI(abs)}${line ? `:${line}` : ''}`;
+}
+
 export type ConfidenceLevel = 'high' | 'medium' | 'low';
 
 /** Уровень доверия по числу: типизированный/в той же системе — высокий, выведенный — средний, остальное — низкий. */

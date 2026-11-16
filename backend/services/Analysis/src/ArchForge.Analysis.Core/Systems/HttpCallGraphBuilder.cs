@@ -119,13 +119,21 @@ public static class HttpCallGraphBuilder
                 edges[i] = edges[i] with { Calls = ordered }; // существующее ребро (compose/config) — ДОПОЛНЯЕМ вызовами
             else
                 edges.Add(new SystemEdge(key.Src, key.Tgt, "http-call", EdgeVia.Code,
-                    ordered.Max(c => c.Confidence), Calls: ordered));
+                    ordered.Max(c => c.Confidence), Calls: ordered, Origin: OriginOf(ordered)));
         }
         return graph with
         {
             Edges = edges,
             Problems = problems.Count > 0 ? [.. graph.Problems, .. problems] : graph.Problems,
         };
+    }
+
+    // E5.1: ребро, найденное только в коде, наследует место самого надёжного вызова
+    private static EdgeOrigin OriginOf(List<HttpCall> calls)
+    {
+        var best = calls.OrderByDescending(c => c.Confidence).ThenBy(c => c.File ?? "", StringComparer.Ordinal).ThenBy(c => c.Line ?? 0).First();
+        var more = calls.Count > 1 ? $" · ещё вызовов: {calls.Count - 1}" : "";
+        return new EdgeOrigin(best.File, best.Line, (best.Evidence ?? $"{best.Method} {best.Route}") + more, "string");
     }
 
     // Узел-источник для анализа: сервис-узлы его системы (SystemOf(id) == location). Один → он; иначе снимаем
