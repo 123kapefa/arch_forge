@@ -75,7 +75,18 @@ public sealed record EdgeDto(
     string? Problem = null,                                // id проблемы (для навигации)
     // --- E3.1: call-graph ---
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<HttpCallDto>? Calls = null);             // конкретные HTTP-вызовы этого ребра (из кода); null → флаг calls не запрашивался
+    IReadOnlyList<HttpCallDto>? Calls = null,              // конкретные HTTP-вызовы этого ребра (из кода); null → флаг calls не запрашивался
+    // --- E5.1: провенанс ребра ---
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    EdgeOriginDto? Origin = null);                         // откуда известно ребро: файл:строка + evidence + основание; null → источник не определён
+
+/// <summary>Провенанс ребра (E5.1). <c>Basis</c>: declared (прямо в compose/конфиге) | name (цель по имени хоста) |
+/// marker (маркерный интерфейс) | string (строковый литерал) | heuristic (соглашение). <c>Evidence</c> — «что увидели», без значений/секретов.</summary>
+public sealed record EdgeOriginDto(
+    string Evidence,
+    string Basis,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? File = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line = null);
 
 /// <summary>Конкретный HTTP-вызов между сервисами (E3.1): метод + маршрут + провенанс/уверенность + место в коде.
 /// <c>Matched</c>=true — маршрут сопоставлен с эндпоинтом цели; false — цель есть, но эндпоинт не найден (честно

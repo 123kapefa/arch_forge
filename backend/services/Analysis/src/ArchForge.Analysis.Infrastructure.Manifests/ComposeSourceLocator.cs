@@ -38,6 +38,14 @@ internal sealed class ComposeSourceLocator(CancellationToken ct = default)
         return files.Count > 0 && Service(files[^1], service) is { } b ? (files[^1], b.Line) : null;
     }
 
+    /// <summary>Строка ключа сервиса в первом из файлов, где он определён (оверлей среды раньше base). null — места нет.</summary>
+    public (string File, int Line)? ServiceLine(IReadOnlyList<string> files, string service)
+    {
+        foreach (var f in files)
+            if (Service(f, service) is { } s) return (f, s.Line);   // как и в Find: индекс хранит Start.Line как есть
+        return null;
+    }
+
     private ServiceIndex? Service(string path, string service)
     {
         if (!_files.TryGetValue(path, out var index)) _files[path] = index = Load(path);

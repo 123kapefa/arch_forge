@@ -924,6 +924,11 @@
 .einspect__conf--high { color: var(--ok); }
 .einspect__conf--medium { color: var(--muted); }
 .einspect__conf--low { color: var(--warn); }
+.einspect__origin { display: grid; gap: 4px; margin-bottom: 10px; }
+.einspect__evidence { font-size: 12px; word-break: break-word; }
+.einspect__basis--ok { color: var(--ok); }
+.einspect__basis--infer { color: var(--warn); }
+a.finspect__copy { text-decoration: none; }
 .einspect__src { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .einspect__path { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .einspect__line { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--text); margin-left: -6px; flex: none; }
