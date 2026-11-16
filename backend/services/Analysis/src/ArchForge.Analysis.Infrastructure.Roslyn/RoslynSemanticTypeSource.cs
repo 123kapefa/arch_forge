@@ -16,7 +16,7 @@ namespace ArchForge.Analysis.Infrastructure.Roslyn;
 /// Ссылки из готового bin/ обходят строгий design-time build (валился на auth_service, adr/0008).
 /// Оппортунистичен: при любой проблеме или пустом результате — синтаксический пол.
 /// </summary>
-public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<RoslynSemanticTypeSource>? logger = null) : ITypeSource
+public class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<RoslynSemanticTypeSource>? logger = null) : ITypeSource
 {
     // Порог ссылок вынесен в тестируемую единицу: 0 → семантики нет; слишком много → Compilation
     // была бы медленной. И там, и там — честный синтаксический пол (adr/0008).
@@ -49,7 +49,8 @@ public sealed class RoslynSemanticTypeSource(RoslynTypeSource floor, ILogger<Ros
         }
     }
 
-    private IReadOnlyList<RawType>? ReadSemantic(string path, CancellationToken ct)
+    // internal virtual — шов для тестов: подменить семантику сбоем/пустотой и проверить путь «пол → пометка».
+    internal virtual IReadOnlyList<RawType>? ReadSemantic(string path, CancellationToken ct)
     {
         var files = RoslynScan.EnumerateCsCapped(path, out var capped, ct: ct);
         if (capped)

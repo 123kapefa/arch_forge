@@ -124,7 +124,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
                 degradations.Add($"DI сервиса «{a.Service.Name}» не прочитан — проверка времён жизни пропущена");
             // семантика не получилась (нет bin/, сбой Roslyn) → типы по синтаксическому полу: роли и связи занижены, не «точно»
             foreach (var a in analyses.Where(x => x.SyntaxOnly))
-                degradations.Add($"сервис «{a.Service.Name}»: семантика не получилась (сбой Roslyn или слишком много ссылок) — типы по синтаксису, роли и связи могут быть неполными");
+                degradations.Add($"сервис «{a.Service.Name}»: семантика не получилась (пустой результат, сбой Roslyn или слишком много ссылок) — типы по синтаксису, роли и связи могут быть неполными");
             var extra = new List<SystemProblem>();
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
             if (query.Drift) extra.AddRange(RedundantNullCheckDetector.Detect(analyses));   // свод: лишний ThrowIfNull на ненулевом параметре

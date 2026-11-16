@@ -66,7 +66,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null, IAggregateEventSource? aggregateEvents = null, IScanLimitSource? scanLimits = null, ISemanticStatusSource? semanticStatus = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null, IAggregateEventSource? aggregateEvents = null, IScanLimitSource? scanLimits = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -132,7 +132,15 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             // монорепо: location = система узла (общий префикс id), сам узел — в NodeId; иначе namespace-префикс узлов сервиса ({system})
             var location = boundNode is not null ? HttpTargetResolver.SystemOf(boundNode.Id) : SystemNamespace.Of(root, svc.Root);
             AnalysisResult? result;
-            try { result = classifier.Classify(types.Read(svc.Root, ct), pack); }
+            var syntaxOnly = false;                        // типы получены синтаксическим полом (статус приходит вместе с типами, не из кеша «потом»)
+            try
+            {
+                IReadOnlyList<RawType> raw;
+                if (types is IScannedTypeSource scanned) { var scan = scanned.ReadScan(svc.Root, ct); raw = scan.Types; syntaxOnly = scan.SyntaxOnly; }
+                else raw = types.Read(svc.Root, ct);
+                result = classifier.Classify(raw, pack);
+                syntaxOnly &= result.Types.Count > 0;      // сервис без типов не метим: нечего занижать
+            }
             catch (OperationCanceledException) { throw; }  // отмена — наверх (Parallel.For сведёт к OCE)
             catch { result = null; }                       // сбой сервиса → null: не роняем скан, линза поднимет Coverage (adr/0008)
             IReadOnlyList<EndpointHit> mini = [];          // minimal-API эндпоинты (#71) — отдельный try: их сбой не роняет разбор
@@ -195,10 +203,6 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { if (scanLimits?.IsTruncated(svc.Root, ct) == true) truncatedAt = scanLimits.MaxFiles; }
             catch (OperationCanceledException) { throw; }
             catch { truncatedAt = null; }
-            var syntaxOnly = false;                          // статус семантики — после чтения типов; сервис без типов не метим (нечего занижать)
-            try { syntaxOnly = result is { Types.Count: > 0 } && semanticStatus?.IsSyntaxOnly(svc.Root) == true; }
-            catch (OperationCanceledException) { throw; }
-            catch { syntaxOnly = false; }
             results[i] = new ServiceAnalysis(svc, location, result) { SyntaxOnly = syntaxOnly, TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites, Di = diModel, DiReadFailed = diFailed };
         });
         return results;
