@@ -74,7 +74,7 @@ public static class PubSubGraphBuilder
                     if (of.Count == 0) continue;
                     all.AddRange(of);
                     added.Add(new SystemEdge(s, bus, dir == BusDirection.Publish ? "publishes" : "subscribes", EdgeVia.Code,
-                        Math.Round(of.Max(x => x.Confidence), 2)));
+                        Math.Round(of.Max(x => x.Confidence), 2), Origin: OriginOf(of, dir)));
                 }
             sitesOfBus[bus] = all;
         }
@@ -86,6 +86,17 @@ public static class PubSubGraphBuilder
             .Select(p => Refine(p, sitesOfBus, outsiders))
             .ToList();
         return enriched with { Problems = found.Count > 0 ? [.. enriched.Problems, .. found] : enriched.Problems };
+    }
+
+    // E5.1: самый надёжный из сайтов — место ребра в коде (при равенстве — по пути/строке, детерминированно)
+    private static EdgeOrigin OriginOf(List<BusSite> sites, BusDirection dir)
+    {
+        var best = sites.OrderByDescending(x => x.Confidence).ThenBy(x => x.File, StringComparer.Ordinal).ThenBy(x => x.Line).First();
+        var verb = dir == BusDirection.Publish ? "публикация" : "подписка";
+        var what = best.Name.Length > 0 ? $"{verb} «{best.Name}»" : $"{verb} (имя не определено)";
+        var more = sites.Count > 1 ? $" · ещё мест: {sites.Count - 1}" : "";
+        var basis = best.Basis switch { BusBasis.Marker => "marker", BusBasis.String => "string", _ => "heuristic" };
+        return new EdgeOrigin(best.File.Length > 0 ? best.File : null, best.Line > 0 ? best.Line : null, what + more, basis);
     }
 
     // Факты проблемы — места кода по стороне, на которой она основана (публикации для dangling, подписки для orphaned);

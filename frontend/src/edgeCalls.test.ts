@@ -68,3 +68,19 @@ describe('путь файла', () => {
     expect(relativeFile(undefined, '/p')).toBeUndefined();
   });
 });
+
+import { basisInfo, codeLink } from './edgeCalls';
+
+describe('E5.1 провенанс ребра', () => {
+  it('declared/marker — подтверждено, остальное — вывод', () => {
+    expect(basisInfo('declared').confirmed).toBe(true);
+    expect(basisInfo('marker').confirmed).toBe(true);
+    for (const b of ['name', 'string', 'heuristic', 'zzz']) expect(basisInfo(b).confirmed).toBe(false);
+  });
+  it('codeLink: абсолютный путь как есть, относительный — от корня (или папки compose-файла)', () => {
+    expect(codeLink('/a/b.cs', 7, '/root')).toBe('vscode://file//a/b.cs:7');
+    expect(codeLink('docker-compose.yml', 3, '/root/')).toBe('vscode://file//root/docker-compose.yml:3');
+    expect(codeLink('x.yml', undefined, '/root/dc.yml')).toBe('vscode://file//root/x.yml');
+    expect(codeLink(undefined, 1, '/r')).toBeUndefined();
+  });
+});

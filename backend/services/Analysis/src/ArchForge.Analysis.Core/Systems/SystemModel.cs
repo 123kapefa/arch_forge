@@ -45,7 +45,14 @@ public sealed record SystemEdge(
     double Confidence,
     bool Deferred = false,
     // E3.1: конкретные HTTP-вызовы, атрибутированные этому ребру (call-graph из кода). null — call-graph не строился.
-    IReadOnlyList<HttpCall>? Calls = null);
+    IReadOnlyList<HttpCall>? Calls = null,
+    // E5.1: откуда известно само ребро (файл:строка + «что увидели» + основание). null — источник не определён.
+    EdgeOrigin? Origin = null);
+
+/// <summary>Провенанс ребра (E5.1). <paramref name="Basis"/>: declared — прямо задано в compose/конфиге; name — цель определена
+/// по имени хоста; marker — по маркерному интерфейсу в коде; string — по строковому литералу; heuristic — по соглашению/эвристике.
+/// <paramref name="Evidence"/> — короткая строка без значений (ключи, не секреты). File/Line могут отсутствовать (честно «места нет»).</summary>
+public sealed record EdgeOrigin(string? File, int? Line, string Evidence, string Basis);
 
 /// <summary>Конкретный HTTP-вызов, атрибутированный ребру (E3.1). <paramref name="Confidence"/> 0..1 — по виду
 /// резолва цели (свой compose выше, чужой единственный ниже). <paramref name="Matched"/>: true — маршрут сопоставлен

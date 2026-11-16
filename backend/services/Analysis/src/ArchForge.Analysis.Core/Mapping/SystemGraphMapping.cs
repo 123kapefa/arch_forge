@@ -69,7 +69,8 @@ public static class SystemGraphMapping
     public static EdgeDto ToEdgeDto(this SystemEdge e) => new(
         $"{e.Source}-{e.Kind}->{e.Target}", e.Source, e.Target, e.Kind,
         Via: ViaString(e.Via), Confidence: e.Confidence,
-        Calls: e.Calls is { Count: > 0 } cs ? cs.Select(ToHttpCallDto).ToList() : null); // пусто/нет → поле опускаем
+        Calls: e.Calls is { Count: > 0 } cs ? cs.Select(ToHttpCallDto).ToList() : null, // пусто/нет → поле опускаем
+        Origin: e.Origin is { } o ? new EdgeOriginDto(o.Evidence, o.Basis, o.File, o.Line) : null);
 
     /// <summary>HTTP-вызов IR → DTO (E3.1). Провенанс вызова в срезе 1 всегда code (из RoslynHttpCallSource).</summary>
     private static HttpCallDto ToHttpCallDto(HttpCall c) => new(

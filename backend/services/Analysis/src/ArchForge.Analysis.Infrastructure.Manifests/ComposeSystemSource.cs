@@ -43,6 +43,8 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         var nodes = new Dictionary<string, SystemNode>(StringComparer.Ordinal);
         var edges = new List<SystemEdge>();
         var httpIntents = new List<(string SourceId, string TargetHost)>();
+        var serviceFiles = new Dictionary<string, (string Service, string[] Files)>(StringComparer.Ordinal);
+        var httpKeys = new Dictionary<(string, string), string>();   // (источник, хост) → ключ environment, откуда взят адрес (E5.1 evidence)
         var origins = new Dictionary<string, (string Service, string[] Files)>(StringComparer.Ordinal); // узел → compose-файлы, где искать строку порта (E9.2)
         var envKeys = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);   // E9.3: узел → ИМЕНА env-ключей (значения не храним)
         var envIncomplete = new HashSet<string>(StringComparer.Ordinal);   // E9.3: узлы с непрочитанным env_file — ключи неизвестны
@@ -83,10 +85,11 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                 nodes[node.Id] = node;
                 envKeys[node.Id] = [.. svc.Environment.Keys, .. svc.PassthroughKeys ?? []];
                 if (svc.EnvFileUnread) envIncomplete.Add(node.Id);
-                if (svc.Ports.Count > 0)
                 {
                     var key = activeEnv == DefaultEnv ? ComposeOverlays.Default : activeEnv;
-                    origins[node.Id] = (svc.Name, overlaysByPath[composePath].TryGetValue(key, out var ovp) ? [ovp, composePath] : [composePath]);
+                    var files = overlaysByPath[composePath].TryGetValue(key, out var ovp) ? new[] { ovp, composePath } : new[] { composePath };
+                    if (svc.Ports.Count > 0) origins[node.Id] = (svc.Name, files);
+                    serviceFiles[node.Id] = (svc.Name, files);   // E5.1: место рёбер сервиса — для всех, не только с портами
                 }
             }
 
@@ -112,14 +115,16 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                         if (Interpolation.IsDeferred(host))
                         {
                             nodes.TryAdd(host, new SystemNode(host, host, SystemNodeKind.External));
-                            edges.Add(new SystemEdge(sourceId, host, "rw-db", EdgeVia.Config, 0.5, Deferred: true));
+                            edges.Add(new SystemEdge(sourceId, host, "rw-db", EdgeVia.Config, 0.5, Deferred: true,
+                                Origin: new EdgeOrigin(null, null, $"environment: {key} — хост задан переменной, значение придёт при деплое", "declared")));
                         }
                         else if (local.TryGetValue(host, out var target) &&
                                  target.Kind is SystemNodeKind.Datastore or SystemNodeKind.Topic)
                         {
                             // топик — uses-bus (направление pub/sub из compose не достаётся); БД — rw-db
                             var (kind, conf) = target.Kind == SystemNodeKind.Topic ? ("uses-bus", BusConf) : ("rw-db", 0.9);
-                            edges.Add(new SystemEdge(sourceId, target.Id, kind, EdgeVia.Config, conf));
+                            edges.Add(new SystemEdge(sourceId, target.Id, kind, EdgeVia.Config, conf,
+                                Origin: new EdgeOrigin(null, null, $"environment: {key} — строка подключения указывает на «{host}»", "declared")));
                         }
                     }
 
@@ -131,12 +136,14 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                     {
                         handledAsBus = true; // строка учтена как подключение к шине → не дублируем её как http-call
                         if (local.TryGetValue(busHost, out var bus) && bus.Kind == SystemNodeKind.Topic)
-                            edges.Add(new SystemEdge(sourceId, bus.Id, "uses-bus", EdgeVia.Config, BusConf));
+                            edges.Add(new SystemEdge(sourceId, bus.Id, "uses-bus", EdgeVia.Config, BusConf,
+                                Origin: new EdgeOrigin(null, null, $"environment: {key} — хост шины «{busHost}»", "declared")));
                         else if (!local.ContainsKey(busHost))
                         {
                             var extId = "bus://" + busHost;
                             nodes.TryAdd(extId, new SystemNode(extId, busHost, SystemNodeKind.External));
-                            edges.Add(new SystemEdge(sourceId, extId, "uses-bus", EdgeVia.Config, BusExternal));
+                            edges.Add(new SystemEdge(sourceId, extId, "uses-bus", EdgeVia.Config, BusExternal,
+                                Origin: new EdgeOrigin(null, null, $"environment: {key} — хост «{busHost}» вне compose", "declared")));
                         }
                     }
 
@@ -144,14 +151,18 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                     // резолвим глобально после разбора всех (ключ-фильтр убирает telemetry/health-URL из шума).
                     // Пропускаем, если ту же строку уже учли как подключение к шине (RabbitMQ__Uri: http://… → не двоим).
                     if (!handledAsBus && HttpUrls.IsUrlKey(key) && HttpUrls.Host(value) is { } targetHost)
+                    {
                         httpIntents.Add((sourceId, targetHost));
+                        httpKeys.TryAdd((sourceId, targetHost), key);
+                    }
                 }
 
                 foreach (var dep in svc.DependsOn)
                 {
                     if (!local.TryGetValue(dep, out var target) || target.Kind != SystemNodeKind.Datastore) continue;
                     if (edges.Any(e => e.Source == sourceId && e.Target == target.Id && e.Kind == "rw-db")) continue;
-                    edges.Add(new SystemEdge(sourceId, target.Id, "rw-db", EdgeVia.Compose, 0.7));
+                    edges.Add(new SystemEdge(sourceId, target.Id, "rw-db", EdgeVia.Compose, 0.7,
+                        Origin: new EdgeOrigin(null, null, $"depends_on: {dep} — зависимость запуска, не доказательство обращения к БД", "heuristic")));
                 }
             }
         }
@@ -161,7 +172,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         configUrls.AddRange(ConfigHttpScanner.ScanKeyed(root, nodes.Values.ToList(), ct));
         if (configUrls.Count > 6000) configUrls.RemoveRange(6000, configUrls.Count - 6000);   // общий предел: огромные конфиги не раздувают граф
 
-        var httpProblems = ResolveHttpCalls(nodes, edges, httpIntents, ct);
+        var httpProblems = ResolveHttpCalls(nodes, edges, httpIntents, httpKeys, ct);
 
         // Среды показываем, только если есть выбор (>1: default + именованные) — иначе поле опускаем (как Deploy/Endpoints).
         IReadOnlyList<SystemEnvironment>? environments = available.Count > 1
@@ -179,6 +190,14 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                 ? (Path.GetRelativePath(baseDir, hit.File).Replace('\\', '/'), hit.Line)
                 : null;
         }
+        // E5.1: у рёбер из compose/конфигурации место = строка сервиса-источника в compose-файле (оверлей раньше base)
+        graph = graph with
+        {
+            Edges = graph.Edges.Select(e => e.Origin is { File: null } o && serviceFiles.TryGetValue(e.Source, out var og)
+                    && locator.ServiceLine(og.Files, og.Service) is { } at
+                ? e with { Origin = o with { File = Path.GetRelativePath(baseDir, at.File).Replace('\\', '/'), Line = at.Line } }
+                : e).ToList(),
+        };
         var problems = SystemProblemDetector.Detect(graph, Locate).Concat(httpProblems).ToList();
         return graph with { Problems = problems };
     }
@@ -193,7 +212,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
     // Ноль → честный внешний узел; неоднозначно → не выдумываем цель, но и НЕ молчим: Coverage (adr/0008).
     private static List<SystemProblem> ResolveHttpCalls(
         Dictionary<string, SystemNode> nodes, List<SystemEdge> edges,
-        List<(string SourceId, string TargetHost)> intents, CancellationToken ct)
+        List<(string SourceId, string TargetHost)> intents, IReadOnlyDictionary<(string, string), string> keys, CancellationToken ct)
     {
         var problems = new List<SystemProblem>();
         var resolver = new HttpTargetResolver(nodes.Values); // общий резолвер host→узел (E3.1 срез 0)
@@ -202,13 +221,16 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
         {
             ct.ThrowIfCancellationRequested();
             var t = resolver.Resolve(sourceId, host);
+            // E5.1: откуда адрес — ключ environment (значение не показываем) либо appsettings*.json; цель определена по имени хоста
+            var origin = new EdgeOrigin(null, null,
+                keys.TryGetValue((sourceId, host), out var k) ? $"environment: {k} — адрес «{host}»" : $"конфигурация: адрес «{host}»", "name");
             switch (t.Kind)
             {
                 case HttpTargetKind.SameSystem:                  // достоверно (DNS того же compose)
-                    edges.Add(new SystemEdge(sourceId, t.NodeId!, "http-call", EdgeVia.Config, HttpConfident));
+                    edges.Add(new SystemEdge(sourceId, t.NodeId!, "http-call", EdgeVia.Config, HttpConfident, Origin: origin));
                     break;
                 case HttpTargetKind.Inferred:                    // единственная цель в чужом compose — inferred
-                    edges.Add(new SystemEdge(sourceId, t.NodeId!, "http-call", EdgeVia.Config, HttpInferred));
+                    edges.Add(new SystemEdge(sourceId, t.NodeId!, "http-call", EdgeVia.Config, HttpInferred, Origin: origin));
                     break;
                 case HttpTargetKind.Ambiguous:                   // ≥2 одноимённых — не выдумываем
                     problems.Add(new SystemProblem(ProblemSeverity.Coverage, "ambiguous-target",
@@ -217,7 +239,7 @@ public sealed class ComposeSystemSource(IServiceDiscoverySource? discovery = nul
                 case HttpTargetKind.External:                    // хост вне скана — честный внешний узел
                     var extId = "http://" + host.ToLowerInvariant(); // регистр нормализован → нет дублей
                     nodes.TryAdd(extId, new SystemNode(extId, host.ToLowerInvariant(), SystemNodeKind.External));
-                    edges.Add(new SystemEdge(sourceId, extId, "http-call", EdgeVia.Config, HttpExternal));
+                    edges.Add(new SystemEdge(sourceId, extId, "http-call", EdgeVia.Config, HttpExternal, Origin: origin));
                     break;
                 case HttpTargetKind.SelfOnly:                    // только сам себя — пропускаем
                     break;

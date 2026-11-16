@@ -67,7 +67,7 @@ export interface SystemMember {
   line?: number;
 }
 
-import type { HttpCall } from './edgeCalls';
+import type { EdgeOrigin, HttpCall } from './edgeCalls';
 
 export interface SystemEdge {
   id: string;
@@ -78,6 +78,7 @@ export interface SystemEdge {
   confidence?: number;   // 0..1 (уверенность по источнику)
   violation?: boolean;   // связь-нарушение (подсветка красным)
   problem?: string;      // id проблемы (навигация клик-по-ребру → проблема)
+  origin?: EdgeOrigin;   // откуда известно ребро (E5.1): файл:строка + evidence + основание
   calls?: HttpCall[];    // конкретные HTTP-вызовы ребра (E3.1); нет поля — вызовы не запрашивались
 }
 

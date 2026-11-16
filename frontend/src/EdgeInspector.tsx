@@ -1,5 +1,5 @@
 import { InspectorFrame } from './InspectorFrame';
-import { CONFIDENCE_LABEL, confidenceLevel, matchLabel, relativeFile, shortFile, sortCalls, summarizeCalls, type HttpCall } from './edgeCalls';
+import { CONFIDENCE_LABEL, basisInfo, codeLink, confidenceLevel, matchLabel, relativeFile, shortFile, sortCalls, summarizeCalls, type EdgeOrigin, type HttpCall } from './edgeCalls';
 
 export interface SelectedEdge {
   id: string;
@@ -10,6 +10,7 @@ export interface SelectedEdge {
   via?: string;
   violation: boolean;
   calls?: HttpCall[];
+  origin?: EdgeOrigin;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -39,6 +40,8 @@ export function EdgeInspector({ edge, names, scanRoot, callsRequested, onFocus }
         {edge.violation && <span className="einspect__tag einspect__tag--bad">нарушение</span>}
       </span>}>
 
+      <OriginBlock origin={edge.origin} scanRoot={scanRoot} />
+
       {edge.kind === 'http-call' ? (
         <>
           <div className="einspect__label">вызовы · {summarizeCalls(calls, callsRequested)}</div>
@@ -64,6 +67,7 @@ export function EdgeInspector({ edge, names, scanRoot, callsRequested, onFocus }
                         {c.line ? <span className="einspect__line">:{c.line}</span> : null}
                         <button type="button" className="finspect__copy"
                           onClick={() => void navigator.clipboard?.writeText(c.file ?? '')}>копировать путь</button>
+                        <a className="finspect__copy" href={codeLink(c.file, c.line, scanRoot)}>открыть в коде</a>
                       </div>
                     )}
                   </li>
@@ -79,5 +83,36 @@ export function EdgeInspector({ edge, names, scanRoot, callsRequested, onFocus }
         <div className="finspect__hint">Для этого вида связи конкретных вызовов нет.</div>
       )}
     </InspectorFrame>
+  );
+}
+
+/** Откуда известно само ребро (E5.1): основание (подтверждено / выведено), evidence и место с переходом в код. */
+function OriginBlock({ origin, scanRoot }: { origin?: EdgeOrigin; scanRoot: string }) {
+  if (!origin) {
+    return <div className="finspect__hint">Источник этой связи не определён: место в коде или конфигурации не зафиксировано.</div>;
+  }
+  const b = basisInfo(origin.basis);
+  const href = codeLink(origin.file, origin.line, scanRoot);
+  return (
+    <div className="einspect__origin">
+      <div className="einspect__label">откуда известно</div>
+      <div className="einspect__evidence">{origin.evidence}</div>
+      <div className="einspect__meta">
+        <span className={`einspect__basis einspect__basis--${b.confirmed ? 'ok' : 'infer'}`}>
+          {b.confirmed ? 'подтверждено' : 'выведено'} · {b.label}
+        </span>
+      </div>
+      {origin.file ? (
+        <div className="einspect__src">
+          <span className="einspect__path" title={origin.file}>{shortFile(origin.file)}</span>
+          {origin.line ? <span className="einspect__line">:{origin.line}</span> : null}
+          <button type="button" className="finspect__copy"
+            onClick={() => void navigator.clipboard?.writeText(origin.file ?? '')}>копировать путь</button>
+          {href && <a className="finspect__copy" href={href}>открыть в коде</a>}
+        </div>
+      ) : (
+        <div className="finspect__hint">Файл не определён.</div>
+      )}
+    </div>
   );
 }
