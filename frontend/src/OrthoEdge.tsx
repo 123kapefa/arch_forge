@@ -1,4 +1,5 @@
 import { BaseEdge, useInternalNode, useStoreApi, type EdgeProps, type InternalNode } from '@xyflow/react';
+import { edgeTooltip } from './hoverModel';
 import { routeEdge, type Rect, type XY, type EdgeLite } from './orthoRouter';
 
 // Путь-ломаная со скруглением углов (радиус r). Точки ортогональны и в координатах потока.
@@ -37,15 +38,20 @@ export function OrthoEdge({ id, source, target, data, style, markerEnd, sourceX,
   const route = (data as { route?: XY[] } | undefined)?.route;
   const dragging = !!(src?.dragging || tgt?.dragging);
 
-  if (route && route.length >= 2 && !dragging) {
-    return <BaseEdge id={id} path={roundedPath(route)} style={style} markerEnd={markerEnd} />;
-  }
+  const tip = edgeTooltip(data as Parameters<typeof edgeTooltip>[0]);
+  const edge = (path: string) => (
+    <g>
+      {tip && <title>{tip}</title>}
+      <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} interactionWidth={16} />
+    </g>
+  );
+  if (route && route.length >= 2 && !dragging) return edge(roundedPath(route));
   if (src && tgt) {
     const { nodeLookup, edges } = store.getState();
     const rects = new Map<string, Rect>();
     for (const n of nodeLookup.values()) rects.set(n.id, rectOf(n));
     const pts = routeEdge(id, source, target, rects, edges as EdgeLite[]);
-    if (pts.length >= 2) return <BaseEdge id={id} path={roundedPath(pts)} style={style} markerEnd={markerEnd} />;
+    if (pts.length >= 2) return edge(roundedPath(pts));
   }
-  return <BaseEdge id={id} path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`} style={style} markerEnd={markerEnd} />;
+  return edge(`M ${sourceX},${sourceY} L ${targetX},${targetY}`);
 }

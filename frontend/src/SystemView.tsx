@@ -13,6 +13,7 @@ import {
   Background, Controls, MiniMap, type Edge, type Node, type NodeChange,
 } from '@xyflow/react';
 import { routeAll, type Rect, type XY } from './orthoRouter';
+import { buildAdjacency, highlightFor } from './hoverModel';
 import '@xyflow/react/dist/style.css';
 import './system.css';
 
@@ -80,6 +81,7 @@ const Flow = forwardRef<FlowHandle, {
   const [version, setVersion] = useState(0); // версия раскладки: растёт при новой раскладке и drag-stop
   const [routes, setRoutes] = useState<Map<string, XY[]>>(new Map()); // предрассчитанные маршруты (с развязкой)
   const [hoverId, setHoverId] = useState<string | null>(null); // узел под курсором — подсветка связей
+  const [hoverEdgeId, setHoverEdgeId] = useState<string | null>(null); // ребро под курсором
   const last = useRef<{ x: number; y: number; t: number } | null>(null);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -202,27 +204,50 @@ const Flow = forwardRef<FlowHandle, {
     setSnapNow((cur) => (cur === want ? cur : want));
   }, []);
 
-  // Подсветка связей: наведение (или выбор) узла → его рёбра ярче и над блоками, остальные приглушены.
-  const highlightId = hoverId ?? selectedId;
+  // Подсветка: наведение на узел/ребро (hover) или выбор узла (sel). Работает через CSS-классы: dim остального делает
+  // CSS по классу корня (`has-hl`), а новые объекты получают только затронутые рёбра/узлы — остальные сохраняют
+  // идентичность, React Flow их не перерисовывает; маршруты (routeAll) и раскладка не пересчитываются.
+  const hoverMode = hoverId != null || hoverEdgeId != null;
+  const hlNode = hoverEdgeId ? null : (hoverId ?? selectedId);
   const routesReady = routes.size > 0; // маршруты посчитаны — можно показывать рёбра (иначе мелькнёт дефолт)
-  const displayEdges = useMemo(() => edges.map((e) => {
+  const adjacency = useMemo(() => buildAdjacency(edges), [edges]);
+  const hl = useMemo(
+    () => (flowEdges ? highlightFor(adjacency, {}) : highlightFor(adjacency, { nodeId: hlNode, edgeId: hoverEdgeId })),
+    [adjacency, hlNode, hoverEdgeId, flowEdges],
+  );
+  const baseEdges = useMemo(() => edges.map((e) => {
     const route = routes.get(e.id);                    // предрассчитанный маршрут с развязкой
     const onFlow = flowEdges ? flowEdges.has(e.id) : false;
-    const on = flowEdges ? onFlow : highlightId != null && (e.source === highlightId || e.target === highlightId);
-    const dim = flowEdges ? !onFlow : highlightId != null;
     return {
       ...e,
       data: { ...e.data, route },
       hidden: !routesReady,                            // прячем до готовности маршрутов (без flicker при reload/drill)
-      zIndex: on ? 1000 : 0,
-      style: { ...e.style, opacity: on ? 1 : dim ? 0.08 : 1, strokeWidth: on ? 3 : e.style?.strokeWidth },
+      // E3.4: путь потока подсвечен, остальное приглушено (инлайн: это отдельный режим, не hover)
+      ...(flowEdges ? { zIndex: onFlow ? 1000 : 0, style: { ...e.style, opacity: onFlow ? 1 : 0.08, strokeWidth: onFlow ? 3 : e.style?.strokeWidth } } : {}),
     };
-  }), [edges, routes, routesReady, highlightId, flowEdges]);
+  }), [edges, routes, routesReady, flowEdges]);
+  const displayEdges = useMemo(() => (hl.edgeIds.size === 0 ? baseEdges : baseEdges.map((e) => {
+    if (!hl.edgeIds.has(e.id)) return e;
+    const hovered = e.id === hoverEdgeId;
+    const accent = 'var(--accent)';
+    return {
+      ...e,
+      className: `is-hl${hovered ? ' is-hover' : ''}`,
+      zIndex: 1000,
+      markerEnd: hovered && e.markerEnd && typeof e.markerEnd === 'object' ? { ...e.markerEnd, color: accent, width: 18, height: 18 } : e.markerEnd,
+    };
+  })), [baseEdges, hl, hoverEdgeId]);
 
-  // E3.4: узлы вне потока приглушены (только пока поток показан)
-  const displayNodes = useMemo(() => flowNodes
-    ? nodes.map((n) => (flowNodes.has(n.id) ? n : { ...n, style: { ...n.style, opacity: 0.25 } }))
-    : nodes, [nodes, flowNodes]);
+  // E3.4: узлы вне потока приглушены (только пока поток показан); подсветка hover — классами только у затронутых узлов
+  const displayNodes = useMemo(() => {
+    if (flowNodes) return nodes.map((n) => (flowNodes.has(n.id) ? n : { ...n, style: { ...n.style, opacity: 0.25 } }));
+    if (hl.mainIds.size === 0 && hl.nodeIds.size === 0) return nodes;
+    return nodes.map((n) => {
+      if (hl.mainIds.has(n.id)) return { ...n, className: 'is-hl-main' };
+      if (hl.nodeIds.has(n.id)) return { ...n, className: 'is-hl' };
+      return n;
+    });
+  }, [nodes, flowNodes, hl]);
 
   return (
     <ReactFlow
@@ -232,6 +257,7 @@ const Flow = forwardRef<FlowHandle, {
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
+      className={hl.mainIds.size > 0 || hl.edgeIds.size > 0 ? `has-hl ${hoverMode ? 'hl-hover' : 'hl-sel'}` : undefined}
       minZoom={0.08}
       // начальная камера L0 = сохранённый вьюпорт (переживает reload); onInit добивает, когда ReactFlow готов
       // (render-gate монтирует его с задержкой — reseed-таймеры могут не застать). Drill: storageKey='' → fitView.
@@ -247,6 +273,8 @@ const Flow = forwardRef<FlowHandle, {
       onNodeDragStop={() => { last.current = null; setSnapNow(false); setVersion((v) => v + 1); }}
       onNodeMouseEnter={(_, n) => setHoverId(n.id)}
       onNodeMouseLeave={() => setHoverId(null)}
+      onEdgeMouseEnter={(_, e) => setHoverEdgeId(e.id)}
+      onEdgeMouseLeave={() => setHoverEdgeId(null)}
       onNodeClick={(_, n) => onSelect(n)}
       onEdgeClick={(_, e) => onSelectEdge?.(e)}
       onNodeDoubleClick={(_, n) => onDoubleClick(n)}
