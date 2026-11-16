@@ -1,0 +1,12 @@
+.stub { max-width: 720px; margin: var(--sp-6) auto; padding: 0 var(--sp-4); }
+.title { font-size: var(--fs-xl); font-weight: 600; margin: 0 0 var(--sp-3); }
+.badge {
+  display: inline-block; margin: 0 0 var(--sp-3); padding: 2px var(--sp-2);
+  border-radius: var(--radius-sm); font-size: var(--fs-sm);
+  background: var(--status-warning-bg); color: var(--status-warning);
+}
+.description { color: var(--text-muted); margin: 0 0 var(--sp-3); }
+.params { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-muted); margin: 0; }
+.params div { display: flex; gap: var(--sp-2); }
+.params dt::after { content: ':'; }
+.params dd { margin: 0; color: var(--text); }
