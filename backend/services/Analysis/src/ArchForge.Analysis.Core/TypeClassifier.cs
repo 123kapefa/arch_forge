@@ -113,6 +113,7 @@ public sealed class TypeClassifier
         foreach (var r in raw)
         {
             var implemented = new HashSet<string>();
+            var firstEdge = edges.Count;
             void Add(string to, string kind, bool skipIfImplemented = false)
             {
                 if (to == r.Name || !names.Contains(to)) return;
@@ -129,6 +130,14 @@ public sealed class TypeClassifier
             {
                 var ek = r.Kind == "record" ? "holds" : "uses";
                 foreach (Match m in Regex.Matches(r.CtorParams, "[A-Z][A-Za-z0-9_]*")) Add(m.Value, ek, skipIfImplemented: true);
+            }
+
+            // Слабые refs пола (по именам): только если к цели ещё нет более сильного ребра от этого типа.
+            if (r.WeakNames.Count > 0)
+            {
+                var linked = edges.Skip(firstEdge).Select(e => e.To).ToHashSet();
+                foreach (var n in r.WeakNames)
+                    if (linked.Add(n)) Add(n, TypeEdgeKinds.Refs);
             }
         }
 

@@ -22,7 +22,16 @@ public sealed record MemberInfo(
     string? Route = null,
     int? Line = null);
 
-public sealed record TypeEdge(string From, string To, string Kind); // implements | holds | uses | raises | handles
+public sealed record TypeEdge(string From, string To, string Kind); // implements | holds | uses | raises | handles | refs
+
+/// <summary>Виды рёбер тип-графа. <c>refs</c> — СЛАБЫЙ вид: возвращаемые типы, аргументы базы/интерфейсов, статические члены,
+/// тело метода (new/локальные/дженерик-аргументы/статический доступ/атрибуты). Он показывает «тип используется»,
+/// но НЕ участвует в проверках направления слоёв и health (см. LayerGraph): иначе новые ложные срабатывания.</summary>
+public static class TypeEdgeKinds
+{
+    public const string Refs = "refs";
+    public static bool IsWeak(string kind) => string.Equals(kind, Refs, StringComparison.Ordinal);
+}
 
 public sealed record Coverage(int Marker, int Heuristic, int Unknown);
 

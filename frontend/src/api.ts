@@ -37,7 +37,7 @@ export interface EdgeDto {
   id: string;
   source: string;
   target: string;
-  kind: string;   // implements | holds | uses | ...
+  kind: string;   // implements | holds | uses | handles | raises | refs (слабый) | ...
 }
 
 export interface CoverageDto {

@@ -18,7 +18,8 @@ public static class LayerGraph
         IReadOnlyList<TypeEdge> edges, IReadOnlyDictionary<string, string> layerByName)
     {
         foreach (var e in edges)
-            if (layerByName.TryGetValue(e.From, out var fl) && layerByName.TryGetValue(e.To, out var tl)
+            if (!TypeEdgeKinds.IsWeak(e.Kind) // слабые refs не судим: возможные ложные срабатывания (тело метода, статика)
+                && layerByName.TryGetValue(e.From, out var fl) && layerByName.TryGetValue(e.To, out var tl)
                 && LayerRules.IsViolation(fl, tl))
                 yield return (e, fl, tl);
     }
