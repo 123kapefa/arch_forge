@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import { layerColor } from '../theme';
 import type { MemberDto } from '../api';
+import { outsideBadge, type OutsideSummary } from '../typeLinks';
 import { TYPE_PREVIEW_MAX, typeCardWidth } from './typeCardMetrics';
 
 export interface TypeCardData {
@@ -11,6 +12,8 @@ export interface TypeCardData {
   via: string;
   drift?: string[];
   members?: MemberDto[];
+  outside?: OutsideSummary; // связи с типами других слоёв (на карте не рисуются — сводка + список в инспекторе)
+  entry?: string | null;    // «вход для фреймворка»: подпись роли, если тип запускает фреймворк, а не код
   hotspot?: number; // «маппинг не централизован»: собран инлайн в N мест вне мапперов (свод-замечание)
   [key: string]: unknown;
 }
@@ -35,6 +38,7 @@ export function TypeCard({ data, selected }: NodeProps<TypeCardType>) {
   const health = (data.drift?.length ?? 0) > 0 ? 'warning' : 'ok';
   const roleTail = data.role && data.role !== 'unknown' ? ` · ${data.role}` : '';
   const width = typeCardWidth(data.name, members);
+  const badge = outsideBadge(data.outside);
 
   return (
     <div className={`tcard health-${health}${selected ? ' is-selected' : ''}`} style={{ width }}>
@@ -54,6 +58,12 @@ export function TypeCard({ data, selected }: NodeProps<TypeCardType>) {
         ) : null}
         <span className={`tcard__dot health-${health}`} />
       </div>
+      {(badge || data.entry) && (
+        <div className="tcard__tags">
+          {badge && <span className="tcard__tag tcard__tag--out" title={badge.title}>{badge.text}</span>}
+          {data.entry && <span className="tcard__tag tcard__tag--entry" title={`вход для фреймворка: ${data.entry}. Его вызывает фреймворк, а не код — поэтому прямых связей может не быть`}>вход для фреймворка</span>}
+        </div>
+      )}
       {preview.length > 0 && (
         <div className="tcard__body">
           {preview.map((m) => (

@@ -30,6 +30,7 @@ import { OrthoEdge } from './OrthoEdge';
 import { SystemNodeView } from './nodes/SystemNodeView';
 import { LayerCard } from './nodes/LayerCard';
 import { TypeCard, type TypeCardData } from './nodes/TypeCard';
+import { CaptionNode } from './nodes/CaptionNode';
 import { problemsByLens, severityCounts, categoryOf, namespaceOf, ownerByRoot, lensHitsByNode, type Lens } from './systemModel';
 import { repoColor, layerColor } from './theme';
 import { HiddenLayersContext } from './layersContext';
@@ -42,7 +43,7 @@ import {
   readViewport, writeViewport, readBool, readNum, setSS, readGraphCache, writeGraphCache,
 } from './persist';
 
-const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeCard };
+const nodeTypes = { sys: SystemNodeView, layer: LayerCard, type: TypeCard, caption: CaptionNode };
 const edgeTypes = { ortho: OrthoEdge };
 const GRID = 20; // шаг сетки: точки фона + шаг магнита
 // Порог скорости указателя (px/мс): медленнее (малая инерция) → магнит к сетке; быстрее → свободно.
@@ -264,13 +265,14 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 /** Инспектор для выбранного узла — диспетчер по уровню: системный узел (L0) / слой (L1) / тип+члены (L2). */
-function Inspector({ node, graph, lens, onFocus, onOpenEdge, onFlow }: {
+function Inspector({ node, graph, lens, onFocus, onOpenEdge, onFlow, onOpenType }: {
   node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void; onOpenEdge: (e: SystemEdge) => void; onFlow?: (n: SystemNode) => void;
+  onOpenType?: (id: string, layer: string) => void;
 }) {
   const d = node.data as Record<string, unknown>;
   if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} onOpenEdge={onOpenEdge} onFlow={onFlow} />;
   if ('role' in d && 'via' in d) {
-    return <TypeInspector data={node.data as unknown as TypeCardData} members={(d.members as MemberDto[] | undefined) ?? []} />;
+    return <TypeInspector data={node.data as unknown as TypeCardData} members={(d.members as MemberDto[] | undefined) ?? []} onOpenType={onOpenType} />;
   }
   if ('count' in d) return <LayerInspector data={node.data as unknown as LayerCardData} />;
   return null;
@@ -294,7 +296,7 @@ function memberTitle(m: MemberDto): string {
 }
 
 /** L2: инспектор типа — стереотип/слой/дрейф + ВСЕ члены (эндпоинты/методы/свойства/поля), сгруппированные по виду. */
-function TypeInspector({ data, members }: { data: TypeCardData; members: MemberDto[] }) {
+function TypeInspector({ data, members, onOpenType }: { data: TypeCardData; members: MemberDto[]; onOpenType?: (id: string, layer: string) => void }) {
   const groups = useMemo(() => {
     const by = new Map<string, MemberDto[]>();
     for (const m of members) {
@@ -311,6 +313,31 @@ function TypeInspector({ data, members }: { data: TypeCardData; members: MemberD
         <div className="inspector__sub">СТЕРЕОТИП</div>
         <div>{data.role || '—'} <span className="iedge__kind">{data.via}</span></div>
       </div>
+      {data.entry && (
+        <div className="inspector__block">
+          <div className="inspector__sub">ВХОД ДЛЯ ФРЕЙМВОРКА</div>
+          <div>{data.entry}</div>
+          <div className="panel__empty">Его запускает фреймворк, а не прямой вызов из кода, поэтому связей может не быть — это не значит «не нужен».</div>
+        </div>
+      )}
+      {data.outside && data.outside.links.length > 0 && (
+        <div className="inspector__block">
+          <div className="inspector__sub">СВЯЗИ ВНЕ СЛОЯ · {data.outside.links.length} (→ {data.outside.out}, ← {data.outside.in})</div>
+          <ul className="inspector__edges">
+            {data.outside.links.map((l) => (
+              <li key={`${l.dir}|${l.peerId}`}>
+                <button className="outlink" disabled={!onOpenType} onClick={() => onOpenType?.(l.peerId, l.peerLayer)}
+                  title={`${l.dir === 'out' ? 'этот тип ссылается на' : 'ссылается на этот тип'} ${l.peerName} (${l.peerLayer}) · ${l.kinds.join(', ')}${l.weak ? ' · слабая связь' : ''}`}>
+                  <span className="outlink__dir">{l.dir === 'out' ? '→' : '←'}</span>
+                  <span className="outlink__name">{l.peerName}</span>
+                  <span className="outlink__layer" style={{ color: layerColor(l.peerLayer) }}>{l.peerLayer}</span>
+                  <span className="iedge__kind">{l.kinds.join(' · ')}{l.weak ? ' · слабая' : ''}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {data.drift && data.drift.length > 0 && (
         <div className="inspector__block">
           <div className="inspector__sub">дрейф от свода</div>
@@ -1129,6 +1156,17 @@ export function SystemView() {
     setSelected(tn);
   }, [typeFlow]);
 
+  // Из инспектора типа: «связь вне слоя» → открыть тип в соседнем слое (тот же приём, что у «Показать плашку»).
+  const openTypeById = useCallback((id: string, layer: string) => {
+    const sid = drill ? (drill.data as SystemNodeData).node.id : null;
+    const m = l1Map?.nodes.find((n) => n.id === id);
+    if (!sid || !m) return;
+    revealRef.current = { serviceId: sid, file: m.file, name: m.name, focusId: m.id };
+    focusCardRef.current = m.id;
+    setSelected(null);
+    setDrill2(layer);
+  }, [drill, l1Map]);
+
   // Клик по проблеме/связи → навести на узел. Если location — узел: выбрать + центрировать.
   // Если это namespace-префикс (дрейф/слой per-service): навести на все узлы репозитория. Иначе — не двигать.
   // Узел → связь: открыть инспектор связи из списка СВЯЗИ в инспекторе узла (R18).
@@ -1595,7 +1633,7 @@ export function SystemView() {
                       onFlow={setFlowChain} onClose={closeFlow} onFocus={focusNode} />
                   : selected && graph
                   ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} onOpenEdge={openEdge}
-                      onFlow={(n) => { setFlowFor({ id: n.id, name: n.name }); }} />
+                      onFlow={(n) => { setFlowFor({ id: n.id, name: n.name }); }} onOpenType={openTypeById} />
                   : selectedEdge && graph
                     ? <EdgeInspector edge={selectedEdge} onFocus={focusNode} scanRoot={loadedPath} callsRequested={callsAsked}
                         names={Object.fromEntries(graph.nodes.map((n) => [n.id, n.name]))} />

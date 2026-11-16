@@ -1052,3 +1052,18 @@ a.finspect__copy { text-decoration: none; }
 .flowp__calls { flex-basis: 100%; margin: 0; padding-left: 20px; font-family: ui-monospace, monospace; font-size: 10px; color: var(--muted); }
 .flowp__warn { color: #d9a441; font-size: 11px; }
 .flowp__notes { list-style: none; margin: 8px 0 0; padding: 0; }
+
+/* L2: метки на карточке типа (связи вне слоя / вход для фреймворка) */
+.tcard__tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 8px; }
+.tcard__tag { font-size: 10.5px; line-height: 16px; padding: 0 7px; border-radius: 8px; white-space: nowrap; }
+.tcard__tag--out { color: #8fb4e8; background: rgba(110, 160, 230, 0.14); }
+.tcard__tag--entry { color: #c3a6ea; background: rgba(170, 130, 230, 0.15); }
+/* подписи групп одиночек на холсте */
+.tcaption { display: flex; align-items: baseline; gap: 8px; width: 520px; padding-bottom: 8px; border-bottom: 1px dashed var(--card-line); font-size: 22px; font-weight: 600; color: var(--text); }
+.tcaption__count { font-size: 15px; color: var(--muted); font-weight: 400; }
+/* список «связи вне слоя» в инспекторе типа */
+.outlink { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 3px 4px; background: none; border: 0; border-radius: 6px; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.outlink:hover:not(:disabled) { background: rgba(255,255,255,.06); }
+.outlink__dir { color: var(--muted); flex: none; }
+.outlink__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outlink__layer { flex: none; font-size: 11px; }
