@@ -19,7 +19,7 @@ export interface CoverageShare {
 /** Доли в целых % от суммы источников методом наибольших остатков (всегда ровно 100).
  *  Без разбивки по источнику (структурный скан: сумма = 0) делить не на что → null. */
 export function shareOf(c: SystemCoverage | undefined): CoverageShare | null {
-  if (!c || c.total <= 0) return null;
+  if (!c) return null;
   const parts = [c.marker, c.heuristic, c.unknown].map((n) => Math.max(0, n));
   const sum = parts[0] + parts[1] + parts[2];
   if (sum <= 0) return null;
@@ -69,10 +69,13 @@ export interface Trust {
 export function trustOf(g: SystemGraph): Trust {
   const degradations = (g.degradations ?? []).filter((d) => d.trim().length > 0);
   const overall = shareOf(g.coverage);
-  const level: TrustLevel = degradations.length > 0 ? 'partial' : overall ? 'measured' : 'unknown';
-  const noFindings = (g.problems ?? []).length === 0;
   const rows = serviceRows(g);
   const total = g.nodes.filter((n) => n.kind === 'service').length;
-  const servicesCovered = g.services && total > 0 ? { covered: rows.length, total } : null;
+  // covered не бывает больше total (ids сервисов и узлов могут разойтись)
+  const servicesCovered = g.services && total > 0 ? { covered: Math.min(rows.length, total), total } : null;
+  const unparsedServices = servicesCovered !== null && servicesCovered.covered < servicesCovered.total;
+  // неразобранные сервисы в доли не входят: это та же деградация, что и явные из бэка
+  const level: TrustLevel = degradations.length > 0 || unparsedServices ? 'partial' : overall ? 'measured' : 'unknown';
+  const noFindings = (g.problems ?? []).length === 0;
   return { level, overall, rows, degradations, servicesCovered, cleanIsNotSafe: noFindings && level !== 'measured' };
 }

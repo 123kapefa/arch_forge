@@ -8,3 +8,5 @@
 .more { display: block; font-size: var(--fs-sm); color: var(--text-muted); margin-top: var(--sp-1); }
 .cta { display: inline-block; margin-top: var(--sp-2); color: var(--accent); font-size: var(--fs-sm); }
 .link:hover .cta { text-decoration: underline; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.link { position: relative; }

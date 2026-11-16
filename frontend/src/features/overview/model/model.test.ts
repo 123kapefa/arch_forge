@@ -80,13 +80,33 @@ describe('trust', () => {
     const e = evidenceOf(p('a', 'warning', { kind: 'exposed-datastore', items: [{ name: 'a', layer: '', note: '', file: 'x' }, { name: 'b', layer: '', note: '', file: 'y' }, { name: 'c', layer: '', note: '', file: 'z' }] }));
     expect(e).toMatchObject({ ruleLabel: 'Хранилище открыто наружу', extraPlaces: 2 });
   });
+  it('неразобранные сервисы + нет находок → partial и «чисто» с оговоркой', () => {
+    const cov = { marker: 5, heuristic: 3, unknown: 2, total: 10 };
+    const t = trustOf(graph({
+      coverage: cov,
+      nodes: [{ id: 'a', name: 'a', kind: 'service' }, { id: 'b', name: 'b', kind: 'service' }],
+      services: [{ id: 'a', name: 'a', health: 'ok', layers: [], coverage: cov }],
+    }));
+    expect(t.level).toBe('partial');
+    expect(t.cleanIsNotSafe).toBe(true);
+  });
+  it('covered не больше total («3 из 2» невозможно)', () => {
+    const cov = { marker: 1, heuristic: 0, unknown: 0, total: 1 };
+    const svc = (id: string) => ({ id, name: id, health: 'ok', layers: [], coverage: cov });
+    const t = trustOf(graph({ nodes: [{ id: 'a', name: 'a', kind: 'service' }], services: [svc('x'), svc('y'), svc('z')] }));
+    expect(t.servicesCovered).toEqual({ covered: 1, total: 1 });
+  });
+  it('shareOf: одно значение — 100/0/0; sum>0 при total=0 считается', () => {
+    expect(shareOf({ marker: 7, heuristic: 0, unknown: 0, total: 7 })).toMatchObject({ marker: 100, heuristic: 0, unknown: 0 });
+    expect(shareOf({ marker: 1, heuristic: 1, unknown: 0, total: 0 })).toMatchObject({ marker: 50, heuristic: 50, mismatch: true });
+  });
   it('деградации → partial; чисто при частичном разборе помечается как не безопасное', () => {
     const t = trustOf(graph({ degradations: ['DI не прочитан', '  '] }));
     expect(t.level).toBe('partial');
     expect(t.degradations).toEqual(['DI не прочитан']);
     expect(t.cleanIsNotSafe).toBe(true);
   });
-  it('полный разбор без находок — можно верить', () => {
+  it('доли известны, деградаций и неразобранных сервисов нет — measured', () => {
     const t = trustOf(graph({ coverage: { marker: 5, heuristic: 3, unknown: 2, total: 10 } }));
     expect(t.level).toBe('measured');
     expect(t.cleanIsNotSafe).toBe(false);

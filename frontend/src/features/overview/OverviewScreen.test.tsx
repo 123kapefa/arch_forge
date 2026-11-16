@@ -31,7 +31,7 @@ function mockFetch(res: () => Response | Promise<Response>) {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 beforeEach(() => localStorage.clear());
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('экран «Обзор»', () => {
   it('без пути — пустое состояние со ссылкой на /map, запрос не идёт', async () => {
@@ -119,7 +119,6 @@ describe('экран «Обзор»', () => {
     mockFetch(() => json(base));
     renderApp('/overview');
     expect(await screen.findByText('Проект не выбран.')).toBeInTheDocument();
-    vi.restoreAllMocks();
   });
 
   it('имена из чужих репозиториев выводятся текстом, не разметкой', async () => {
