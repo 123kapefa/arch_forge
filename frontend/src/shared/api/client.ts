@@ -38,15 +38,19 @@ function buildUrl(path: string, query: RequestOptions['query']): string {
   return `${API_BASE}${path}${qs ? `?${qs}` : ''}`;
 }
 
+const MAX_ERROR_LEN = 300;
+
+/** Сообщение для показа: только поле `error` из JSON (усечённое); любое другое тело (HTML страницы исключения,
+ *  стектрейс, текст прокси) НЕ показываем — только короткий текст со статусом. */
 async function errorMessage(res: Response): Promise<string> {
-  const body = await res.text();
+  const fallback = `Ошибка запроса (${res.status})`;
   try {
-    const parsed = JSON.parse(body) as { error?: string };
-    if (parsed?.error) return parsed.error;
+    const parsed = JSON.parse(await res.text()) as { error?: unknown };
+    if (typeof parsed?.error === 'string' && parsed.error.trim()) return parsed.error.slice(0, MAX_ERROR_LEN);
   } catch {
-    /* тело не JSON — берём как есть */
+    /* тело не JSON */
   }
-  return body || `Ошибка запроса (${res.status})`;
+  return fallback;
 }
 
 /** GET `/api{path}` → JSON. Внешняя отмена пробрасывается как AbortError, таймаут — как ApiError(408). */

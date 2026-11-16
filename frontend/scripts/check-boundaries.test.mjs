@@ -61,4 +61,11 @@ describe('check-boundaries', () => {
     expect(run({ 'features/a/A.ts': 'export const a = 1;\n', 'shared/lib/s.ts': "import '../../features/a/A';\n" }).code).toBe(1);
     expect(run({ 'shared/lib/s.ts': 'export const s = 1;\n', 'legacy/L.ts': "import '../shared/lib/s';\n" }).code).toBe(1);
   });
+
+  it('небезопасные DOM-API в новом коде → 1, в legacy игнорируются', () => {
+    expect(run({ 'shared/lib/a.ts': 'el.innerHTML = x;\n' }).code).toBe(1);
+    expect(run({ 'features/a/A.ts': 'el.insertAdjacentHTML("beforeend", x);\n' }).code).toBe(1);
+    expect(run({ 'features/a/A.tsx': "export const u = 'javascript:alert(1)';\n" }).code).toBe(1);
+    expect(run({ 'legacy/L.ts': 'el.innerHTML = x;\n' }).code).toBe(0);
+  });
 });

@@ -23,6 +23,7 @@ test/       setup.ts, renderApp.tsx
 - Новый код не импортирует `legacy/`; исключение одно — `features/map/legacy-adapter.tsx`. Новых фич в `legacy/` нет: правим только баги, остальное разбираем по частям в `features/map`.
 - **Файл ≤ 300 строк** в `app/features/shared` (без пустых строк и комментариев). Разрастается — разбейте на компоненты/хуки.
 - **Никакого `dangerouslySetInnerHTML`**: имена сервисов, типов и файлов приходят из чужих репозиториев. Текст выводим только через React.
+- Дополнительно к `react/no-danger` скрипт границ запрещает в новом коде `innerHTML=`/`outerHTML=`, `insertAdjacentHTML`, `document.write` и строки `javascript:` (простой текстовый поиск — известное ограничение: обфускацию не ловит; `no-restricted-syntax` в oxlint нет). Сообщения об ошибках API показываем только из поля `error` JSON (≤300 символов), тело HTML/текст никогда.
 - **Ограничения `check-boundaries.mjs`:** видит только относительные импорты (`./`, `../`, в т.ч. динамический `import('…')`); алиасы (`@/…`), `require`, `import.meta.glob` не проверяются. **Алиасы вводить нельзя, не обновив скрипт** (и его тест `scripts/check-boundaries.test.mjs`).
 - Проверяет всё это `npm run lint` (`oxlint` + `scripts/check-boundaries.mjs`); в CI — часть обязательных проверок.
 

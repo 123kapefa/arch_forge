@@ -2,6 +2,7 @@
 //   1. features/<a> не импортирует features/<b> (экраны независимы; общее — в shared/);
 //   2. legacy/ импортируется ТОЛЬКО из features/map/legacy-adapter.tsx;
 //   3. слои: shared не знает про features/app; features не знает про app; legacy не знает про новый код.
+//   4. небезопасные DOM-API (innerHTML=, insertAdjacentHTML, document.write, 'javascript:') в новом коде.
 // Ограничения: проверяются только ОТНОСИТЕЛЬНЫЕ импорты (`./`, `../`); алиасы (`@/…`), `require`,
 // `import.meta.glob` не видны — не вводите алиасы, не обновив скрипт.
 // Лимит длины файла и запрет dangerouslySetInnerHTML проверяет oxlint (см. .oxlintrc.json).
@@ -29,10 +30,23 @@ function zone(file) {
   return { top, feature: top === 'features' ? second : null };
 }
 
+// API, которых не ловит react/no-danger: запрещены в новом коде (legacy/ — долг, не проверяется).
+const FORBIDDEN_DOM = [
+  [/\.(?:innerHTML|outerHTML)\s*=/, 'запись в innerHTML/outerHTML'],
+  [/\binsertAdjacentHTML\b/, 'insertAdjacentHTML'],
+  [/\bdocument\.write\b/, 'document.write'],
+  [/['"`]\s*javascript:/i, 'javascript: URL'],
+];
+
 const errors = [];
 for (const file of walk(SRC)) {
   const from = zone(file);
   const text = readFileSync(file, 'utf8');
+  if (from.top !== 'legacy') {
+    for (const [re, what] of FORBIDDEN_DOM) {
+      if (re.test(text)) errors.push(`${relative(SRC, file)}: ${what} запрещён (XSS: имена приходят из чужих репозиториев)`);
+    }
+  }
   for (const m of text.matchAll(IMPORT_RE)) {
     const spec = m[1];
     if (!spec.startsWith('.')) continue; // пакеты не проверяем
