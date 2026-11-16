@@ -3,3 +3,4 @@ export * from './trust';
 export * from './passport';
 export * from './miniMap';
 export * from './projectPath';
+export * from './ruleLabels';

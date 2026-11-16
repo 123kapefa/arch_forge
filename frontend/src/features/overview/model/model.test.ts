@@ -4,7 +4,7 @@ import { countBySeverity, evidenceOf, rankFindings, relativeTo } from './finding
 import { layoutMiniMap } from './miniMap';
 import { passportOf } from './passport';
 import { resolveProjectPath } from './projectPath';
-import { shareOf, trustOf } from './trust';
+import { pctLabel, shareOf, trustOf } from './trust';
 
 const p = (id: string, severity: string, extra: Partial<Problem> = {}): Problem => ({ id, severity, kind: 'k', title: id, location: 'x', ...extra });
 const graph = (extra: Partial<SystemGraph> = {}): SystemGraph => ({
@@ -12,7 +12,7 @@ const graph = (extra: Partial<SystemGraph> = {}): SystemGraph => ({
 });
 
 describe('rankFindings', () => {
-  it('серьёзность → уверенность → архитектура раньше дрейфа', () => {
+  it('серьёзность → уверенность → архитектура раньше дрейфа; нет confidence = «не применимо», не ниже оценочных', () => {
     const ranked = rankFindings([
       p('info', 'info'),
       p('warn-low', 'warning', { confidence: 0.4 }),
@@ -21,7 +21,7 @@ describe('rankFindings', () => {
       p('crit', 'critical', { confidence: 0.9 }),
       p('warn-none', 'warning'),
     ]);
-    expect(ranked.map((x) => x.id)).toEqual(['crit', 'crit-drift', 'warn-high', 'warn-low', 'warn-none', 'info']);
+    expect(ranked.map((x) => x.id)).toEqual(['crit', 'crit-drift', 'warn-none', 'warn-high', 'warn-low', 'info']);
   });
   it('неизвестная серьёзность — в конец, исходный массив не меняется', () => {
     const input = [p('a', 'weird'), p('b', 'info')];
@@ -36,10 +36,10 @@ describe('rankFindings', () => {
 describe('evidenceOf', () => {
   it('файл:строка из первого факта с путём, уверенность в %', () => {
     const e = evidenceOf(p('a', 'warning', { kind: 'layer-violation', via: 'code', confidence: 0.857, items: [{ name: 'n', layer: 'l', note: '' }, { name: 'm', layer: 'l', note: '', file: 'A.cs', line: 12 }] }));
-    expect(e).toEqual({ location: 'A.cs:12', rule: 'layer-violation', confidencePct: 86, source: 'code' });
+    expect(e).toEqual({ location: 'A.cs:12', extraPlaces: 0, rule: 'layer-violation', ruleLabel: 'Нарушение слоёв', confidencePct: 86, source: 'code' });
   });
   it('нет данных — null, ничего не выдумываем', () => {
-    expect(evidenceOf(p('a', 'info'))).toEqual({ location: null, rule: 'k', confidencePct: null, source: null });
+    expect(evidenceOf(p('a', 'info'))).toEqual({ location: null, extraPlaces: 0, rule: 'k', ruleLabel: null, confidencePct: null, source: null });
   });
 });
 
@@ -57,6 +57,29 @@ describe('trust', () => {
     expect(shareOf(undefined)).toBeNull();
     expect(shareOf({ marker: 1, heuristic: 5, unknown: 4, total: 10 })).toMatchObject({ marker: 10, heuristic: 50, unknown: 40 });
   });
+  it('доли дают ровно 100 (наибольшие остатки), малое — «<1%», расхождение с total помечено', () => {
+    const a = shareOf({ marker: 1, heuristic: 1, unknown: 1, total: 3 })!;
+    expect(a.marker + a.heuristic + a.unknown).toBe(100);
+    const b = shareOf({ marker: 1, heuristic: 0, unknown: 999, total: 1000 })!;
+    expect(b.tiny.marker).toBe(true);
+    expect(pctLabel(b, 'marker')).toBe('<1%');
+    expect(pctLabel(b, 'heuristic')).toBe('0%');
+    expect(b.marker + b.heuristic + b.unknown).toBe(100);
+    const c = shareOf({ marker: 5, heuristic: 0, unknown: 5, total: 20 })!;
+    expect(c).toMatchObject({ sum: 10, mismatch: true, marker: 50 });
+  });
+  it('число сервисов в покрытии против числа сервисов в системе', () => {
+    const cov = { marker: 1, heuristic: 1, unknown: 0, total: 2 };
+    const t = trustOf(graph({
+      nodes: [{ id: 'a', name: 'a', kind: 'service' }, { id: 'b', name: 'b', kind: 'service' }],
+      services: [{ id: 'a', name: 'a', health: 'ok', layers: [], coverage: cov }],
+    }));
+    expect(t.servicesCovered).toEqual({ covered: 1, total: 2 });
+  });
+  it('человеческая подпись правила и «ещё N мест»', () => {
+    const e = evidenceOf(p('a', 'warning', { kind: 'exposed-datastore', items: [{ name: 'a', layer: '', note: '', file: 'x' }, { name: 'b', layer: '', note: '', file: 'y' }, { name: 'c', layer: '', note: '', file: 'z' }] }));
+    expect(e).toMatchObject({ ruleLabel: 'Хранилище открыто наружу', extraPlaces: 2 });
+  });
   it('деградации → partial; чисто при частичном разборе помечается как не безопасное', () => {
     const t = trustOf(graph({ degradations: ['DI не прочитан', '  '] }));
     expect(t.level).toBe('partial');
@@ -65,7 +88,7 @@ describe('trust', () => {
   });
   it('полный разбор без находок — можно верить', () => {
     const t = trustOf(graph({ coverage: { marker: 5, heuristic: 3, unknown: 2, total: 10 } }));
-    expect(t.level).toBe('full');
+    expect(t.level).toBe('measured');
     expect(t.cleanIsNotSafe).toBe(false);
   });
   it('нет покрытия и деградаций — unknown', () => {

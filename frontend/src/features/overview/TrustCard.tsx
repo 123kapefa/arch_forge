@@ -1,5 +1,5 @@
 import { Card } from '../../shared/ui';
-import type { Trust } from './model';
+import { pctLabel, type CoverageShare, type Trust } from './model';
 import styles from './TrustCard.module.css';
 
 function Bar({ marker, heuristic, unknown, label }: { marker: number; heuristic: number; unknown: number; label: string }) {
@@ -12,8 +12,8 @@ function Bar({ marker, heuristic, unknown, label }: { marker: number; heuristic:
   );
 }
 
-const legend = (s: { marker: number; heuristic: number; unknown: number }) =>
-  `точно (по маркеру) ${s.marker}% · эвристика ${s.heuristic}% · неизвестно ${s.unknown}%`;
+const legend = (s: CoverageShare) =>
+  `точно (по маркеру) ${pctLabel(s, 'marker')} · эвристика ${pctLabel(s, 'heuristic')} · неизвестно ${pctLabel(s, 'unknown')}`;
 
 /** «Насколько верить»: доли покрытия разбора и деградации; «чисто» не выдаётся за «проблем нет». */
 export function TrustCard({ trust }: { trust: Trust }) {
@@ -22,8 +22,16 @@ export function TrustCard({ trust }: { trust: Trust }) {
     <Card title="Насколько верить">
       {overall ? (
         <>
-          <Bar {...overall} label={legend(overall)} />
-          <p className={styles.legend}>{legend(overall)} <span className={styles.muted}>(из {overall.total} типов)</span></p>
+          <Bar marker={overall.marker} heuristic={overall.heuristic} unknown={overall.unknown} label={legend(overall)} />
+          <p className={styles.legend}>{legend(overall)} <span className={styles.muted}>(из {overall.sum} типов с известным источником)</span></p>
+          {overall.mismatch && (
+            <p className={styles.legend}>Бэк сообщил {overall.total} типов, а с разбивкой по источнику — {overall.sum}: доли считаны от {overall.sum}.</p>
+          )}
+          {trust.servicesCovered && (
+            <p className={styles.legend}>
+              Покрытие — по разобранным сервисам: {trust.servicesCovered.covered} из {trust.servicesCovered.total}. Неразобранные в доли не входят.
+            </p>
+          )}
         </>
       ) : (
         <p className={styles.legend}>
@@ -35,8 +43,8 @@ export function TrustCard({ trust }: { trust: Trust }) {
           {rows.map((r) => (
             <li key={r.id} className={styles.row}>
               <span className={styles.name}>{r.name}</span>
-              <Bar {...r} label={`${r.name}: ${legend(r)}`} />
-              <span className={styles.unk}>неизв. {r.unknown}%</span>
+              <Bar marker={r.marker} heuristic={r.heuristic} unknown={r.unknown} label={`${r.name}: ${legend(r)}`} />
+              <span className={styles.unk}>неизв. {pctLabel(r, 'unknown')}</span>
             </li>
           ))}
         </ul>
@@ -51,7 +59,7 @@ export function TrustCard({ trust }: { trust: Trust }) {
       ) : (
         <p className={styles.legend}>Бэк не сообщил о пропусках при разборе.</p>
       )}
-      <p className={styles.note}>«Чисто» не значит «проблем нет»: проверено только то, что удалось разобрать.</p>
+      <p className={styles.note}>«Чисто» не значит «проблем нет»: проверено только то, что удалось разобрать, и оценка относится к разобранным сервисам.</p>
     </Card>
   );
 }

@@ -9,7 +9,7 @@ const HEALTH_LABEL: Record<string, string> = { ok: 'ок', warning: 'преду�
 export function MiniMapView({ graph, query }: { graph: SystemGraph; query: string }) {
   const m = layoutMiniMap(graph);
   return (
-    <Link to={`/map${query}`} className={styles.link} aria-label="Открыть карту">
+    <Link to={`/map${query}`} className={styles.link}>
       <svg viewBox={`0 0 ${MINI_W} ${m.height}`} className={styles.svg} role="img" aria-label={`Мини-карта: ${graph.nodes.length} узлов, ${graph.edges.length} связей`}>
         {m.edges.map((e) => (
           <line key={e.id} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} className={styles.edge} />
@@ -17,7 +17,7 @@ export function MiniMapView({ graph, query }: { graph: SystemGraph; query: strin
         {m.nodes.map((n) => (
           <g key={n.id} transform={`translate(${n.x} ${n.y})`}>
             <title>{`${n.name} · ${n.kind} · ${HEALTH_LABEL[n.health] ?? n.health}`}</title>
-            <rect width={NODE_W} height={NODE_H} rx="6" className={`${styles.node} ${styles[n.health] ?? ''}`} />
+            <rect width={NODE_W} height={NODE_H} rx="6" className={`${styles.node} ${n.health === 'warning' ? styles.warning : n.health === 'critical' ? styles.critical : ''}`} />
             <text x={NODE_W / 2} y={NODE_H / 2 + 4} textAnchor="middle" className={styles.label}>
               {n.name.length > 13 ? `${n.name.slice(0, 12)}…` : n.name}
             </text>

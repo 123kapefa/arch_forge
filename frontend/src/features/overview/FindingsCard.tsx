@@ -49,7 +49,10 @@ function FindingRow({ p, query, root }: { p: Problem; query: string; root: strin
         <span className={styles.main}>
           <span className={styles.title}>{p.title}</span>
           <span className={styles.evidence}>
-            {ev.location ?? 'файл не указан'} · правило {ev.rule}
+            {ev.location ?? 'файл не указан'}
+            {ev.extraPlaces > 0 ? ` · ещё ${ev.extraPlaces} ${ev.extraPlaces === 1 ? 'место' : 'мест'}` : ''}
+            {' · '}
+            {ev.ruleLabel ? `${ev.ruleLabel} (${ev.rule})` : `правило ${ev.rule}`}
             {ev.source ? ` · источник ${ev.source}` : ''}
           </span>
         </span>
