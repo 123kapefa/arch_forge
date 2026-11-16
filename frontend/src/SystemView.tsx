@@ -14,6 +14,7 @@ import {
 } from '@xyflow/react';
 import { routeAll, type Rect, type XY } from './orthoRouter';
 import { buildAdjacency, highlightFor } from './hoverModel';
+import { createHoverIntent, type HoverTarget } from './hoverIntent';
 import { CaptionToggleContext } from './captionContext';
 import { isoKey, subgroupOf } from './typeGroups';
 import '@xyflow/react/dist/style.css';
@@ -83,8 +84,14 @@ const Flow = forwardRef<FlowHandle, {
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
   const [version, setVersion] = useState(0); // версия раскладки: растёт при новой раскладке и drag-stop
   const [routes, setRoutes] = useState<Map<string, XY[]>>(new Map()); // предрассчитанные маршруты (с развязкой)
-  const [hoverId, setHoverId] = useState<string | null>(null); // узел под курсором — подсветка связей
-  const [hoverEdgeId, setHoverEdgeId] = useState<string | null>(null); // ребро под курсором
+  // Подсветка наведения — ОДНО состояние, меняется только по «намерению» (курсор задержался), см. hoverIntent.ts
+  const [hover, setHover] = useState<HoverTarget | null>(null);
+  const hoverId = hover?.kind === 'node' ? hover.id : null;
+  const hoverEdgeId = hover?.kind === 'edge' ? hover.id : null;
+  const intent = useMemo(() => createHoverIntent({ onChange: setHover }), []);
+  const overNode = useRef(false); // курсор над узлом: у узлов приоритет над рёбрами
+  useEffect(() => () => intent.dispose(), [intent]);
+  useEffect(() => { intent.suspend(); intent.resume(); }, [flow, intent]); // новая раскладка/уровень — подсветку сбросить
   const last = useRef<{ x: number; y: number; t: number } | null>(null);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -280,18 +287,19 @@ const Flow = forwardRef<FlowHandle, {
       elevateEdgesOnSelect
       snapToGrid={magnet && snapNow}
       snapGrid={[GRID, GRID]}
-      onNodeDragStart={() => { last.current = null; }}
+      onNodeDragStart={() => { last.current = null; intent.suspend(); }}
       onNodeDrag={onNodeDrag}
-      onNodeDragStop={() => { last.current = null; setSnapNow(false); setVersion((v) => v + 1); }}
-      onNodeMouseEnter={(_, n) => setHoverId(n.id)}
-      onNodeMouseLeave={() => setHoverId(null)}
-      onEdgeMouseEnter={(_, e) => setHoverEdgeId(e.id)}
-      onEdgeMouseLeave={() => setHoverEdgeId(null)}
+      onNodeDragStop={() => { last.current = null; setSnapNow(false); setVersion((v) => v + 1); intent.resume(); }}
+      onMoveStart={() => intent.suspend()}
+      onNodeMouseEnter={(_, n) => { overNode.current = true; intent.enter({ kind: 'node', id: n.id }); }}
+      onNodeMouseLeave={() => { overNode.current = false; intent.leave(); }}
+      onEdgeMouseEnter={(_, e) => { if (!overNode.current) intent.enter({ kind: 'edge', id: e.id }); }}
+      onEdgeMouseLeave={() => { if (!overNode.current) intent.leave(); }}
       onNodeClick={(_, n) => onSelect(n)}
       onEdgeClick={(_, e) => onSelectEdge?.(e)}
       onNodeDoubleClick={(_, n) => onDoubleClick(n)}
       onPaneClick={onClear}
-      onMoveEnd={(e, vp) => { if (e && storageKey) writeViewport(storageKey, vp); }} // сохраняем только пользовательский пан/зум (event≠null), не программный fitView
+      onMoveEnd={(e, vp) => { intent.resume(); if (e && storageKey) writeViewport(storageKey, vp); }} // сохраняем только пользовательский пан/зум (event≠null), не программный fitView
     >
       <Background gap={GRID} />
       <Controls />

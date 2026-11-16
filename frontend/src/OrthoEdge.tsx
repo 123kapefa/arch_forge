@@ -42,7 +42,7 @@ export function OrthoEdge({ id, source, target, data, style, markerEnd, sourceX,
   const edge = (path: string) => (
     <g>
       {tip && <title>{tip}</title>}
-      <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} interactionWidth={16} />
+      <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} interactionWidth={8} />
     </g>
   );
   if (route && route.length >= 2 && !dragging) return edge(roundedPath(route));
