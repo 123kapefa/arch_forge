@@ -22,12 +22,14 @@ export interface OutsideSummary {
 }
 
 // Известные «сильные» виды рёбер; всё остальное (refs и будущие виды) считается слабым и показывается нейтрально.
-const STRONG_KINDS = new Set(['implements', 'holds', 'uses', 'inherits', 'extends', 'raises']);
+export const STRONG_KINDS = new Set(['uses', 'holds', 'implements', 'handles', 'raises', 'inherits', 'extends']);
+/** Сильный вид — участвует в раскладке и рисуется всегда. Остальное (refs и неизвестные будущие виды) — слабое: по запросу. */
+export const isStrongKind = (k: string) => STRONG_KINDS.has(k);
 
 const layerOf = (l: string | undefined) => (l && l.trim() ? l : 'unknown');
 
 /** Связи каждого типа слоя с типами ДРУГИХ слоёв (ключ — id типа слоя). Типы без внешних связей в карту не попадают. */
-export function outsideLinksByType(map: GraphDto, layer: string): Map<string, OutsideSummary> {
+export function outsideLinksByType(map: GraphDto, layer: string, scope: 'outside' | 'inside' = 'outside'): Map<string, OutsideSummary> {
   const byId = new Map(map.nodes.map((n) => [n.id, n] as const));
   const raw = new Map<string, Map<string, { link: OutsideLink; kinds: Set<string> }>>();
   const add = (ownId: string, peerId: string, dir: 'out' | 'in', kind: string) => {
@@ -47,17 +49,23 @@ export function outsideLinksByType(map: GraphDto, layer: string): Map<string, Ou
     const s = byId.get(e.source), t = byId.get(e.target);
     if (!s || !t) continue;
     const sIn = s.layer === layer, tIn = t.layer === layer;
+    if (scope === 'inside') { // внутрислойные: нужны только слабые (сильные нарисованы на карте)
+      if (sIn && tIn && s.id !== t.id) { add(s.id, t.id, 'out', e.kind); add(t.id, s.id, 'in', e.kind); }
+      continue;
+    }
     if (sIn === tIn) continue; // обе внутри (внутрислойное) или обе снаружи (не про этот слой)
     if (sIn) add(s.id, t.id, 'out', e.kind);
     else add(t.id, s.id, 'in', e.kind);
   }
   const res = new Map<string, OutsideSummary>();
   for (const [id, per] of raw) {
-    const links = [...per.values()].map(({ link, kinds }) => ({
+    let links = [...per.values()].map(({ link, kinds }) => ({
       ...link,
       kinds: [...kinds].sort(),
       weak: ![...kinds].some((k) => STRONG_KINDS.has(k)),
     }));
+    if (scope === 'inside') links = links.filter((l) => l.weak);
+    if (links.length === 0) continue;
     links.sort((a, b) => a.peerLayer.localeCompare(b.peerLayer) || a.peerName.localeCompare(b.peerName) || a.dir.localeCompare(b.dir));
     res.set(id, {
       links,
@@ -81,13 +89,13 @@ export function outsideBadge(s: OutsideSummary | undefined): { text: string; tit
 export type IsoGroup = 'outsideOnly' | 'none';
 
 export const ISO_LABEL: Record<IsoGroup, string> = {
-  outsideOnly: 'Связи только вне слоя',
+  outsideOnly: 'Связи только вне слоя или слабые (refs)',
   none: 'Вообще без связей',
 };
 
 /** Куда относить «одиночку» (нет рёбер внутри слоя): есть внешние связи → outsideOnly, иначе none. */
-export function isolatedGroup(summary: OutsideSummary | undefined): IsoGroup {
-  return summary && summary.links.length > 0 ? 'outsideOnly' : 'none';
+export function isolatedGroup(outside: OutsideSummary | undefined, insideWeak?: OutsideSummary): IsoGroup {
+  return (outside && outside.links.length > 0) || (insideWeak && insideWeak.links.length > 0) ? 'outsideOnly' : 'none';
 }
 
 // Роли узла (`role` из /api/map) → подпись «вход для фреймворка». Это типы, которые никто не вызывает напрямую:

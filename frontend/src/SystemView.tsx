@@ -338,6 +338,20 @@ function TypeInspector({ data, members, onOpenType }: { data: TypeCardData; memb
           </ul>
         </div>
       )}
+      {data.insideWeak && data.insideWeak.links.length > 0 && (
+        <div className="inspector__block">
+          <div className="inspector__sub">СЛАБЫЕ СВЯЗИ ВНУТРИ СЛОЯ · {data.insideWeak.links.length} (→ {data.insideWeak.out}, ← {data.insideWeak.in})</div>
+          <ul className="inspector__edges">
+            {data.insideWeak.links.map((l) => (
+              <li key={`${l.dir}|${l.peerId}`} className="outlink" title={`${l.dir === 'out' ? 'этот тип ссылается на' : 'ссылается на этот тип'} ${l.peerName} · ${l.kinds.join(', ')}`}>
+                <span className="outlink__dir">{l.dir === 'out' ? '→' : '←'}</span>
+                <span className="outlink__name">{l.peerName}</span>
+                <span className="iedge__kind">{l.kinds.join(' · ')}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {data.drift && data.drift.length > 0 && (
         <div className="inspector__block">
           <div className="inspector__sub">дрейф от свода</div>
@@ -1086,14 +1100,19 @@ export function SystemView() {
     return m;
   }, [graph]);
   // L2: слой раскрыт в свои типы (плашки Фазы 1 + внутрислойные связи). Раскладка ELK — асинхронная.
-  const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] });
+  const [typeFlow, setTypeFlow] = useState<{ nodes: Node[]; edges: Edge[]; weakEdges?: Edge[] }>({ nodes: [], edges: [] });
+  const [showWeak, setShowWeak] = useState(false); // слабые связи (refs) внутри слоя: по умолчанию скрыты, на раскладку не влияют
   useEffect(() => {
     if (!drill2 || !l1Map) { setTypeFlow({ nodes: [], edges: [] }); return; }
     let alive = true;
     void buildTypeFlow(l1Map, drill2, dtoHotspots).then((f) => { if (alive) setTypeFlow(f); });
     return () => { alive = false; };
   }, [drill2, l1Map, dtoHotspots]);
-  const activeFlow = drill2 ? typeFlow : drill ? drilledFlow : flow;
+  const typeFlowShown = useMemo(
+    () => (showWeak && typeFlow.weakEdges?.length ? { nodes: typeFlow.nodes, edges: [...typeFlow.edges, ...typeFlow.weakEdges] } : typeFlow),
+    [typeFlow, showWeak],
+  );
+  const activeFlow = drill2 ? typeFlowShown : drill ? drilledFlow : flow;
   const onDoubleClick = useCallback((n: Node) => {
     if (drill2) return; // L2 — лист: члены типа смотрим в инспекторе (клик по типу)
     if (drill) { // L1 → L2: двойной клик по карточке слоя раскрывает её типы
@@ -1531,6 +1550,10 @@ export function SystemView() {
             <label className="opt">
               <input type="checkbox" checked={hideIsolated} onChange={(e) => setHideIsolated(e.target.checked)} />
               без одиночек
+            </label>
+            <label className="opt" title="Связи вида refs (возвращаемые типы, аргументы базового типа, статический доступ, тело метода). Скрыты, чтобы карта не превращалась в клубок; в раскладке не участвуют.">
+              <input type="checkbox" checked={showWeak} onChange={(e) => setShowWeak(e.target.checked)} />
+              слабые связи (refs) в слое
             </label>
             <label className="opt">
               <input type="checkbox" checked={hideTests} onChange={(e) => setHideTests(e.target.checked)} />

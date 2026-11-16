@@ -13,6 +13,7 @@ export interface TypeCardData {
   drift?: string[];
   members?: MemberDto[];
   outside?: OutsideSummary; // связи с типами других слоёв (на карте не рисуются — сводка + список в инспекторе)
+  insideWeak?: OutsideSummary; // слабые (refs) связи внутри слоя — на карте по умолчанию скрыты
   entry?: string | null;    // «вход для фреймворка»: подпись роли, если тип запускает фреймворк, а не код
   hotspot?: number; // «маппинг не централизован»: собран инлайн в N мест вне мапперов (свод-замечание)
   [key: string]: unknown;
@@ -39,6 +40,7 @@ export function TypeCard({ data, selected }: NodeProps<TypeCardType>) {
   const roleTail = data.role && data.role !== 'unknown' ? ` · ${data.role}` : '';
   const width = typeCardWidth(data.name, members);
   const badge = outsideBadge(data.outside);
+  const weakN = data.insideWeak?.links.length ?? 0;
 
   return (
     <div className={`tcard health-${health}${selected ? ' is-selected' : ''}`} style={{ width }}>
@@ -58,9 +60,10 @@ export function TypeCard({ data, selected }: NodeProps<TypeCardType>) {
         ) : null}
         <span className={`tcard__dot health-${health}`} />
       </div>
-      {(badge || data.entry) && (
+      {(badge || data.entry || weakN > 0) && (
         <div className="tcard__tags">
           {badge && <span className="tcard__tag tcard__tag--out" title={badge.title}>{badge.text}</span>}
+          {weakN > 0 && <span className="tcard__tag tcard__tag--weak" title="слабые связи (refs) внутри слоя: на карте скрыты, включаются галочкой «слабые связи (refs) в слое»; список в инспекторе">слабых: {weakN}</span>}
           {data.entry && <span className="tcard__tag tcard__tag--entry" title={`вход для фреймворка: ${data.entry}. Его вызывает фреймворк, а не код — поэтому прямых связей может не быть`}>вход для фреймворка</span>}
         </div>
       )}
