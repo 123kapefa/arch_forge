@@ -59,10 +59,6 @@ public static class ServiceAnalysisExtensions
 // Общий per-service код-разбор для линз, требующих КОДА (дрейф от свода, нарушения слоёв):
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
-// CS9113: параметр di (IDiSource) принимается, но не читается — DI-модель сервиса в ServiceAnalysis.Di в проде не заполняется
-// (заполняется только в тестах DiLifetimeDetector). Это замеченная недоделка проводки, а не мусор: удалять параметр нельзя без
-// решения по детектору, чинить проводку — вне задачи «чистка предупреждений без смены поведения». См. описание PR.
-#pragma warning disable CS9113
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
     IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null, IAggregateEventSource? aggregateEvents = null, IScanLimitSource? scanLimits = null)
 {
@@ -96,7 +92,7 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
 
     // nodes/naming — узлы графа и правила имён: нужны только для монорепо с общим compose (см. ServiceNodeMatcher).
     public IReadOnlyList<ServiceAnalysis> Analyze(string root, ConventionPack pack, CancellationToken ct = default,
-        IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null, bool readGuards = true, bool readErrors = true, bool readValidation = true, bool readAggregateTime = true, bool readFolders = true, bool readBus = false, bool readAggregateEvents = true)
+        IReadOnlyList<SystemNode>? nodes = null, Profiles.ServiceNaming? naming = null, bool readGuards = true, bool readErrors = true, bool readValidation = true, bool readAggregateTime = true, bool readFolders = true, bool readBus = false, bool readAggregateEvents = true, bool readDi = false)
     {
         if (!Directory.Exists(root)) return []; // код-разбор идёт по коду сервисов — нужен корень-папка
 
@@ -184,13 +180,16 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { eventFacts = readAggregateEvents ? aggregateEvents?.Read(svc.Root, ct) ?? AggregateEventFacts.Empty : AggregateEventFacts.Empty; }
             catch (OperationCanceledException) { throw; }
             catch { eventFacts = AggregateEventFacts.Empty; }
+            DiModel? diModel = null;                       // DI-контейнер (E4.2) — читаем лишь по запросу (линза слоёв); сбой → null, детектор молчит
+            try { diModel = readDi ? di?.Read(svc.Root, ct) : null; }
+            catch (OperationCanceledException) { throw; }
+            catch { diModel = null; }
             int? truncatedAt = null;                         // кап числа файлов — свой try: сбой проверки не роняет разбор
             try { if (scanLimits?.IsTruncated(svc.Root, ct) == true) truncatedAt = scanLimits.MaxFiles; }
             catch (OperationCanceledException) { throw; }
             catch { truncatedAt = null; }
-            results[i] = new ServiceAnalysis(svc, location, result) { TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites };
+            results[i] = new ServiceAnalysis(svc, location, result) { TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites, Di = diModel };
         });
         return results;
     }
 }
-#pragma warning restore CS9113

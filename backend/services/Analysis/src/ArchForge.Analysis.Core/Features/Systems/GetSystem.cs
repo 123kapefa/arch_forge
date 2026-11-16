@@ -112,7 +112,7 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             var wantEvents = query.Drift && profile.Effective(AggregateEventDetector.Kind) != Strictness.Off;
             var wantValidation = query.Drift && profile.Effective(DoubleValidationDetector.Kind) != Strictness.Off;
             var wantErrors = query.Drift && profile.Effective(MixedErrorStrategyDetector.Kind) != Strictness.Off;
-            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming, wantGuards, wantErrors, wantValidation, wantTime, wantFolders, readBus: query.Calls, readAggregateEvents: wantEvents);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
+            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming, wantGuards, wantErrors, wantValidation, wantTime, wantFolders, readBus: query.Calls, readAggregateEvents: wantEvents, readDi: query.Layers);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
             // сервис не разобрался (изоляция ошибок) → его типы/связи отсутствуют: честно помечаем деградацию
             foreach (var a in analyses.Failed())
                 degradations.Add($"сервис «{a.Service.Name}» не разобрался — часть карты пропущена");
