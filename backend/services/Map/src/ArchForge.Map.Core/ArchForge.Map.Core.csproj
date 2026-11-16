@@ -1,8 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\ArchForge.Map.Domain\ArchForge.Map.Domain.csproj" />
-    <ProjectReference Include="..\ArchForge.Map.Contracts\ArchForge.Map.Contracts.csproj" />
     <ProjectReference Include="..\..\..\..\shared\ArchForge.SharedKernel\ArchForge.SharedKernel.csproj" />
     <ProjectReference Include="..\..\..\Analysis\src\ArchForge.Analysis.Contracts\ArchForge.Analysis.Contracts.csproj" />
     <ProjectReference Include="..\..\..\..\shared\ArchForge.Contracts\ArchForge.Contracts.csproj" />
