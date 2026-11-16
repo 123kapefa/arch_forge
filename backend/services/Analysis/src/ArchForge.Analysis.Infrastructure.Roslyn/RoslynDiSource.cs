@@ -32,7 +32,7 @@ public sealed partial class RoslynDiSource : IDiSource
 
         // порядок файлов детерминирован (EnumerateFiles его не гарантирует) — от него зависит «последняя регистрация побеждает»
         // тот же список и кап, что у отпечатка кеша (ScanCache.ComputeFingerprint): урезанный разбор → набор регистраций неполон
-        var files = RoslynScan.EnumerateCsCapped(root, out var capped);
+        var files = RoslynScan.EnumerateCsCapped(root, out var capped, ct: ct);
         if (capped) opaque = $"разбор урезан: больше {RoslynScan.MaxFilesPerScan} файлов .cs";
         foreach (var file in files.OrderBy(f => f, StringComparer.Ordinal))
         {

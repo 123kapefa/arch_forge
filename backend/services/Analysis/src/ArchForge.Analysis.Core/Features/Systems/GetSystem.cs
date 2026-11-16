@@ -112,13 +112,16 @@ public sealed class GetSystemHandler(ISystemSource source, ServiceAnalyzer? anal
             var wantEvents = query.Drift && profile.Effective(AggregateEventDetector.Kind) != Strictness.Off;
             var wantValidation = query.Drift && profile.Effective(DoubleValidationDetector.Kind) != Strictness.Off;
             var wantErrors = query.Drift && profile.Effective(MixedErrorStrategyDetector.Kind) != Strictness.Off;
-            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming, wantGuards, wantErrors, wantValidation, wantTime, wantFolders, readBus: query.Calls, readAggregateEvents: wantEvents);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
+            var analyses = analyzer.Analyze(query.Path, pack, ct, graph.Nodes, naming, wantGuards, wantErrors, wantValidation, wantTime, wantFolders, readBus: query.Calls, readAggregateEvents: wantEvents, readDi: query.Layers);   // узлы нужны монорепо с общим compose: привязка сервисов по имени
             // сервис не разобрался (изоляция ошибок) → его типы/связи отсутствуют: честно помечаем деградацию
             foreach (var a in analyses.Failed())
                 degradations.Add($"сервис «{a.Service.Name}» не разобрался — часть карты пропущена");
             // сервис крупнее капа разбора → разобрана только часть файлов (#49): карта неполная, а не «чистая»
             foreach (var a in analyses.Where(x => x.Truncated))
                 degradations.Add($"сервис «{a.Service.Name}» урезан: разобраны не все файлы (кап {a.TruncatedAtFiles} .cs) — карта неполная");
+            // DI не прочитан (источник упал/не подключён) → детектор пропустит сервис, это не «чисто» (adr/0008)
+            foreach (var a in analyses.Where(x => x.DiReadFailed))
+                degradations.Add($"DI сервиса «{a.Service.Name}» не прочитан — проверка времён жизни пропущена");
             var extra = new List<SystemProblem>();
             if (query.Drift) extra.AddRange(DriftDetector.Detect(analyses));
             if (query.Drift) extra.AddRange(RedundantNullCheckDetector.Detect(analyses));   // свод: лишний ThrowIfNull на ненулевом параметре
