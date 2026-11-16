@@ -45,6 +45,9 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
     // Файлов в сервисе больше капа разбора → разобрана только часть, карта по нему неполная (#49, adr/0008).
     public int? TruncatedAtFiles { get; init; }
     public bool Truncated => TruncatedAtFiles is not null;
+
+    // Семантика не получилась → типы взяты синтаксическим полом (сбой Roslyn, пустая семантика, слишком много ссылок): роли/покрытие занижены, не «точно» (adr/0008).
+    public bool SyntaxOnly { get; init; }
 }
 
 /// <summary>Хелперы над результатами разбора — единая точка понятия «сервис не разобрался».</summary>
@@ -63,7 +66,7 @@ public static class ServiceAnalysisExtensions
 // discovery (только сервисы С compose — у них есть узлы в графе, к которым привяжется location) +
 // Фаза-1 анализ каждого сервиса. Единый источник, чтобы линзы не дублировали обход/фильтр/изоляцию.
 public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSource types, TypeClassifier classifier,
-    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null, IAggregateEventSource? aggregateEvents = null, IScanLimitSource? scanLimits = null)
+    IEndpointSource? endpoints = null, IHttpCallSource? httpCalls = null, IClientLibraryResolver? libraries = null, IGuardSource? guards = null, IErrorStrategySource? errors = null, IValidationSource? validation = null, IAggregateTimeSource? aggregateTime = null, IFolderSource? folders = null, IBusSource? bus = null, IDiSource? di = null, IAggregateEventSource? aggregateEvents = null, IScanLimitSource? scanLimits = null, ISemanticStatusSource? semanticStatus = null)
 {
     // Кап параллелизма per-service разбора: Roslyn на сервис тяжёл (память компиляции + CPU). Берём долю ядер
     // (≥1) — чтобы не пробуксовывать на памяти и оставить машине воздух. Детерминизм не страдает: результаты
@@ -192,7 +195,11 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { if (scanLimits?.IsTruncated(svc.Root, ct) == true) truncatedAt = scanLimits.MaxFiles; }
             catch (OperationCanceledException) { throw; }
             catch { truncatedAt = null; }
-            results[i] = new ServiceAnalysis(svc, location, result) { TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites, Di = diModel, DiReadFailed = diFailed };
+            var syntaxOnly = false;                          // статус семантики — после чтения типов; сервис без типов не метим (нечего занижать)
+            try { syntaxOnly = result is { Types.Count: > 0 } && semanticStatus?.IsSyntaxOnly(svc.Root) == true; }
+            catch (OperationCanceledException) { throw; }
+            catch { syntaxOnly = false; }
+            results[i] = new ServiceAnalysis(svc, location, result) { SyntaxOnly = syntaxOnly, TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites, Di = diModel, DiReadFailed = diFailed };
         });
         return results;
     }

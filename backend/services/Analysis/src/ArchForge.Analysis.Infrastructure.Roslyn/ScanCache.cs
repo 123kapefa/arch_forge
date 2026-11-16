@@ -17,7 +17,7 @@ public sealed class ScanCache(TimeProvider? time = null) : IScanCacheControl
     internal static readonly TimeSpan DegradedTtl = TimeSpan.FromSeconds(30);
     internal static readonly TimeSpan FingerprintMemo = TimeSpan.FromSeconds(2);   // отпечаток одного пути не пересчитываем чаще
 
-    private sealed record Entry(string Fingerprint, DateTimeOffset At, TimeSpan Ttl, object Value);
+    private sealed record Entry(string Fingerprint, DateTimeOffset At, TimeSpan Ttl, object Value, bool Degraded = false);
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, Entry> _map = new(StringComparer.Ordinal);
@@ -44,12 +44,16 @@ public sealed class ScanCache(TimeProvider? time = null) : IScanCacheControl
             var now = _time.GetUtcNow();
             if (_map.TryGetValue(key, out var e) && e.Fingerprint == fp && now - e.At < e.Ttl && e.Value is T hit) return hit;
             var (value, degraded) = factory();           // отмена/ошибка: исключение уходит, запись не создаётся
-            _map[key] = new Entry(fp, now, degraded ? DegradedTtl : Ttl, value);
+            _map[key] = new Entry(fp, now, degraded ? DegradedTtl : Ttl, value, degraded);
             Evict(now);
             return value;
         }
         finally { gate.Release(); }
     }
+
+    /// <summary>Деградировал ли свежий результат <paramref name="kind"/> по пути. Нет живой записи → false (не помечаем без оснований).</summary>
+    internal bool IsDegraded(string kind, string path) =>
+        _map.TryGetValue($"{kind}|{NormalizeKey(path)}", out var e) && e.Degraded && _time.GetUtcNow() - e.At < e.Ttl;
 
     /// <summary>Сбрасывает записи для всех путей внутри <paramref name="root"/> — «Пере-анализировать».</summary>
     public void InvalidateUnder(string root)
