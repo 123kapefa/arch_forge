@@ -14,8 +14,8 @@ const CH_MONO = 7.9;
 const BUF = 6; // страховочный запас, px
 
 // Высота карточки под раскладку (ELK/сетка) — должна совпадать с реальной по CSS.
-export function typeCardHeight(memberCount: number, hasTags = false): number {
-  const HEAD = 56 + (hasTags ? 24 : 0), BODY_PAD = 14, ROW = 22, MORE = 20;
+export function typeCardHeight(memberCount: number, hasTags = false, hasUsed = false): number {
+  const HEAD = 56 + (hasTags ? 24 : 0) + (hasUsed ? 22 : 0), BODY_PAD = 14, ROW = 22, MORE = 20;
   const preview = Math.min(memberCount, TYPE_PREVIEW_MAX);
   if (preview === 0) return HEAD;
   return HEAD + BODY_PAD + preview * ROW + (memberCount > TYPE_PREVIEW_MAX ? MORE : 0);

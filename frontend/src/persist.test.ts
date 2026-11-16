@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { SystemGraph } from './system';
 import {
-  readViewport, writeViewport, readBool, readNum, readGraphCache, writeGraphCache, gcacheKey,
+  readViewport, writeViewport, readBool, readNum, readGraphCache, writeGraphCache, gcacheKey, readIsoCollapsed, writeIsoCollapsed,
 } from './persist';
 
 // Мини-реализация Web Storage для node-окружения (jsdom не подключён).
@@ -115,5 +115,18 @@ describe('readGraphCache / writeGraphCache', () => {
     writeGraphCache('/x/foo/bar', true, true, graph()); // заканчивается на «/foo/bar», но это другой путь
     expect(sessionStorage.getItem(gcacheKey('/foo/bar', true, true))).not.toBeNull();
     expect(sessionStorage.getItem(gcacheKey('/x/foo/bar', true, true))).not.toBeNull();
+  });
+});
+
+describe('readIsoCollapsed / writeIsoCollapsed', () => {
+  it('читает только булевы значения, мусор → {}', () => {
+    writeIsoCollapsed({ 'linked:validators': true, none: false });
+    expect(readIsoCollapsed()).toEqual({ 'linked:validators': true, none: false });
+    localStorage.setItem('archforge:isoCollapsed', JSON.stringify({ a: 1, b: true }));
+    expect(readIsoCollapsed()).toEqual({ b: true });
+    localStorage.setItem('archforge:isoCollapsed', '[1,2]');
+    expect(readIsoCollapsed()).toEqual({});
+    localStorage.setItem('archforge:isoCollapsed', '{ broken');
+    expect(readIsoCollapsed()).toEqual({});
   });
 });

@@ -94,9 +94,40 @@ describe('слабые связи (refs)', () => {
     expect(f.edges.map((e) => e.source + e.target)).toEqual(['ab']);
     expect(f.weakEdges).toHaveLength(1);
     const captions = f.nodes.filter((n) => n.type === 'caption');
-    expect(captions).toHaveLength(1); // v и w — оба «связи только вне слоя или слабые», «вообще без связей» пуст
+    expect(captions.map((c) => c.id)).toEqual(['caption:section:Связи только вне слоя или слабые (refs)', 'caption:linked:constants']); // (классы без членов — контейнеры) раздел + подгруппа; «без связей» пуст
     const v = f.nodes.find((n) => n.id === 'v')!;
     const a = f.nodes.find((n) => n.id === 'a')!;
     expect(v.position.y).toBeGreaterThan(a.position.y); // v в блоке одиночек под схемой, а не в раскладке
+  });
+});
+
+describe('buildTypeFlow: подгруппы одиночек', () => {
+  const mk = (id: string, role = 'unknown', kind = 'class'): NodeDto => ({ ...node(id, 'App', role), kind });
+  const many = (n: number) => Array.from({ length: n }, (_, i) => mk(`v${String(i).padStart(2, '0')}`, 'Validator'));
+  const base = [mk('hub'), mk('rec', 'unknown', 'record'), mk('lone'), ...many(13)];
+  // каждый валидатор и запись ссылаются через refs на hub (слабо) → одиночки с «используют»
+  const edgesTo = base.filter((n) => n.id !== 'hub' && n.id !== 'lone').map((n): [string, string, string] => ['hub', n.id, 'refs']);
+
+  it('делит по ролям; большая группа (>12) свёрнута: карточек нет, в подписи превью', async () => {
+    const f = await buildTypeFlow(map(base, edgesTo), 'App');
+    const cap = f.nodes.find((n) => n.id === 'caption:linked:validators')!;
+    expect((cap.data as { collapsed: boolean }).collapsed).toBe(true);
+    expect((cap.data as { count: number }).count).toBe(13);
+    expect((cap.data as { preview: string[] }).preview!.length).toBeLessThanOrEqual(6);
+    expect(f.nodes.some((n) => n.id === 'v00')).toBe(false);
+    expect(f.nodes.some((n) => n.id === 'rec')).toBe(true); // малая группа записей развёрнута
+    expect(f.nodes.some((n) => n.id === 'caption:none')).toBe(true); // lone — вообще без связей
+  });
+  it('явное разворачивание из персиста важнее порога; порядок: больше входящих, затем имя', async () => {
+    const g = map(base, [...edgesTo, ['v05', 'v07', 'refs'], ['v06', 'v07', 'refs']]);
+    const f = await buildTypeFlow(g, 'App', undefined, { 'linked:validators': false });
+    const vs = f.nodes.filter((n) => /^v\d\d$/.test(n.id));
+    expect(vs).toHaveLength(13);
+    const ys = vs.map((n) => n.position.y);
+    const first = vs.sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x)[0];
+    expect(first.id).toBe('v07'); // у v07 три входящих (hub, v05, v06) — выше остальных
+    expect(Math.min(...ys)).toBeGreaterThan(0);
+    const d = first.data as { usedBy: { names: string[]; total: number } };
+    expect(d.usedBy.total).toBe(3);
   });
 });
