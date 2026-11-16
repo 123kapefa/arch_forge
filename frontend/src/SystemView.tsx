@@ -1,5 +1,7 @@
 import { SessionBadge } from './SessionBadge';
 import { EdgeInspector, type SelectedEdge } from './EdgeInspector';
+import { FlowPanel } from './FlowPanel';
+import { flowEdgeKeys, flowNodeIds, type Flow as FlowChain } from './flow';
 import { InspectorEmpty, InspectorFrame } from './InspectorFrame';
 import type { EdgeData } from './systemFlow';
 import {
@@ -63,12 +65,14 @@ const Flow = forwardRef<FlowHandle, {
   storageKey: string;                // ключ localStorage для раскладки ('' → не сохранять)
   onDirty: (saved: boolean) => void; // true = совпадает с сохранённой, false = есть изменения
   selectedId: string | null;         // выбранный узел — его связи подсвечиваем
+  flowEdges?: ReadonlySet<string> | null; // E3.4: рёбра потока (ключ source|target|kind) — путь подсвечен, остальное приглушено
+  flowNodes?: ReadonlySet<string> | null;
   onSelect: (n: Node) => void;
   onSelectEdge?: (e: Edge) => void;  // клик по связи (инспектор связи, E3.1)
   onDoubleClick: (n: Node) => void;  // двойной клик — drill на следующий уровень
   onClear: () => void;
   focusTargetRef?: { current: string | null }; // id карточки для центровки при пересборке (переход «к плашке»)
-}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, onSelect, onSelectEdge, onDoubleClick, onClear, focusTargetRef }, ref) {
+}>(function Flow({ flow, magnet, storageKey, onDirty, selectedId, flowEdges, flowNodes, onSelect, onSelectEdge, onDoubleClick, onClear, focusTargetRef }, ref) {
   const [nodes, setNodes, onNodesChange] = useNodesState(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   const [snapNow, setSnapNow] = useState(false); // притяжение активно прямо сейчас (низкая скорость)
@@ -202,19 +206,26 @@ const Flow = forwardRef<FlowHandle, {
   const routesReady = routes.size > 0; // маршруты посчитаны — можно показывать рёбра (иначе мелькнёт дефолт)
   const displayEdges = useMemo(() => edges.map((e) => {
     const route = routes.get(e.id);                    // предрассчитанный маршрут с развязкой
-    const on = highlightId != null && (e.source === highlightId || e.target === highlightId);
+    const onFlow = flowEdges ? flowEdges.has(e.id) : false;
+    const on = flowEdges ? onFlow : highlightId != null && (e.source === highlightId || e.target === highlightId);
+    const dim = flowEdges ? !onFlow : highlightId != null;
     return {
       ...e,
       data: { ...e.data, route },
       hidden: !routesReady,                            // прячем до готовности маршрутов (без flicker при reload/drill)
       zIndex: on ? 1000 : 0,
-      style: { ...e.style, opacity: on ? 1 : highlightId ? 0.08 : 1, strokeWidth: on ? 3 : e.style?.strokeWidth },
+      style: { ...e.style, opacity: on ? 1 : dim ? 0.08 : 1, strokeWidth: on ? 3 : e.style?.strokeWidth },
     };
-  }), [edges, routes, routesReady, highlightId]);
+  }), [edges, routes, routesReady, highlightId, flowEdges]);
+
+  // E3.4: узлы вне потока приглушены (только пока поток показан)
+  const displayNodes = useMemo(() => flowNodes
+    ? nodes.map((n) => (flowNodes.has(n.id) ? n : { ...n, style: { ...n.style, opacity: 0.25 } }))
+    : nodes, [nodes, flowNodes]);
 
   return (
     <ReactFlow
-      nodes={nodes}
+      nodes={displayNodes}
       edges={displayEdges}
       onNodesChange={handleNodesChange}
       onEdgesChange={onEdgesChange}
@@ -253,11 +264,11 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 /** Инспектор для выбранного узла — диспетчер по уровню: системный узел (L0) / слой (L1) / тип+члены (L2). */
-function Inspector({ node, graph, lens, onFocus, onOpenEdge }: {
-  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void; onOpenEdge: (e: SystemEdge) => void;
+function Inspector({ node, graph, lens, onFocus, onOpenEdge, onFlow }: {
+  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void; onOpenEdge: (e: SystemEdge) => void; onFlow?: (n: SystemNode) => void;
 }) {
   const d = node.data as Record<string, unknown>;
-  if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} onOpenEdge={onOpenEdge} />;
+  if (d.node) return <SystemInspector node={node} graph={graph} lens={lens} onFocus={onFocus} onOpenEdge={onOpenEdge} onFlow={onFlow} />;
   if ('role' in d && 'via' in d) {
     return <TypeInspector data={node.data as unknown as TypeCardData} members={(d.members as MemberDto[] | undefined) ?? []} />;
   }
@@ -385,8 +396,8 @@ function ServiceEndpoints({ node }: { node: SystemNode }) {
   );
 }
 
-function SystemInspector({ node, graph, lens, onFocus, onOpenEdge }: {
-  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void; onOpenEdge: (e: SystemEdge) => void;
+function SystemInspector({ node, graph, lens, onFocus, onOpenEdge, onFlow }: {
+  node: Node; graph: SystemGraph; lens: Lens; onFocus: (id: string) => void; onOpenEdge: (e: SystemEdge) => void; onFlow?: (n: SystemNode) => void;
 }) {
   const n = (node.data as SystemNodeData).node;
   const problems = problemsByLens((node.data as SystemNodeData).problems, lens);
@@ -463,6 +474,13 @@ function SystemInspector({ node, graph, lens, onFocus, onOpenEdge }: {
           </ul>
         )}
       </div>
+
+      {n.kind === 'service' && onFlow && (
+        <div className="inspector__block">
+          <button type="button" className="flowp__start" onClick={() => onFlow(n)}
+            title="Цепочка вызовов от этого сервиса по call-graph (статика, без рантайма)">▶ Показать поток</button>
+        </div>
+      )}
 
       {(out.length > 0 || inc.length > 0) && (
         <div className="inspector__block">
@@ -712,6 +730,13 @@ export function SystemView() {
   const [expandedProblems, setExpandedProblems] = useState<ReadonlySet<string>>(new Set()); // раскрытые проблемы (можно несколько сразу)
   const [selectedFact, setSelectedFact] = useState<{ item: ProblemItem; problem: Problem } | null>(null); // выбранный факт (инспектор)
   const [callsAsked, setCallsAsked] = useState(false); // загруженная карта собрана с вызовами (calls)
+  const [flowFor, setFlowFor] = useState<{ id: string; name: string } | null>(null); // E3.4: сервис, для которого показан поток
+  const [flowChain, setFlowChain] = useState<FlowChain | null>(null);
+  const flowEdges = useMemo(() => flowEdgeKeys(flowChain), [flowChain]);
+  const flowNodes = useMemo(() => flowNodeIds(flowChain), [flowChain]);
+  const closeFlow = useCallback(() => { setFlowFor(null); setFlowChain(null); }, []);
+  const flowEnv = useMemo(() => { const n = graph?.environments?.find((e) => e.active)?.name; return n && n !== 'default' ? n : undefined; }, [graph]);
+  useEffect(() => { closeFlow(); }, [graph, closeFlow]); // новая карта (проект/среда/анализ) — поток прежней неактуален
   const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null); // выбранная связь (инспектор связи, E3.1)
   // выбрали узел или факт любым путём (клик, переход к плашке, список проблем) — инспектор связи уступает
   useEffect(() => { if (selected || selectedFact) setSelectedEdge(null); }, [selected, selectedFact]);
@@ -1511,6 +1536,8 @@ export function SystemView() {
                     storageKey={drill ? '' : storageKey}
                     onDirty={setSaved}
                     selectedId={selected?.id ?? null}
+                    flowEdges={viewMode === 'structure' && !drill ? flowEdges : null}
+                    flowNodes={viewMode === 'structure' && !drill ? flowNodes : null}
                     onSelect={(n) => { setSelected(n); setSelectedFact(null); setSelectedEdge(null); }}
                     onSelectEdge={(e) => {
                       const d = e.data as EdgeData;
@@ -1563,8 +1590,12 @@ export function SystemView() {
                 </button>
               </div>
               <div className="panel__body">
-                {selected && graph
-                  ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} onOpenEdge={openEdge} />
+                {flowFor && graph && loadedPath
+                  ? <FlowPanel entry={flowFor.id} entryName={flowFor.name} path={loadedPath} env={flowEnv}
+                      onFlow={setFlowChain} onClose={closeFlow} onFocus={focusNode} />
+                  : selected && graph
+                  ? <Inspector node={selected} graph={graph} lens={lens} onFocus={focusNode} onOpenEdge={openEdge}
+                      onFlow={(n) => { setFlowFor({ id: n.id, name: n.name }); }} />
                   : selectedEdge && graph
                     ? <EdgeInspector edge={selectedEdge} onFocus={focusNode} scanRoot={loadedPath} callsRequested={callsAsked}
                         names={Object.fromEntries(graph.nodes.map((n) => [n.id, n.name]))} />

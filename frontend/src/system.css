@@ -1028,3 +1028,22 @@
   border-radius: 10px; padding: 0 7px; background: none; cursor: pointer;
 }
 .inspector__edges .iedge__open:hover { color: var(--accent); border-color: var(--accent); }
+
+/* E3.4: панель «Поток» */
+.flowp__start { width: 100%; padding: 7px 10px; border: 1px solid var(--accent, #4f8cff); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font-size: 12px; text-align: left; }
+.flowp__start:hover { background: rgba(79, 140, 255, 0.12); }
+.flowp__bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; font-size: 11px; color: var(--muted); }
+.flowp__depth select { margin-left: 6px; background: transparent; color: inherit; border: 1px solid var(--border, #2c3646); border-radius: 4px; }
+.flowp__close { background: transparent; border: 1px solid var(--border, #2c3646); color: inherit; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
+.flowp__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.flowp__step { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 4px 6px; border-left: 2px solid var(--border, #2c3646); font-size: 12px; }
+.flowp__step--unmatched, .flowp__step--unresolved { border-left-color: #d9a441; }
+.flowp__step--cycle, .flowp__step--truncated { border-left-color: #d9534f; }
+.flowp__step--repeat { opacity: 0.7; }
+.flowp__ico { width: 14px; text-align: center; color: var(--muted); }
+.flowp__label { font-family: ui-monospace, monospace; font-size: 11px; }
+.flowp__to { font-weight: 600; }
+.flowp__flag, .flowp__note { font-size: 10px; color: #d9a441; }
+.flowp__calls { flex-basis: 100%; margin: 0; padding-left: 20px; font-family: ui-monospace, monospace; font-size: 10px; color: var(--muted); }
+.flowp__warn { color: #d9a441; font-size: 11px; }
+.flowp__notes { list-style: none; margin: 8px 0 0; padding: 0; }
