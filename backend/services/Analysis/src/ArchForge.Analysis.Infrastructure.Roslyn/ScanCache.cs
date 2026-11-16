@@ -129,13 +129,16 @@ public sealed class ScanCache(TimeProvider? time = null) : IScanCacheControl
 }
 
 // Декораторы портов: тот же контракт, результат берётся из кеша. Ключ — вид источника + путь сервиса.
-internal sealed class CachingTypeSource(RoslynSemanticTypeSource inner, ScanCache cache) : ITypeSource
+internal sealed class CachingTypeSource(RoslynSemanticTypeSource inner, ScanCache cache) : IScannedTypeSource
 {
-    public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) =>
-        cache.GetOrAddDegradable<IReadOnlyList<RawType>>("types", path, () =>
+    public IReadOnlyList<RawType> Read(string path, CancellationToken ct = default) => ReadScan(path, ct).Types;
+
+    // Статус семантики лежит в самой записи кеша рядом с типами: попадание в кеш возвращает тот же вердикт, потерять его нельзя.
+    public TypeScan ReadScan(string path, CancellationToken ct = default) =>
+        cache.GetOrAddDegradable("types", path, () =>
         {
             var r = inner.Read(path, out var degraded, ct);   // деградация (пол вместо семантики) — короткий срок жизни записи
-            return (r, degraded);
+            return (new TypeScan(r, degraded), degraded);
         }, ct);
 }
 

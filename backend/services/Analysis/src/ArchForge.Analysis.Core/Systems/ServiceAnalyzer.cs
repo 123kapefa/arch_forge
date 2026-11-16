@@ -45,6 +45,9 @@ public sealed record ServiceAnalysis(DiscoveredService Service, string Location,
     // Файлов в сервисе больше капа разбора → разобрана только часть, карта по нему неполная (#49, adr/0008).
     public int? TruncatedAtFiles { get; init; }
     public bool Truncated => TruncatedAtFiles is not null;
+
+    // Семантика не получилась → типы взяты синтаксическим полом (сбой Roslyn, пустая семантика, слишком много ссылок): роли/покрытие занижены, не «точно» (adr/0008).
+    public bool SyntaxOnly { get; init; }
 }
 
 /// <summary>Хелперы над результатами разбора — единая точка понятия «сервис не разобрался».</summary>
@@ -129,7 +132,15 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             // монорепо: location = система узла (общий префикс id), сам узел — в NodeId; иначе namespace-префикс узлов сервиса ({system})
             var location = boundNode is not null ? HttpTargetResolver.SystemOf(boundNode.Id) : SystemNamespace.Of(root, svc.Root);
             AnalysisResult? result;
-            try { result = classifier.Classify(types.Read(svc.Root, ct), pack); }
+            var syntaxOnly = false;                        // типы получены синтаксическим полом (статус приходит вместе с типами, не из кеша «потом»)
+            try
+            {
+                IReadOnlyList<RawType> raw;
+                if (types is IScannedTypeSource scanned) { var scan = scanned.ReadScan(svc.Root, ct); raw = scan.Types; syntaxOnly = scan.SyntaxOnly; }
+                else raw = types.Read(svc.Root, ct);
+                result = classifier.Classify(raw, pack);
+                syntaxOnly &= result.Types.Count > 0;      // сервис без типов не метим: нечего занижать
+            }
             catch (OperationCanceledException) { throw; }  // отмена — наверх (Parallel.For сведёт к OCE)
             catch { result = null; }                       // сбой сервиса → null: не роняем скан, линза поднимет Coverage (adr/0008)
             IReadOnlyList<EndpointHit> mini = [];          // minimal-API эндпоинты (#71) — отдельный try: их сбой не роняет разбор
@@ -192,7 +203,7 @@ public sealed class ServiceAnalyzer(IServiceDiscoverySource discovery, ITypeSour
             try { if (scanLimits?.IsTruncated(svc.Root, ct) == true) truncatedAt = scanLimits.MaxFiles; }
             catch (OperationCanceledException) { throw; }
             catch { truncatedAt = null; }
-            results[i] = new ServiceAnalysis(svc, location, result) { TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites, Di = diModel, DiReadFailed = diFailed };
+            results[i] = new ServiceAnalysis(svc, location, result) { SyntaxOnly = syntaxOnly, TruncatedAtFiles = truncatedAt,  AggregateEvents = eventFacts, Folders = folderFacts, AggregateTime = timeFacts, Validation = validationFacts, MinimalEndpoints = mini, HttpCalls = calls, NodeId = boundNode?.Id, Guards = guardSites, ErrorStrategy = errorFacts, BusSites = busSites, Di = diModel, DiReadFailed = diFailed };
         });
         return results;
     }
