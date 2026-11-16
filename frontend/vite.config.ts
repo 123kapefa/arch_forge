@@ -1,10 +1,14 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // Прокси на сервис Map — фронт ходит на /api, CORS не нужен.
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  test: {
+    // Старые тесты (legacy/) идут в node; новым нужен DOM — `// @vitest-environment jsdom` в первой строке файла.
+    setupFiles: ['./src/test/setup.ts'],
+  },
   build: {
     // Единственный чанк >500 кБ — elkjs (~1.4 МБ, неделимая библиотека), он грузится лениво при первой раскладке.
     // Порог поднят осознанно: основной чанк ~140 кБ, всё остальное меньше.

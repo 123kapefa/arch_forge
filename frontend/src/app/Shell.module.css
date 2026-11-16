@@ -1,0 +1,19 @@
+.shell { height: 100%; display: flex; flex-direction: column; }
+.topbar {
+  height: var(--topbar-h); flex: none; display: flex; align-items: center; gap: var(--sp-4);
+  padding: 0 var(--sp-4); background: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+.project {
+  display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-3);
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); font-weight: 600;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status-ok); }
+.nav { display: flex; gap: var(--sp-1); overflow-x: auto; }
+.link, .active {
+  padding: 5px 11px; border: 1px solid transparent; border-radius: var(--radius-md);
+  color: var(--text-muted); text-decoration: none; white-space: nowrap;
+}
+.link:hover { color: var(--text); background: var(--surface); }
+.active { color: var(--text); background: var(--surface); border-color: var(--border); }
+.main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.main > * { flex: 1 1 auto; min-height: 0; }

@@ -3,6 +3,19 @@
   "plugins": ["react", "typescript", "oxc"],
   "rules": {
     "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    "react/no-danger": "error"
+  },
+  "overrides": [
+    {
+      "files": ["src/app/**", "src/features/**", "src/shared/**"],
+      "rules": {
+        "max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": ["src/legacy/**"],
+      "rules": { "max-lines": "off" }
+    }
+  ]
 }

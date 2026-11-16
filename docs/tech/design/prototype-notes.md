@@ -4,7 +4,7 @@
 Это единый источник правды по тому, **что** заложено в прототип и **зачем** — чтобы позже разложить на эпики/задачи, не вытаскивая всё «из головы» и не реверс-инжиниря сам прототип.
 
 **Прототип (Artifact):** https://claude.ai/code/artifact/423df812-9a11-438a-a032-4b0b4fcd3442
-**Реальный код UI, с которого снят каркас:** `frontend/src/SystemView.tsx`, `frontend/src/system.css`.
+**Реальный код UI, с которого снят каркас:** `frontend/src/legacy/SystemView.tsx`, `frontend/src/legacy/system.css`.
 
 ---
 

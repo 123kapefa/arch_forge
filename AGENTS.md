@@ -22,7 +22,7 @@ arch_forge — инструмент, который статически раз�
 
 - Тесты: `dotnet test backend/ArchForge.slnx` (из корня без указания решения не находит проект). Два теста на внешний `auth_service` известно красные — `docs/tech/agents/known-issues.md`.
 - Линт/сборка: `dotnet build backend/ArchForge.slnx`.
-- Фронт (если менялся `frontend/`): `npm run build`, `npm run test`, `npm run lint`.
+- Фронт (если менялся `frontend/`): `npm run build`, `npm run test`, `npm run lint` (в `frontend/`; структура, лимиты и границы — `docs/tech/frontend-standards.md`, старый код — в `frontend/src/legacy/`, заморожен).
 - При изменении API проверить клиентов и контракт.
 - Изменилось поведение — обновить описание в `docs/product/` в том же PR (`docs/tech/adr/0015`). Идеи и заделы — в `docs/tech/ideas/`, решения — в ADR, планы — в `docs/tech/roadmap/`.
 

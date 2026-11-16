@@ -1,0 +1,12 @@
+/* Глобальные стили старой карты. Были на :root/body — теперь ограничены корнем .legacy-root (его даёт
+   features/map/legacy-adapter.tsx), чтобы не влиять на новые экраны. Вид карты не меняется. */
+.legacy-root {
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  position: relative; /* .sysview — absolute inset:0: заполняет область под панелью оболочки, а не всё окно */
+  height: 100%;
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+.legacy-root *, .legacy-root *::before, .legacy-root *::after { box-sizing: border-box; }

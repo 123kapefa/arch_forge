@@ -1,0 +1,5 @@
+.start { max-width: 720px; margin: var(--sp-6) auto; padding: 0 var(--sp-4); }
+.title { font-size: var(--fs-xl); font-weight: 600; margin: 0 0 var(--sp-3); }
+.note { color: var(--text-muted); }
+.list { padding-left: var(--sp-5); line-height: 1.8; }
+.list a { color: var(--accent); }
