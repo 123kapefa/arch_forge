@@ -1,23 +1,23 @@
-import { useSearchParams } from 'react-router';
-import { StubScreen } from '../../shared/ui';
-import { useSystem } from './useSystem';
+import { isEmptyProject } from './model';
+import { OverviewContent } from './OverviewContent';
+import { EmptyProject, Loading, LoadError, NoPath } from './States';
+import { useOverview } from './useOverview';
+import styles from './OverviewScreen.module.css';
 
-/** Заглушка + пример использования useSystem: `/overview?path=<папка проекта>` подтягивает граф. */
+/** Обзор: ответы, а не карта. Три вопроса — что не так, что это, насколько верить. */
 export function OverviewScreen() {
-  const [search] = useSearchParams();
-  const path = search.get('path');
-  const system = useSystem(path ? { path } : null);
-
+  const { path, query, system } = useOverview();
+  const g = system.data;
   return (
-    <>
-      <StubScreen title="Обзор" description="Паспорт системы: сервисы, хранилища, находки, покрытие." />
-      {path && (
-        <p style={{ textAlign: 'center' }} role="status">
-          {system.isPending && 'Разбираю проект…'}
-          {system.isError && `Не удалось получить граф: ${system.error.message}`}
-          {system.data && `${system.data.project}: узлов ${system.data.nodes.length}, связей ${system.data.edges.length}`}
-        </p>
-      )}
-    </>
+    <div className={styles.screen}>
+      <header className={styles.head}>
+        <h1 className={styles.title}>Обзор</h1>
+        {g && <p className={styles.sub}>{g.project} · {g.nodes.length} узлов · {g.edges.length} связей</p>}
+      </header>
+      {!path && <NoPath />}
+      {path && system.isPending && <Loading />}
+      {path && system.isError && <LoadError message={system.error.message} onRetry={() => void system.refetch()} />}
+      {g && (isEmptyProject(g) ? <EmptyProject /> : <OverviewContent graph={g} query={query} root={path} />)}
+    </div>
   );
 }

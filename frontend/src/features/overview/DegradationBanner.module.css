@@ -1,0 +1,2 @@
+.banner { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--status-warning); border-radius: var(--radius-md); background: var(--status-warning-bg); color: var(--status-warning); }
+.list { margin: var(--sp-1) 0 0; padding-left: var(--sp-4); font-size: var(--fs-sm); }

@@ -1,0 +1,6 @@
+.badge { display: inline-flex; align-items: center; gap: var(--sp-1); padding: 2px var(--sp-2); border-radius: var(--radius-sm); font-size: var(--fs-sm); white-space: nowrap; }
+.error { background: var(--status-error-bg); color: var(--status-error); }
+.warning { background: var(--status-warning-bg); color: var(--status-warning); }
+.ok { background: var(--status-ok-bg); color: var(--status-ok); }
+.unknown { background: var(--status-unknown-bg); color: var(--status-unknown); }
+.accent { background: var(--surface-2); color: var(--accent); border: 1px solid var(--border); }
